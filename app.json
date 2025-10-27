@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Distribuidora2",
-    "slug": "Distribuidora2",
+    "name": "Distribuidora",
+    "slug": "Distribuidora",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "movilappnueva",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled":true,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
@@ -20,6 +20,7 @@
       "supportsTablet": true
     },
     "android": {
+     
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.dimondice.Distribuidora",
@@ -30,9 +31,14 @@
       ],
       "config": {
         "googleMaps": {
-          "apiKey": ""
+          "apiKey": "AQUÍ_VA_TU_API_KEY_CUANDO_LA_TENGAS"
         }
-      }
+      },
+      "compileSdkVersion": 36,
+      "targetSdkVersion": 36,
+      "buildToolsVersion": "34.0.0",
+      "ndk": "26.1.10900962",
+      "cmake": "3.22.1"
     },
     "web": {
       "output": "static",
@@ -51,12 +57,12 @@
           }
         }
       ]
+  
     ],
     "extra": {
       "eas": {
-      
+        "projectId": "1d7623d1-bc88-47cc-b1f9-73b653ce4ae5"
       }
-    },
-    "owner": "dimondice"
+    }
   }
 }
