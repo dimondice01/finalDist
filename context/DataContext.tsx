@@ -20,7 +20,9 @@ export interface Product {
 export interface CartItem extends Product {
     quantity: number;
     comision: number;
-    precioOriginal?: number; // Precio antes de aplicar promociones (Opcional)
+    precioOriginal?: number; // Precio antes de aplicar promociones (Opcional, usado para precio_especial)
+    // --- CAMBIO CLAVE AQUÍ: Descuento total aplicado a esta línea de ítem (por cantidad/bulk) ---
+    descuentoAplicado?: number; 
 }
 
 export interface Client {
@@ -198,13 +200,15 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     if (jsonData) {
                         try {
                             const parsed = parseDates ? parseWithDates(jsonData) : JSON.parse(jsonData);
-                            // Asegurar que los items de las ventas tengan precioOriginal
+                            // Asegurar que los items de las ventas tengan precioOriginal y descuentoAplicado
                             if (key === 'sales') {
                                 const salesData = (parsed as Sale[]).map(sale => ({
                                     ...sale,
                                     items: (sale.items || []).map(item => ({
                                         ...item,
-                                        precioOriginal: item.precioOriginal ?? item.precio
+                                        precioOriginal: item.precioOriginal ?? item.precio,
+                                        // AÑADIDO: Asegura que descuentoAplicado se inicialice si falta
+                                        descuentoAplicado: item.descuentoAplicado ?? 0, 
                                     }))
                                 }));
                                 setter(salesData);
@@ -233,8 +237,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             } catch (e) {
                 console.error("Error al cargar datos locales:", e);
             } finally {
-                // MARCADO DE FINALIZACIÓN: Esto es la bandera de estabilidad
-                setIsLoading(false); // Solo bajamos el loader si AsyncStorage terminó
+                // MARCADO DE FINALIZACIÓN
+                setIsLoading(false); 
                 setIsInitialDataLoaded(true); 
             }
         };
@@ -297,12 +301,14 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 return { id: docSnap.id, ...data };
             };
 
-            // Procesador específico para Sales (asegura 'items' y 'precioOriginal')
+            // Procesador específico para Sales (asegura 'items', 'precioOriginal' y 'descuentoAplicado')
              const processFirebaseSale = (docSnap: any): Sale => {
                 const rawData = processFirebaseDoc(docSnap); // Primero convierte Timestamps
                 const items = (rawData.items || []).map((item: any) => ({
                     ...item,
-                    precioOriginal: item.precioOriginal ?? item.precio
+                    precioOriginal: item.precioOriginal ?? item.precio,
+                    // AÑADIDO: Carga el descuento por ítem desde la base de datos
+                    descuentoAplicado: item.descuentoAplicado ?? 0,
                 }));
 
                 return {
@@ -335,11 +341,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             finalData.products = productsSnap.docs.map(processFirebaseDoc) as Product[];
             finalData.categories = categoriesSnap.docs.map(processFirebaseDoc) as Category[];
             
-            // --- FIX DE PROMOCIONES: Mapeo de campos inconsistentes (nombrePromocion -> nombre, productoId -> productoIds) ---
+            // --- FIX DE PROMOCIONES: Mapeo de campos inconsistentes ---
             finalData.promotions = promosSnap.docs.map(processFirebaseDoc).map(p => ({
                 ...p, 
-                nombre: p.nombrePromocion || p.nombre, // Mapea el campo de la BD al nombre esperado en la interfaz
-                // Mapea el campo singular al array plural, asegurando que si es string lo convierte a array.
+                nombre: p.nombrePromocion || p.nombre, 
                 productoIds: p.productoIds || (p.productoId ? [p.productoId] : []),
                 clienteIds: p.clienteIds || [],
             })) as Promotion[];
@@ -484,7 +489,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             }
             console.log('Suscripciones de DataContext limpiadas.');
         };
-    }, [currentVendor, userRole, isInitialDataLoaded]); // Dependencias: Si el rol/vendor cambia o la carga inicial termina, se re-evalúa.
+    }, [currentVendor, userRole, isInitialDataLoaded]); 
 
 
     // Funciones sync y refresh (sin cambios)

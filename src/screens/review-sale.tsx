@@ -9,13 +9,14 @@ import { collection, doc, increment, runTransaction, Timestamp, writeBatch } fro
 import * as Haptics from 'expo-haptics';
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Toast from 'react-native-toast-message'; // <-- AÑADIDO
+import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator'; // Ajusta la ruta
 
 // --- Contexto, DB, Servicios, Estilos ---
+// Usamos CartItem como DataContextCartItem para referirnos a la versión del Contexto (que ya tiene descuentoAplicado)
 import { Sale as BaseSale, Client, CartItem as DataContextCartItem, useData, Vendor } from '../../context/DataContext'; // Ajusta la ruta
 import { auth, db } from '../../db/firebase-service'; // Ajusta la ruta
 // --- CORRECCIÓN: Importar generatePdf ---
@@ -23,8 +24,14 @@ import { generatePdf } from '../../services/pdfGenerator'; // Ajusta la ruta
 import { COLORS } from '../../styles/theme'; // Ajusta la ruta
 
 // --- Interfaces ---
-interface CartItem extends DataContextCartItem {}
-interface CartItemWithDiscount extends CartItem { discount: number; promoDescription: string | null; }
+// Heredamos la interfaz de Contexto (que ya incluye 'descuentoAplicado')
+interface CartItem extends DataContextCartItem {} 
+
+// Usamos una interfaz auxiliar para incluir las propiedades locales necesarias en esta pantalla.
+interface CartItemWithDiscount extends CartItem { 
+    discount: number; 
+    promoDescription: string | null; 
+}
 
 // Tipo de Props para la pantalla
 type ReviewSaleScreenProps = NativeStackScreenProps<RootStackParamList, 'ReviewSale'>;
@@ -40,15 +47,18 @@ const ReviewItemCard = memo(({ item, isSaving, onUpdateQuantity }: ReviewItemCar
     if (!item || !item.id) return null;
     const handleIncrease = useCallback(() => onUpdateQuantity(item.id, 1), [item.id, onUpdateQuantity]);
     const handleDecrease = useCallback(() => onUpdateQuantity(item.id, -1), [item.id, onUpdateQuantity]);
+    // El subtotal es el precio unitario (con precio_especial aplicado) por la cantidad
     const displaySubtotal = (item.precio || 0) * item.quantity;
     
     return (
         <View style={styles.itemCard}>
             <View style={styles.itemInfo}>
                 <Text style={styles.itemName}>{item.nombre}</Text>
+                {/* Mostramos el subtotal ANTES del descuento por cantidad, pero DESPUÉS del descuento por precio_especial */}
                 <Text style={[styles.itemSubtotal, item.discount > 0 && styles.strikethrough]}>
                     ${displaySubtotal.toFixed(2)}
                 </Text>
+                {/* Mostramos el descuento por cantidad si existe */}
                 {item.discount > 0 && <Text style={styles.promoText}>{item.promoDescription} (-${item.discount.toFixed(2)})</Text>}
             </View>
             <View style={styles.quantityControls}>
@@ -89,19 +99,18 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         return vendor?.nombreCompleto || vendor?.nombre || 'Vendedor';
     }, [currentUser, vendors]);
 
-    // --- cartWithDiscounts (CORREGIDO) ---
+    // --- cartWithDiscounts (CÁLCULO Y ASIGNACIÓN EN MEMORIA) ---
     const cartWithDiscounts = useMemo<{ items: CartItemWithDiscount[], totalDiscount: number }>(() => {
         if (!Array.isArray(promotions) || !Array.isArray(cart)) return { items: [], totalDiscount: 0 };
         
         const itemsWithDiscount = cart.map(item => {
-            // --- CORRECCIÓN: Usar productoIds (plural) y .includes() ---
+            // --- CÁLCULO DEL DESCUENTO POR CANTIDAD/BULK ---
             const promo = promotions.find(p => p.productoIds?.includes(item.id));
             let itemDiscount = 0;
             let promoDescription: string | null = null;
-            const basePrice = item.precio;
+            const basePrice = item.precio; 
 
             if (promo) {
-                // --- CORRECCIÓN: Asumir que 'condicion' y 'beneficio' existen (según DataContext.tsx) ---
                 if (promo.tipo === 'LLEVA_X_PAGA_Y' && promo.condicion?.cantidadMinima && item.quantity >= promo.condicion.cantidadMinima) {
                     const numPromos = Math.floor(item.quantity / promo.condicion.cantidadMinima);
                     const unidadesGratis = numPromos * (promo.condicion.cantidadMinima - (promo.beneficio?.cantidadAPagar || promo.condicion.cantidadMinima));
@@ -112,25 +121,33 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
                     promoDescription = promo.descripcion || 'Descuento por cantidad';
                 }
             }
-            return { ...item, discount: itemDiscount, promoDescription };
+            
+            // 🔥 ASIGNACIÓN EN MEMORIA: Asigna el descuento por cantidad a 'descuentoAplicado'
+            return { 
+                ...item, 
+                discount: itemDiscount, 
+                promoDescription,
+                descuentoAplicado: itemDiscount, 
+            } as CartItemWithDiscount; 
         });
         
         return { items: itemsWithDiscount, totalDiscount: itemsWithDiscount.reduce((sum, i) => sum + i.discount, 0) };
     }, [cart, promotions]);
 
-    // Totales (Usando la lógica original)
+    // Totales
     const cartTotal = useMemo(() => cart.reduce((total, item) => total + (item.precio || 0) * item.quantity, 0), [cart]);
     const finalTotal = cartTotal - cartWithDiscounts.totalDiscount;
 
     const totalComision = useMemo(() => {
         return cartWithDiscounts.items.reduce((total, item) => {
             const comisionPorcentaje = item.comision || 0;
-            const subtotalItemFinal = (item.precio * item.quantity) - item.discount;
+            // Uso seguro del campo para evitar errores de TS y NaN
+            const itemDiscount = item.descuentoAplicado ?? 0;
+            const subtotalItemFinal = (item.precio * item.quantity) - itemDiscount; 
             return total + ((subtotalItemFinal * comisionPorcentaje) / 100);
         }, 0);
-    }, [cartWithDiscounts.items]);
+    }, [cartWithDiscounts.items]); 
 
-    // --- CORRECCIÓN: Asegurar que currentCart sea un array ---
     const handleUpdateQuantity = useCallback((productId: string, amount: number) => {
         setCart(currentCart =>
             (currentCart || []) 
@@ -139,7 +156,7 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         );
     }, []);
 
-    // --- CORRECCIÓN: handleConfirmSale adaptado (sin FileSystem) ---
+    // --- FUNCIÓN DE GUARDADO (FIX DEFINITIVO DE PERSISTENCIA) ---
     const handleConfirmSale = useCallback(async () => {
         if (cart.length === 0 || !clientData) { Alert.alert("Faltan datos", "El carrito o los datos del cliente no están listos."); return; }
         const vendedorId = auth.currentUser?.uid; if (!vendedorId) { Alert.alert("Error", "No se pudo identificar al vendedor."); return; }
@@ -152,7 +169,12 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             clienteId: clientId as string, clientName: clientName as string, vendedorId,
             items: cartWithDiscounts.items.map(item => ({
                 productId: item.id, nombre: item.nombre, precio: item.precio, costo: item.costo, quantity: item.quantity,
-                descuentoAplicado: item.discount, promoDescription: item.promoDescription, comision: item.comision,
+                
+                // 🔥 FIX CRÍTICO DE PERSISTENCIA: Usamos ?? 0 para garantizar que el campo se guarde siempre como número.
+                descuentoAplicado: item.descuentoAplicado ?? 0, 
+                
+                promoDescription: item.promoDescription, comision: item.comision,
+                // Propagamos precioOriginal si fue un descuento de precio_especial
                 ...( (item.precioOriginal && item.precioOriginal !== item.precio) && { precioOriginal: item.precioOriginal } )
             })),
             totalVentaBruto: cartTotal,
@@ -171,7 +193,7 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         try {
             // Lógica de Transacción/Batch (sin cambios)
             if (netState.isConnected) {
-                await runTransaction(db, async (transaction) => { /* ... verificación stock y guardado ... */
+                await runTransaction(db, async (transaction) => { 
                     const productRefs = cart.map(item => doc(db, 'productos', item.id));
                     const productDocs = await Promise.all(productRefs.map(ref => transaction.get(ref)));
                     for (let i = 0; i < productDocs.length; i++) {
@@ -181,9 +203,9 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
                         if (currentStock < item.quantity) { throw new Error(`Stock insuficiente para "${item.nombre}". Disponible: ${currentStock}.`); }
                     }
                     transaction.set(newSaleRef, saleDataForDb);
-                    cart.forEach((item, index) => { transaction.update(productRefs[index], { stock: increment(-item.quantity) }); });
+                    cart.forEach((item, index) => { transaction.update(doc(db, 'productos', item.id), { stock: increment(-item.quantity) }); });
                 });
-            } else { /* ... batch offline ... */
+            } else { 
                 const batch = writeBatch(db);
                 batch.set(newSaleRef, saleDataForDb);
                 for (const item of cart) { batch.update(doc(db, 'productos', item.id), { stock: increment(-item.quantity) }); }
@@ -203,18 +225,23 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
                 distribuidora: { nombre: "Tu Distribuidora S.A.", direccion: "Calle Falsa 123, La Rioja", telefono: "380-4123456" }
             };
 
-            // --- CORRECCIÓN: Lógica simple de PDF ---
+            // Aseguramos que los items para el PDF tengan el descuentoAplicado correcto
+            pdfData.items = cartWithDiscounts.items.map(item => ({
+                 ...item,
+                 precioOriginal: item.precioOriginal ?? item.precio,
+                 descuentoAplicado: item.descuentoAplicado ?? 0, 
+            })); 
+
             const html = await generatePdf(pdfData, clientData!, currentVendorName);
             if (!html) throw new Error("No se pudo generar el contenido del PDF.");
             
-            const { uri } = await Print.printToFileAsync({ html }); // Solo obtenemos la URI
-            // --- FIN CORRECCIÓN PDF ---
+            const { uri } = await Print.printToFileAsync({ html }); 
 
             const alertMessage = netState.isConnected ? "¿Compartir comprobante?" : "Venta guardada offline. ¿Compartir?";
             Alert.alert("Venta Registrada", alertMessage, [
                 { text: 'Compartir', onPress: async () => {
                     try { 
-                        await Sharing.shareAsync(uri); // Compartimos la URI directamente
+                        await Sharing.shareAsync(uri); 
                     } catch(shareError: any) { 
                         if (!(shareError.message?.includes('Sharing dismissed'))) { console.error(shareError); } 
                     } finally {
@@ -234,9 +261,10 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             Alert.alert("Error", `No se pudo registrar la venta. ${error?.message || ''}`);
             setIsSaving(false);
         }
-    }, [cart, clientData, cartWithDiscounts, cartTotal, finalTotal, totalComision, navigation, currentVendorName, currentUser]); // Dependencias
+    }, [cart, clientData, cartWithDiscounts, cartTotal, finalTotal, totalComision, navigation, currentVendorName, currentUser, clientId, clientName]); 
 
-    // --- renderItem memoizado ---
+    // ... (El resto del componente sin cambios) ...
+    
     const renderCartItem = useCallback(({ item }: { item: CartItemWithDiscount }) => (
         <ReviewItemCard
             item={item}
@@ -298,7 +326,8 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
     );
 };
 
-// --- Estilos (Ajustados) ---
+// ... (Estilos sin cambios) ...
+
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },

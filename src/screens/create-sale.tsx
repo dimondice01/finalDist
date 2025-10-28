@@ -1,10 +1,9 @@
 // src/screens/CreateSaleScreen.tsx
 import { Feather } from '@expo/vector-icons';
 // ELIMINAMOS: import { Picker } from '@react-native-picker/picker';
-// --- ELIMINAMOS importaciones legacy de FileSystem, ya que no son la forma correcta ---
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Print from 'expo-print';
+import * as Print from 'expo-print'; // Necesario para generar el archivo PDF local
 import * as Sharing from 'expo-sharing';
 import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -41,7 +40,7 @@ import {
     Vendor
 } from '../../context/DataContext'; // Ajusta la ruta si es necesario
 import { auth, db } from '../../db/firebase-service'; // Ajusta la ruta si es necesario
-import { generatePdf } from '../../services/pdfGenerator'; // Ajusta la ruta si es necesario
+import { generatePdf } from '../../services/pdfGenerator'; // Asumimos que retorna el HTML string
 import { COLORS } from '../../styles/theme'; // Ajusta la ruta si es necesario
 
 
@@ -64,7 +63,7 @@ interface SaleDataToSave {
 }
 
 // --- Componente Modal Selector de Categoría (REEMPLAZO DEL PICKER) ---
-const CategorySelectorModal = ({ visible, onClose, categories, selectedId, onSelect }: { 
+const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, onSelect }: { 
     visible: boolean; 
     onClose: () => void; 
     categories: Category[]; 
@@ -109,7 +108,7 @@ const CategorySelectorModal = ({ visible, onClose, categories, selectedId, onSel
             </View>
         </Modal>
     );
-};
+});
 // --- FIN Componente Modal Selector de Categoría ---
 
 
@@ -289,7 +288,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         );
         if (promoAplicable && promoAplicable.nuevoPrecio) {
             precioFinal = promoAplicable.nuevoPrecio;
-            precioOriginal = product.precio; // <-- CORRECCIÓN: Usar product.precio en lugar de 'item.precio'
+            precioOriginal = product.precio; // Usar product.precio para precioOriginal
         }
         const productToAdd = { ...product, precio: precioFinal, precioOriginal: precioOriginal };
         setSelectedProduct(productToAdd);
@@ -323,46 +322,132 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setCurrentQuantity('1');
     }, [selectedProduct]);
 
+    // --- BLOQUE USEMEMO CORREGIDO PARA CALCULAR PROMOCIONES ---
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones } = useMemo(() => {
-         let sub: number = 0, comision: number = 0, costo: number = 0, descuento: number = 0;
+         let sub: number = 0; // Total (sumando item.precio * quantity, ya con 'precio_especial' aplicado)
+         let comision: number = 0;
+         let costo: number = 0;
+         let descuentoPrecioEspecial: number = 0; // Descuento de promociones tipo 'precio_especial'
+         let descuentoPorCantidad: number = 0; // Descuento de LLEVA_X_PAGA_Y o DESCUENTO_POR_CANTIDAD
+
+         // 1. Cálculo base e identificación de descuento por 'precio_especial'
          cart.forEach(item => {
-             sub += item.precio * item.quantity;
+             // item.precio ya usa el precio final (puede incluir el descuento 'precio_especial')
+             const subtotalItemBase = item.precio * item.quantity;
+             sub += subtotalItemBase; // sub es el total de la venta con descuentos de precio especial ya aplicados.
+             
              comision += item.comision;
              costo += (item.costo || 0) * item.quantity;
-             if (item.precioOriginal && item.precioOriginal > item.precio) { descuento += (item.precioOriginal - item.precio) * item.quantity; }
-         });
-         return { subtotal: sub, totalComision: comision, totalCosto: costo, totalFinal: sub, totalDescuentoPromociones: descuento };
-    }, [cart]);
+             
+             // 1.1 Descuento por "precio_especial" (ya aplicado al item.precio)
+             if (item.precioOriginal && item.precioOriginal > item.precio) { 
+                 descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity; 
+             }
 
-    // --- Adaptación handleShare ---
+             // 2. Aplicar Promociones Basadas en Cantidad por ítem
+             const quantity = item.quantity;
+             const itemPrice = item.precio; // Precio unitario con posible 'precio_especial' aplicado
+             
+             // Filtrar promociones de cantidad aplicables para este producto y cliente
+             const quantityPromosForProduct = promotions.filter(promo => {
+                 // Debe tener tipo de cantidad y el producto debe estar en la promoción
+                 const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
+                 const isProductInPromo = promo.productoIds?.includes(item.id);
+                 
+                 // Debe aplicarse al cliente (si la promo tiene clientes restringidos, el cliente actual debe estar en la lista)
+                 const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (clientId && promo.clienteIds.includes(clientId as string));
+                 
+                 // Adicionalmente, verificar que la condición exista
+                 const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
+                 
+                 return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
+             });
+             
+             if (quantityPromosForProduct.length > 0) {
+                // Lógica de prioridad: Tomar la primera promoción aplicable (se asume que no se superponen)
+                const promo = quantityPromosForProduct[0]; 
+                
+                if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
+                    // EJEMPLO: LLEVANDO X PAGAS Y
+                    const X = promo.condicion.cantidadMinima; 
+                    const Y = promo.beneficio.cantidadAPagar;
+                    const itemsGratisPorLote = X - Y;
+                    
+                    if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
+                        const numLotes = Math.floor(quantity / X);
+                        const itemsGratisTotales = numLotes * itemsGratisPorLote;
+                        
+                        // Descuento: Valor de los artículos gratuitos
+                        descuentoPorCantidad += itemsGratisTotales * itemPrice; 
+                    }
+                } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
+                    // EJEMPLO: LLEVANDO 12+ UN 20% DE DESCUENTO
+                    const porcentaje = promo.beneficio.porcentajeDescuento;
+                    
+                    if (porcentaje > 0 && porcentaje <= 100) {
+                        const subtotalItem = itemPrice * quantity; // Ya que subtotalItemBase fue sumado a 'sub'
+                        const descuentoCalculado = subtotalItem * (porcentaje / 100);
+                        descuentoPorCantidad += descuentoCalculado;
+                    }
+                }
+             }
+         });
+         
+         // 3. Totales finales
+         const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidad;
+         
+         return { 
+             subtotal: sub, // Total de la venta antes de descuento por cantidad (pero con descuento de precio_especial ya aplicado al ítem)
+             totalComision: comision, 
+             totalCosto: costo, 
+             totalFinal: sub - descuentoPorCantidad, // Total a pagar (Subtotal - descuentos por cantidad)
+             totalDescuentoPromociones: totalDescuentoTotal // Total de todos los descuentos (para guardar en BD)
+         };
+    }, [cart, promotions, clientId]);
+    // --- FIN DEL BLOQUE USEMEMO CORREGIDO ---
+
+    // --- Adaptación handleShare (FIX CRÍTICO para error 'data' URI) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
         if (!clientData) {
            Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
            return;
         }
 
-       let pdfResult: string | null = null;
-        
-         try {
-           pdfResult = await generatePdf(saleDataForPdf, clientData, vendorName);
-           if (!pdfResult) { throw new Error("generatePdf devolvió null o vacío."); }
+        try {
+            // 1. Generar el contenido HTML string (asumiendo que generatePdf retorna HTML)
+            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName); 
            
-           const { uri } = await Print.printToFileAsync({ html: pdfResult });
+            if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
+            
+            // 2. Convertir el HTML a una URI de ARCHIVO LOCAL (file://)
+            // ESTO RESUELVE EL ERROR: 'expected scheme to be file, got data.'
+            const { uri } = await Print.printToFileAsync({ html: htmlContent });
            
-           const isAvailable = await Sharing.isAvailableAsync();
-           if (!isAvailable) { throw new Error("La función de compartir no está disponible."); }
-           
-           await Sharing.shareAsync(uri, {
-               mimeType: 'application/pdf',
-               dialogTitle: 'Compartir comprobante vía...',
-           });
-         } catch (shareError: any) {
+            if (!uri) { 
+                throw new Error("printToFileAsync no devolvió URI."); 
+            }
+
+            // 3. Compartir el URI de ARCHIVO LOCAL
+            const isAvailable = await Sharing.isAvailableAsync();
+            if (!isAvailable) { 
+                throw new Error("La función de compartir no está disponible."); 
+            }
+
+            await Sharing.shareAsync(uri, { 
+    mimeType: 'application/pdf',
+    dialogTitle: `Compartir Comprobante ${saleDataForPdf.id}`,
+});
+            
+        } catch (shareError: any) {
            console.error("handleShare: Error con expo-sharing/print:", shareError);
            if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
+               // Mostrar el error si no fue cancelado por el usuario
                Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
            }
-         }
+        }
     }, [refreshAllData]); 
+    // --- FIN DE handleShare CORREGIDO ---
+
 
     const handleCheckout = useCallback(async () => {
         if (isSubmitting) return;
@@ -379,6 +464,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             vendedorName: currentVendedor.nombreCompleto || currentVendedor.nombre,
             items: cart.map((item: CartItem) => {
                 const { precioOriginal, ...restOfItem } = item;
+                // Guardamos precioOriginal solo si es diferente al precio final
                 return { ...restOfItem, ...(precioOriginal !== undefined && precioOriginal !== item.precio && { precioOriginal }) };
             }),
             totalVenta: totalFinal,
@@ -411,7 +497,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 observaciones: saleDataToSave.observaciones, 
                 // @ts-ignore - Usamos Date para el PDF generator
                 fecha: new Date(), 
-                items: saleDataToSave.items.map((item: CartItem) => ({ ...item, precioOriginal: item.precioOriginal ?? item.precio })),
+                // Usamos la lista de items completa, incluyendo precioOriginal (si existe) para el cálculo correcto de Bruto en el PDF
+                items: cart.map((item: CartItem) => ({ ...item, precioOriginal: item.precioOriginal ?? item.precio })),
             };
             
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
@@ -534,11 +621,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalValue}>${subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text></View>
                     {totalDescuentoPromociones > 0 && (
                         <View style={styles.totalRow}>
-                            <Text style={[styles.totalLabel, styles.discountText]}>Descuentos</Text>
+                            <Text style={[styles.totalLabel, styles.discountText]}>Descuentos Aplicados</Text>
                             <Text style={[styles.totalValue, styles.discountText]}>-${totalDescuentoPromociones.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text>
                         </View>
                     )}
-                    <View style={[styles.totalRow, styles.finalTotalRow]}><Text style={styles.finalTotalLabel}>Total</Text><Text style={styles.finalTotalValue}>${totalFinal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text></View>
+                    <View style={[styles.totalRow, styles.finalTotalRow]}><Text style={styles.finalTotalLabel}>Total a Pagar</Text><Text style={styles.finalTotalValue}>${totalFinal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text></View>
                 </ScrollView>
                 <TouchableOpacity style={[styles.checkoutButton, isSubmitting && styles.checkoutButtonDisabled]} onPress={handleCheckout} disabled={isSubmitting}>
                     {isSubmitting ? ( <ActivityIndicator color={COLORS.primaryDark} /> ) : ( <Feather name={editMode ? "check-circle" : "arrow-right-circle"} size={22} color={COLORS.primaryDark} /> )}

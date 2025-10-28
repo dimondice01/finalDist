@@ -1,4 +1,3 @@
-import * as Print from 'expo-print';
 // --- Importamos las interfaces estrictas ---
 import { Sale as BaseSale, CartItem, Client } from '../context/DataContext';
 
@@ -11,28 +10,19 @@ const formatCurrency = (value: number = 0): string => {
 const formatDate = (dateInput: { seconds: number; toDate?: () => Date } | Date = new Date()): string => {
     let date: Date;
 
-    // --- !!!!! CORRECCIÓN DE TIPO ts(2339) !!!!! ---
-    // Reorganizamos la lógica para chequear el tipo más simple primero.
-
-    // 1. Si YA es un objeto Date (el más simple)
     if (dateInput instanceof Date) {
         date = dateInput;
     }
-    // 2. Si tiene la función .toDate() (Timestamp de Firestore o el objeto simulado de create-sale)
-    //    Usamos 'as any' para evitar que TypeScript se queje antes de tiempo.
     else if (dateInput && typeof (dateInput as any).toDate === 'function') {
         date = (dateInput as any).toDate();
     }
-    // 3. Si solo tiene 'seconds' (Timestamp parseado de JSON/storage)
     else if (dateInput && typeof (dateInput as { seconds: number }).seconds === 'number') {
         date = new Date((dateInput as { seconds: number }).seconds * 1000);
     }
-    // 4. Fallback
     else {
         console.warn("Formato de fecha inesperado recibido, usando fecha actual.");
         date = new Date(); 
     }
-    // --- !!!!! FIN DE LA CORRECCIÓN !!!!! ---
 
     try {
         if (isNaN(date.getTime())) {
@@ -48,7 +38,7 @@ const formatDate = (dateInput: { seconds: number; toDate?: () => Date } | Date =
 };
 
 
-// --- FUNCIÓN PRINCIPAL (YA CORREGIDA) ---
+// --- FUNCIÓN PRINCIPAL ---
 export const generatePdf = async (
     sale: BaseSale,
     client: Client, // <-- Argumento 2: Cliente completo
@@ -79,39 +69,21 @@ export const generatePdf = async (
         totalVenta: sale.totalVenta || 0,
         observaciones: sale.observaciones || '',
 
-        // Calcula brutos
+        // Calcula brutos (Subtotal antes de cualquier descuento)
         totalVentaBruto: (sale.items || []).reduce((acc, item) => acc + (item.precioOriginal || item.precio) * item.quantity, 0),
         
-        // CORRECCIÓN DEL BUG (ya estaba): Lee 'totalDescuentoPromociones'
+        // Lee el total de descuentos (ya calculado en create-sale.tsx)
         totalDescuentoPromos: Number(sale.totalDescuentoPromociones || 0),
     };
 
     // 3. Generar HTML
     const html = generateHtml(invoiceData);
 
-    try {
-        // 4. SOLUCIÓN CRASH (Base64)
-        const file = await Print.printToFileAsync({
-            html: html,
-            base64: true 
-        });
-
-        // 5. SOLUCIÓN CRASH (Data URI)
-        if (file.base64) {
-            return `data:application/pdf;base64,${file.base64}`;
-        }
-
-        console.error("No se pudo generar el base64 del PDF.");
-        return null;
-
-    } catch (error) {
-        console.error("Error al generar PDF (printToFileAsync):", error);
-        return null;
-    }
+    return html; 
 };
 
 
-// --- Plantilla HTML para el PDF (Sin cambios) ---
+// --- Plantilla HTML para el PDF (COLUMNA DESC CORREGIDA) ---
 const generateHtml = (invoiceData: {
     saleId: string;
     saleDate: string;
@@ -126,14 +98,47 @@ const generateHtml = (invoiceData: {
     totalDescuentoPromos: number; 
 }) => {
     // Generar filas de la tabla de productos
-    const itemsRows = invoiceData.items.map(item => `
-        <tr>
-            <td>${item.quantity}</td>
-            <td>${item.nombre}</td>
-            <td class="text-right">${formatCurrency(item.precio)}</td>
-            <td class="text-right">${formatCurrency(item.quantity * item.precio)}</td>
-        </tr>
-    `).join('');
+   const itemsRows = invoiceData.items.map(item => {
+        
+        // 1. Descuento por cambio de precio (precio_especial: Ya aplicado al item.precio)
+        const discountPriceChangePerUnit = (item.precioOriginal && item.precioOriginal > item.precio)
+            ? (item.precioOriginal - item.precio)
+            : 0;
+            
+        // Descuento total por cambio de precio unitario en la línea
+        const unitPriceDiscountTotal = Math.round(discountPriceChangePerUnit * item.quantity * 100) / 100;
+        
+        // 2. Descuento por Cantidad/Bulk (LLEVA_X_PAGA_Y)
+        // 🔥 FIX CRÍTICO: Acceso seguro a la propiedad tipada `descuentoAplicado`
+        const bulkDiscountTotal = item.descuentoAplicado ?? 0; 
+        
+        // 3. Total de descuentos para esta línea (SUMA DE AMBOS)
+        const totalLineDiscount = Math.round((unitPriceDiscountTotal + bulkDiscountTotal) * 100) / 100;
+        
+        // 4. Precio unitario a mostrar (el precio unitario original para justificar el descuento)
+        const unitPriceDisplay = item.precioOriginal || item.precio; 
+
+        // 5. Subtotal Final de la Línea: (Precio con Dto. Unitario * Cantidad) - Dto. por Cantidad
+        const finalLineSubtotal = Math.round(((item.precio * item.quantity) - bulkDiscountTotal) * 100) / 100;
+
+        return `
+            <tr>
+                <td class="product-name">${item.nombre}</td>
+                <td class="text-center">${item.quantity}</td>
+                <td class="text-right">${formatCurrency(unitPriceDisplay)}</td>
+                <td class="text-right ${totalLineDiscount > 0.01 ? 'discount-line' : ''}">
+                    ${totalLineDiscount > 0.01 ? `-${formatCurrency(totalLineDiscount)}` : '-'}
+                </td>
+                <td class="text-right">${formatCurrency(finalLineSubtotal)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    // --- Definiciones de colores para usar en el CSS ---
+    const primaryColor = '#240077ff'; 
+    const textPrimaryColor = '#000000ff'; 
+    const textSecondaryColor = '#888a8dff'; 
+    const dangerColor = '#EF4444'; 
 
     // Plantilla HTML completa
     return `
@@ -144,8 +149,8 @@ const generateHtml = (invoiceData: {
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
                     margin: 0;
-                    padding: 20px;
-                    color: #333;
+                    padding: 15px; 
+                    color: ${textPrimaryColor};
                     font-size: 10px; 
                 }
                 .container {
@@ -156,84 +161,123 @@ const generateHtml = (invoiceData: {
                 .header {
                     text-align: center;
                     margin-bottom: 20px;
+                    padding-bottom: 8px;
+                    border-bottom: 1px solid ${primaryColor};
                 }
                 .header h1 {
                     margin: 0;
-                    font-size: 18px; 
-                    color: #000;
+                    font-size: 20px; 
+                    color: ${primaryColor};
+                    text-transform: uppercase;
                 }
                 .header p {
-                    margin: 2px 0;
+                    margin: 1px 0;
                     font-size: 10px;
+                    color: ${textSecondaryColor};
                 }
+                
                 .details {
-                    margin-bottom: 20px;
-                    border-bottom: 1px solid #eee;
-                    padding-bottom: 10px;
-                }
-                .details-grid {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr; 
-                    gap: 10px;
+                    margin-bottom: 15px; 
+                    border: 1px solid #eee;
+                    padding: 10px; 
+                    border-radius: 6px;
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 10px;
                 }
                 .details-block {
                     font-size: 10px;
+                    line-height: 1.4;
+                    width: 49%; 
                 }
                 .details-block strong {
                     display: block;
-                    margin-bottom: 3px;
-                    color: #000;
+                    margin-bottom: 2px;
+                    color: ${textPrimaryColor};
+                    font-weight: 700;
+                    font-size: 11px;
                 }
+
                 table {
                     width: 100%;
                     border-collapse: collapse;
-                    margin-bottom: 20px;
+                    margin-bottom: 15px; 
                     font-size: 10px;
+                    table-layout: fixed;
                 }
                 th, td {
-                    border-bottom: 1px solid #eee;
-                    padding: 6px; 
+                    border-bottom: 1px solid #ddd;
+                    padding: 4px; 
                     text-align: left;
+                    vertical-align: top;
                 }
                 th {
-                    background-color: #f9f9f9;
+                    background-color: #F8F8F8;
                     font-weight: bold;
-                    color: #000;
+                    color: ${textPrimaryColor};
+                    text-transform: uppercase;
+                    font-size: 10px;
                 }
-                .text-right {
-                    text-align: right;
+                
+                /* --- ANCHOS DE COLUMNA --- */
+                th:nth-child(1), td:nth-child(1) { width: 38%; } /* Producto */
+                th:nth-child(2), td:nth-child(2) { width: 12%; } /* Cantidad */
+                th:nth-child(3), td:nth-child(3) { width: 16%; } /* P. Unit */
+                th:nth-child(4), td:nth-child(4) { width: 17%; } /* Descuento */
+                th:nth-child(5), td:nth-child(5) { width: 17%; } /* Subtotal */
+
+                .text-right { text-align: right; }
+                .text-center { text-align: center; }
+                
+                .product-name {
+                    max-width: 100%;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap; 
+                    font-size: 10px;
                 }
+                .discount-line {
+                    color: ${dangerColor}; 
+                    font-weight: 500;
+                }
+                
+                tfoot { border-top: 1px solid #ccc; }
                 tfoot td {
                     border-bottom: none;
+                    padding-top: 3px; 
+                    padding-bottom: 3px; 
                 }
                 .total-label {
-                    font-weight: bold;
+                    font-weight: 600;
                     text-align: right;
                     padding-right: 10px;
-                    color: #000;
+                    color: ${textPrimaryColor};
+                    font-size: 11px;
                 }
                 .total-value {
                     font-weight: bold;
-                    font-size: 12px; 
+                    font-size: 13px; 
                     text-align: right;
-                    color: #000;
+                    color: ${primaryColor}; 
                 }
                 .discount-text {
-                    color: #E53E3E; 
+                    color: ${dangerColor}; 
                     font-weight: bold;
                 }
+                
                 .notes {
                     font-size: 9px;
-                    color: #555;
-                    margin-top: 15px;
-                    padding-top: 10px;
-                    border-top: 1px solid #eee;
+                    color: ${textSecondaryColor};
+                    margin-top: 10px;
+                    padding: 8px;
+                    border-left: 3px solid ${primaryColor};
+                    background-color: #FFFBEB; 
                 }
                 .footer {
                     text-align: center;
-                    margin-top: 20px;
-                    font-size: 9px;
-                    color: #888;
+                    margin-top: 15px;
+                    font-size: 8px;
+                    color: ${textSecondaryColor};
                 }
             </style>
         </head>
@@ -245,26 +289,25 @@ const generateHtml = (invoiceData: {
                 </div>
 
                 <div class="details">
-                    <div class="details-grid">
-                        <div class="details-block">
-                            <strong>Venta ID:</strong> ${invoiceData.saleId}<br>
-                            <strong>Fecha:</strong> ${invoiceData.saleDate}<br>
-                            <strong>Vendedor:</strong> ${invoiceData.vendorName}
-                        </div>
-                        <div class="details-block">
-                            <strong>Cliente:</strong> ${invoiceData.clientName}<br>
-                            <strong>Dirección:</strong> ${invoiceData.clientAddress}<br>
-                            <strong>Zona:</strong> ${invoiceData.clientZone}
-                        </div>
+                    <div class="details-block">
+                        <strong>Cliente:</strong> ${invoiceData.clientName}<br>
+                        <strong>Dirección:</strong> ${invoiceData.clientAddress}<br>
+                        <strong>Zona:</strong> ${invoiceData.clientZone}
+                    </div>
+                    <div class="details-block">
+                        <strong>Nro Venta:</strong> ${invoiceData.saleId}<br>
+                        <strong>Fecha:</strong> ${invoiceData.saleDate}<br>
+                        <strong>Vendedor:</strong> ${invoiceData.vendorName}
                     </div>
                 </div>
 
                 <table>
                     <thead>
                         <tr>
-                            <th>Cant.</th>
                             <th>Producto</th>
+                            <th class="text-center">Cant.</th>
                             <th class="text-right">P. Unit.</th>
+                            <th class="text-right">Desc.</th>
                             <th class="text-right">Subtotal</th>
                         </tr>
                     </thead>
@@ -274,16 +317,16 @@ const generateHtml = (invoiceData: {
                     <tfoot>
                         ${invoiceData.totalDescuentoPromos > 0 ? `
                         <tr>
-                            <td colspan="3" class="total-label">Subtotal:</td>
+                            <td colspan="4" class="total-label">Subtotal Bruto:</td>
                             <td class="text-right">${formatCurrency(invoiceData.totalVentaBruto)}</td>
                         </tr>
                         <tr>
-                            <td colspan="3" class="total-label discount-text">Descuentos Aplicados:</td>
+                            <td colspan="4" class="total-label discount-text">Descuento Total Promos:</td>
                             <td class="text-right discount-text">-${formatCurrency(invoiceData.totalDescuentoPromos)}</td>
                         </tr>
                         ` : ''}
                          <tr>
-                            <td colspan="3" class="total-label">${invoiceData.totalDescuentoPromos > 0 ? 'Total Final:' : 'Total:'}</td>
+                            <td colspan="4" class="total-label">${invoiceData.totalDescuentoPromos > 0 ? 'Total Final:' : 'Total:'}</td>
                             <td class="total-value">${formatCurrency(invoiceData.totalVenta)}</td>
                         </tr>
                     </tfoot>
@@ -296,7 +339,7 @@ const generateHtml = (invoiceData: {
                 ` : ''}
 
                 <div class="footer">
-                    Documento no válido como factura.
+                    Documento generado por la app móvil Distribuidora.
                 </div>
             </div>
         </body>
