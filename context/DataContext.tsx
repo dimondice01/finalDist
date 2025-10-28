@@ -21,8 +21,7 @@ export interface CartItem extends Product {
     quantity: number;
     comision: number;
     precioOriginal?: number; // Precio antes de aplicar promociones (Opcional, usado para precio_especial)
-    // --- CAMBIO CLAVE AQUÍ: Descuento total aplicado a esta línea de ítem (por cantidad/bulk) ---
-    descuentoAplicado?: number; 
+    // 🔥 CAMBIO CRÍTICO: Eliminamos descuentoAplicado del item, ahora va en Sale.itemDiscounts
 }
 
 export interface Client {
@@ -95,10 +94,13 @@ export interface Sale {
     paymentMethod?: 'contado' | 'cuenta_corriente'; // <-- AÑADIDO
     numeroFactura?: string;
     
-    // --- CAMBIO CLAVE: AÑADIDO CAMPO FALTANTE ---
+    // --- CAMPOS DE TOTALES ---
     totalDescuentoPromociones?: number;
     pagoEfectivo?: number;
     pagoTransferencia?: number;
+
+    // 🔥 CAMBIO CRÍTICO: Mapa de descuentos por ID (FUERA del array de ítems)
+    itemDiscounts?: { [itemId: string]: number }; 
 }
 // --- FIN INTERFAZ SALE ---
 
@@ -200,15 +202,15 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     if (jsonData) {
                         try {
                             const parsed = parseDates ? parseWithDates(jsonData) : JSON.parse(jsonData);
-                            // Asegurar que los items de las ventas tengan precioOriginal y descuentoAplicado
+                            // Asegurar que los items de las ventas tengan precioOriginal
                             if (key === 'sales') {
                                 const salesData = (parsed as Sale[]).map(sale => ({
                                     ...sale,
+                                    // 🔥 Leemos el nuevo campo de descuentos
+                                    itemDiscounts: sale.itemDiscounts || {}, // Aseguramos que sea un objeto
                                     items: (sale.items || []).map(item => ({
                                         ...item,
                                         precioOriginal: item.precioOriginal ?? item.precio,
-                                        // AÑADIDO: Asegura que descuentoAplicado se inicialice si falta
-                                        descuentoAplicado: item.descuentoAplicado ?? 0, 
                                     }))
                                 }));
                                 setter(salesData);
@@ -301,14 +303,12 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 return { id: docSnap.id, ...data };
             };
 
-            // Procesador específico para Sales (asegura 'items', 'precioOriginal' y 'descuentoAplicado')
+            // Procesador específico para Sales (Ahora maneja el mapa de descuentos)
              const processFirebaseSale = (docSnap: any): Sale => {
-                const rawData = processFirebaseDoc(docSnap); // Primero convierte Timestamps
+                const rawData = processFirebaseDoc(docSnap); 
                 const items = (rawData.items || []).map((item: any) => ({
                     ...item,
                     precioOriginal: item.precioOriginal ?? item.precio,
-                    // AÑADIDO: Carga el descuento por ítem desde la base de datos
-                    descuentoAplicado: item.descuentoAplicado ?? 0,
                 }));
 
                 return {
@@ -331,6 +331,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 
                     pagoEfectivo: rawData.pagoEfectivo ?? 0,
                     pagoTransferencia: rawData.pagoTransferencia ?? 0,
+                    // 🔥 Nuevo campo (Aseguramos que sea un objeto)
+                    itemDiscounts: rawData.itemDiscounts || {}, 
                  } as Sale;
             };
 
@@ -391,6 +393,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 AsyncStorage.setItem('vendors', JSON.stringify(finalData.vendors)),
                 AsyncStorage.setItem('clients', JSON.stringify(finalData.clients)),
                 AsyncStorage.setItem('availableZones', JSON.stringify(finalData.availableZones)),
+                // La serialización de Sale ahora incluye el mapa itemDiscounts
                 AsyncStorage.setItem('sales', JSON.stringify(finalData.sales)), 
                 AsyncStorage.setItem('routes', JSON.stringify(finalData.routes)),
             ]);

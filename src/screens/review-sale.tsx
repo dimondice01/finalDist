@@ -9,14 +9,13 @@ import { collection, doc, increment, runTransaction, Timestamp, writeBatch } fro
 import * as Haptics from 'expo-haptics';
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Toast from 'react-native-toast-message';
+import Toast from 'react-native-toast-message'; // <-- AÑADIDO
 
 // --- Navegación ---
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator'; // Ajusta la ruta
 
 // --- Contexto, DB, Servicios, Estilos ---
-// Usamos CartItem como DataContextCartItem para referirnos a la versión del Contexto (que ya tiene descuentoAplicado)
 import { Sale as BaseSale, Client, CartItem as DataContextCartItem, useData, Vendor } from '../../context/DataContext'; // Ajusta la ruta
 import { auth, db } from '../../db/firebase-service'; // Ajusta la ruta
 // --- CORRECCIÓN: Importar generatePdf ---
@@ -24,14 +23,8 @@ import { generatePdf } from '../../services/pdfGenerator'; // Ajusta la ruta
 import { COLORS } from '../../styles/theme'; // Ajusta la ruta
 
 // --- Interfaces ---
-// Heredamos la interfaz de Contexto (que ya incluye 'descuentoAplicado')
-interface CartItem extends DataContextCartItem {} 
-
-// Usamos una interfaz auxiliar para incluir las propiedades locales necesarias en esta pantalla.
-interface CartItemWithDiscount extends CartItem { 
-    discount: number; 
-    promoDescription: string | null; 
-}
+interface CartItem extends DataContextCartItem {}
+interface CartItemWithDiscount extends CartItem { discount: number; promoDescription: string | null; }
 
 // Tipo de Props para la pantalla
 type ReviewSaleScreenProps = NativeStackScreenProps<RootStackParamList, 'ReviewSale'>;
@@ -99,9 +92,15 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         return vendor?.nombreCompleto || vendor?.nombre || 'Vendedor';
     }, [currentUser, vendors]);
 
-    // --- cartWithDiscounts (CÁLCULO Y ASIGNACIÓN EN MEMORIA) ---
-    const cartWithDiscounts = useMemo<{ items: CartItemWithDiscount[], totalDiscount: number }>(() => {
-        if (!Array.isArray(promotions) || !Array.isArray(cart)) return { items: [], totalDiscount: 0 };
+    // --- cartWithDiscounts (CÁLCULO Y CREACIÓN DEL MAPA) ---
+    const cartWithDiscounts = useMemo<{ 
+        items: CartItemWithDiscount[], 
+        totalDiscount: number, 
+        itemDiscounts: { [itemId: string]: number } // 🔥 MAPA DE DESCUENTOS POR ID PARA PERSISTENCIA Y PDF
+    }>(() => {
+        if (!Array.isArray(promotions) || !Array.isArray(cart)) return { items: [], totalDiscount: 0, itemDiscounts: {} };
+        
+        const itemDiscounts: { [itemId: string]: number } = {};
         
         const itemsWithDiscount = cart.map(item => {
             // --- CÁLCULO DEL DESCUENTO POR CANTIDAD/BULK ---
@@ -122,16 +121,23 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
                 }
             }
             
-            // 🔥 ASIGNACIÓN EN MEMORIA: Asigna el descuento por cantidad a 'descuentoAplicado'
+            // 🔥 GUARDAMOS EN EL MAPA EXTERNO (solo si hay > 0)
+            if (itemDiscount > 0) {
+                itemDiscounts[item.id] = Math.round(itemDiscount * 100) / 100;
+            }
+
+            // Devolvemos el ítem con el descuento temporal para la UI (discount)
             return { 
                 ...item, 
-                discount: itemDiscount, 
+                discount: itemDiscount, // Valor temporal para mostrar en la lista
                 promoDescription,
-                descuentoAplicado: itemDiscount, 
             } as CartItemWithDiscount; 
         });
         
-        return { items: itemsWithDiscount, totalDiscount: itemsWithDiscount.reduce((sum, i) => sum + i.discount, 0) };
+        // El totalDiscount es la suma total de los descuentos por BULK/CANTIDAD
+        const totalDiscountSum = itemsWithDiscount.reduce((sum, i) => sum + i.discount, 0);
+
+        return { items: itemsWithDiscount, totalDiscount: totalDiscountSum, itemDiscounts };
     }, [cart, promotions]);
 
     // Totales
@@ -141,12 +147,14 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
     const totalComision = useMemo(() => {
         return cartWithDiscounts.items.reduce((total, item) => {
             const comisionPorcentaje = item.comision || 0;
-            // Uso seguro del campo para evitar errores de TS y NaN
-            const itemDiscount = item.descuentoAplicado ?? 0;
+            
+            // 🔥 Leemos del mapa el descuento por BULK/CANTIDAD para restarlo de la base de cálculo
+            const itemDiscount = cartWithDiscounts.itemDiscounts[item.id] ?? 0;
             const subtotalItemFinal = (item.precio * item.quantity) - itemDiscount; 
+            
             return total + ((subtotalItemFinal * comisionPorcentaje) / 100);
         }, 0);
-    }, [cartWithDiscounts.items]); 
+    }, [cartWithDiscounts.items, cartWithDiscounts.itemDiscounts]); 
 
     const handleUpdateQuantity = useCallback((productId: string, amount: number) => {
         setCart(currentCart =>
@@ -156,7 +164,7 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         );
     }, []);
 
-    // --- FUNCIÓN DE GUARDADO (FIX DEFINITIVO DE PERSISTENCIA) ---
+    // --- FUNCIÓN DE GUARDADO (ACTUALIZADA PARA PASAR EL MAPA DIRECTAMENTE AL PDF) ---
     const handleConfirmSale = useCallback(async () => {
         if (cart.length === 0 || !clientData) { Alert.alert("Faltan datos", "El carrito o los datos del cliente no están listos."); return; }
         const vendedorId = auth.currentUser?.uid; if (!vendedorId) { Alert.alert("Error", "No se pudo identificar al vendedor."); return; }
@@ -165,20 +173,31 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         const netState = await NetInfo.fetch();
 
+        // 1. Mapear los ítems limpiando las propiedades temporales
+        const itemsToPersist = cartWithDiscounts.items.map(item => {
+            const { discount, promoDescription, ...itemBase } = item; 
+            return itemBase; // itemBase es un CartItem limpio para el array de ítems
+        });
+        
+        // 2. Calcular el descuento total (Precio Especial + Cantidad/Bulk)
+        const totalDescuentoPrecioEspecial = itemsToPersist.reduce((sum, item) => {
+            if (item.precioOriginal && item.precioOriginal > item.precio) {
+                return sum + ((item.precioOriginal - item.precio) * item.quantity);
+            }
+            return sum;
+        }, 0);
+        const totalDescuentoParaDB = Math.round((cartWithDiscounts.totalDiscount + totalDescuentoPrecioEspecial) * 100) / 100;
+
+        // 3. Crear el objeto para guardar en Firestore (SIN itemDiscounts)
         const saleDataForDb = {
             clienteId: clientId as string, clientName: clientName as string, vendedorId,
-            items: cartWithDiscounts.items.map(item => ({
-                productId: item.id, nombre: item.nombre, precio: item.precio, costo: item.costo, quantity: item.quantity,
-                
-                // 🔥 FIX CRÍTICO DE PERSISTENCIA: Usamos ?? 0 para garantizar que el campo se guarde siempre como número.
-                descuentoAplicado: item.descuentoAplicado ?? 0, 
-                
-                promoDescription: item.promoDescription, comision: item.comision,
-                // Propagamos precioOriginal si fue un descuento de precio_especial
-                ...( (item.precioOriginal && item.precioOriginal !== item.precio) && { precioOriginal: item.precioOriginal } )
-            })),
-            totalVentaBruto: cartTotal,
-            totalDescuento: cartWithDiscounts.totalDiscount,
+            items: itemsToPersist,
+            
+            // 🔥 CRÍTICO: NO INCLUIMOS itemDiscounts aquí, ya que el campo totalDescuentoPromociones
+            // ya incluye el total de ambos (precio especial + bulk).
+            
+            totalVentaBruto: cartTotal + cartWithDiscounts.totalDiscount,
+            totalDescuento: cartWithDiscounts.totalDiscount, 
             totalVenta: finalTotal,
             totalCosto: cart.reduce((sum, item) => sum + (item.costo || 0) * item.quantity, 0),
             totalComision: totalComision,
@@ -187,11 +206,12 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             saldoPendiente: finalTotal, 
             pagoEfectivo: 0, 
             pagoTransferencia: 0,
+            totalDescuentoPromociones: totalDescuentoParaDB, 
         };
 
         const newSaleRef = doc(collection(db, 'ventas'));
         try {
-            // Lógica de Transacción/Batch (sin cambios)
+            // Lógica de Transacción/Batch (se omite itemDiscounts de la persistencia)
             if (netState.isConnected) {
                 await runTransaction(db, async (transaction) => { 
                     const productRefs = cart.map(item => doc(db, 'productos', item.id));
@@ -203,7 +223,7 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
                         if (currentStock < item.quantity) { throw new Error(`Stock insuficiente para "${item.nombre}". Disponible: ${currentStock}.`); }
                     }
                     transaction.set(newSaleRef, saleDataForDb);
-                    cart.forEach((item, index) => { transaction.update(doc(db, 'productos', item.id), { stock: increment(-item.quantity) }); });
+                    cart.forEach((item) => { transaction.update(doc(db, 'productos', item.id), { stock: increment(-item.quantity) }); });
                 });
             } else { 
                 const batch = writeBatch(db);
@@ -215,22 +235,18 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             Toast.show({ type: 'success', text1: 'Venta Registrada', position: 'bottom', visibilityTime: 2000 });
 
-            // Preparar datos para PDF
+            // 4. Crear el objeto para el PDF (AÑADIENDO EL MAPA DE DESCUENTOS CALCULADO)
             const pdfData: BaseSale = {
+                // @ts-ignore (Copiamos los campos del objeto de DB, que ahora no incluye itemDiscounts)
                 ...saleDataForDb,
                 id: newSaleRef.id,
                 fecha: saleDataForDb.fecha.toDate(),
+                // 🔥 CRÍTICO: INYECTAMOS EL MAPA DE DESCUENTOS CALCULADO EN EL CLIENTE
+                itemDiscounts: cartWithDiscounts.itemDiscounts, 
                 // @ts-ignore
                 cliente: clientData,
                 distribuidora: { nombre: "Tu Distribuidora S.A.", direccion: "Calle Falsa 123, La Rioja", telefono: "380-4123456" }
             };
-
-            // Aseguramos que los items para el PDF tengan el descuentoAplicado correcto
-            pdfData.items = cartWithDiscounts.items.map(item => ({
-                 ...item,
-                 precioOriginal: item.precioOriginal ?? item.precio,
-                 descuentoAplicado: item.descuentoAplicado ?? 0, 
-            })); 
 
             const html = await generatePdf(pdfData, clientData!, currentVendorName);
             if (!html) throw new Error("No se pudo generar el contenido del PDF.");
@@ -261,10 +277,9 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             Alert.alert("Error", `No se pudo registrar la venta. ${error?.message || ''}`);
             setIsSaving(false);
         }
-    }, [cart, clientData, cartWithDiscounts, cartTotal, finalTotal, totalComision, navigation, currentVendorName, currentUser, clientId, clientName]); 
+    }, [cart, clientData, cartWithDiscounts, cartTotal, finalTotal, totalComision, navigation, currentVendorName, currentUser, clientId, clientName]); // Dependencias
 
-    // ... (El resto del componente sin cambios) ...
-    
+    // --- renderItem memoizado ---
     const renderCartItem = useCallback(({ item }: { item: CartItemWithDiscount }) => (
         <ReviewItemCard
             item={item}
@@ -302,12 +317,10 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             
             {/* Resumen (con totales corregidos) */}
             <View style={styles.summaryContainer}>
-                {cartWithDiscounts.totalDiscount > 0 && (
-                    <View style={styles.totalRow}>
-                        <Text style={styles.originalTotalText}>Subtotal (c/dto. precio):</Text>
-                        <Text style={styles.originalTotalAmount}>${cartTotal.toFixed(2)}</Text>
-                    </View>
-                )}
+                <View style={styles.totalRow}>
+                    <Text style={styles.originalTotalText}>Subtotal (c/dto. precio):</Text>
+                    <Text style={styles.originalTotalAmount}>${cartTotal.toFixed(2)}</Text>
+                </View>
                 {cartWithDiscounts.totalDiscount > 0 && (
                     <View style={styles.totalRow}>
                         <Text style={styles.discountText}>Descuentos (Cantidad/Promo):</Text>

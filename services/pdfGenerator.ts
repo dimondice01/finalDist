@@ -1,3 +1,4 @@
+// services/pdfGenerator.ts
 // --- Importamos las interfaces estrictas ---
 import { Sale as BaseSale, CartItem, Client } from '../context/DataContext';
 
@@ -10,6 +11,7 @@ const formatCurrency = (value: number = 0): string => {
 const formatDate = (dateInput: { seconds: number; toDate?: () => Date } | Date = new Date()): string => {
     let date: Date;
 
+    // Lógica robusta de conversión de fechas
     if (dateInput instanceof Date) {
         date = dateInput;
     }
@@ -38,7 +40,7 @@ const formatDate = (dateInput: { seconds: number; toDate?: () => Date } | Date =
 };
 
 
-// --- FUNCIÓN PRINCIPAL ---
+// --- FUNCIÓN PRINCIPAL (AÑADE EL MAPA DE DESCUENTOS AL invoiceData) ---
 export const generatePdf = async (
     sale: BaseSale,
     client: Client, // <-- Argumento 2: Cliente completo
@@ -51,13 +53,10 @@ export const generatePdf = async (
         return null;
     }
 
-    // 2. Mapear datos (Usando los campos correctos de la BD)
+    // 2. Mapear datos
     const invoiceData = {
         saleId: sale.id?.substring(0, 8) || 'N/A',
-        
-        // Usa la función 'formatDate' recién corregida y el campo 'fecha'
         saleDate: formatDate(sale.fecha),
-        
         clientName: client?.nombreCompleto || client?.nombre || 'Consumidor Final',
         clientAddress: client?.direccion || '-',
         clientZone: client?.barrio || client?.localidad || '-',
@@ -65,14 +64,18 @@ export const generatePdf = async (
         vendorName: vendorName || 'Vendedor',
         items: sale.items || [],
         
+        // 🔥 CRÍTICO: Leemos el mapa de descuentos que viene *directamente* de review-sale.tsx
+        // Si no está, usamos un objeto vacío.
+        itemDiscounts: sale.itemDiscounts || {},
+        
         // Usa el campo 'totalVenta'
         totalVenta: sale.totalVenta || 0,
         observaciones: sale.observaciones || '',
 
-        // Calcula brutos (Subtotal antes de cualquier descuento)
+        // Calcula brutos (Suma de precios originales * cantidad)
         totalVentaBruto: (sale.items || []).reduce((acc, item) => acc + (item.precioOriginal || item.precio) * item.quantity, 0),
         
-        // Lee el total de descuentos (ya calculado en create-sale.tsx)
+        // Lee el total de descuentos (ya calculado y sumado en review-sale.tsx)
         totalDescuentoPromos: Number(sale.totalDescuentoPromociones || 0),
     };
 
@@ -80,10 +83,15 @@ export const generatePdf = async (
     const html = generateHtml(invoiceData);
 
     return html; 
+    
+    /*
+    // La lógica de Print.printToFileAsync y Base64 ya no va aquí para que generatePdf devuelva solo el HTML como se vio en review-sale.tsx
+    // Ahora, review-sale.tsx llama a generatePdf, recibe el HTML y luego hace printToFileAsync y Sharing.
+    */
 };
 
 
-// --- Plantilla HTML para el PDF (COLUMNA DESC CORREGIDA) ---
+// --- Plantilla HTML para el PDF (LEE EL MAPA DE DESCUENTOS) ---
 const generateHtml = (invoiceData: {
     saleId: string;
     saleDate: string;
@@ -96,21 +104,23 @@ const generateHtml = (invoiceData: {
     observaciones: string;
     totalVentaBruto: number;
     totalDescuentoPromos: number; 
+    // 🔥 Acepta el mapa de descuentos (clave para el detalle por ítem)
+    itemDiscounts: { [itemId: string]: number };
 }) => {
     // Generar filas de la tabla de productos
    const itemsRows = invoiceData.items.map(item => {
         
-        // 1. Descuento por cambio de precio (precio_especial: Ya aplicado al item.precio)
+        // 1. Descuento por cambio de precio (precio_especial: precio original - precio final)
         const discountPriceChangePerUnit = (item.precioOriginal && item.precioOriginal > item.precio)
             ? (item.precioOriginal - item.precio)
             : 0;
             
-        // Descuento total por cambio de precio unitario en la línea
+        // Descuento total de la línea por precio especial
         const unitPriceDiscountTotal = Math.round(discountPriceChangePerUnit * item.quantity * 100) / 100;
         
-        // 2. Descuento por Cantidad/Bulk (LLEVA_X_PAGA_Y)
-        // 🔥 FIX CRÍTICO: Acceso seguro a la propiedad tipada `descuentoAplicado`
-        const bulkDiscountTotal = item.descuentoAplicado ?? 0; 
+        // 2. Descuento por Cantidad/Bulk (LLEVA_X_PAGA_Y, etc.)
+        // 🔥 Leemos el descuento del mapa externo
+        const bulkDiscountTotal = invoiceData.itemDiscounts?.[item.id] ?? 0; 
         
         // 3. Total de descuentos para esta línea (SUMA DE AMBOS)
         const totalLineDiscount = Math.round((unitPriceDiscountTotal + bulkDiscountTotal) * 100) / 100;
@@ -118,8 +128,9 @@ const generateHtml = (invoiceData: {
         // 4. Precio unitario a mostrar (el precio unitario original para justificar el descuento)
         const unitPriceDisplay = item.precioOriginal || item.precio; 
 
-        // 5. Subtotal Final de la Línea: (Precio con Dto. Unitario * Cantidad) - Dto. por Cantidad
-        const finalLineSubtotal = Math.round(((item.precio * item.quantity) - bulkDiscountTotal) * 100) / 100;
+        // 5. Subtotal Final de la Línea: (Precio con Dto. Precio_Especial * Cantidad) - Dto. Bulk
+        // Esto es: (4200 * 12) - 900 = 49500 (Ejemplo del chat)
+        const finalItemPrice = Math.round(((item.precio * item.quantity) - bulkDiscountTotal) * 100) / 100;
 
         return `
             <tr>
@@ -129,7 +140,7 @@ const generateHtml = (invoiceData: {
                 <td class="text-right ${totalLineDiscount > 0.01 ? 'discount-line' : ''}">
                     ${totalLineDiscount > 0.01 ? `-${formatCurrency(totalLineDiscount)}` : '-'}
                 </td>
-                <td class="text-right">${formatCurrency(finalLineSubtotal)}</td>
+                <td class="text-right">${formatCurrency(finalItemPrice)}</td>
             </tr>
         `;
     }).join('');
