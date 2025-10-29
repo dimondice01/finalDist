@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // Se añade 'updateDoc' a la lista de importación
-import { collection, doc, getDoc, getDocs, onSnapshot, query, Timestamp, updateDoc, where } from 'firebase/firestore';
+// --- INICIO DE CAMBIOS: Importaciones ---
+import { collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, Timestamp, updateDoc, where } from 'firebase/firestore';
+// --- FIN DE CAMBIOS: Importaciones ---
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import Toast from 'react-native-toast-message';
 import { auth, db } from '../db/firebase-service';
@@ -88,7 +90,12 @@ export interface Sale {
     totalCosto: number;
     totalComision: number;
     observaciones: string;
-    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Pago' | 'Repartiendo' | 'Anulada'; // <-- Nombre correcto
+    
+    // --- INICIO DE CAMBIOS: Interfaces ---
+    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada'; // <-- CAMBIO DE NOMBRE
+    tipo: 'venta' | 'reposicion'; // <-- CAMPO NUEVO
+    // --- FIN DE CAMBIOS: Interfaces ---
+
     fecha: { seconds: number } | Date; // <-- Nombre correcto
     saldoPendiente: number;
     paymentMethod?: 'contado' | 'cuenta_corriente'; // <-- AÑADIDO
@@ -128,6 +135,11 @@ export interface IDataContext {
     refreshAllData: () => Promise<void>;
     isLoading: boolean;
     isInitialDataLoaded: boolean; // <-- NUEVA BANDERA
+
+    // --- INICIO DE CAMBIOS: Nuevas Funciones ---
+    crearVentaConStock: (saleData: any) => Promise<string>;
+    anularVentaConStock: (saleId: string, items: CartItem[]) => Promise<void>;
+    // --- FIN DE CAMBIOS: Nuevas Funciones ---
 }
 
 // Valor por defecto para el contexto
@@ -144,6 +156,11 @@ const defaultContextValue: IDataContext = {
     refreshAllData: async () => { console.warn("Llamada a refreshAllData por defecto"); },
     isLoading: true,
     isInitialDataLoaded: false, // <-- NUEVO VALOR POR DEFECTO
+    
+    // --- INICIO DE CAMBIOS: Valores por defecto ---
+    crearVentaConStock: async (saleData: any) => { console.warn("Llamada a crearVentaConStock por defecto"); return "error"; },
+    anularVentaConStock: async (saleId: string, items: CartItem[]) => { console.warn("Llamada a anularVentaConStock por defecto"); },
+    // --- FIN DE CAMBIOS: Valores por defecto ---
 };
 
 const DataContext = createContext<IDataContext>(defaultContextValue);
@@ -324,7 +341,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     totalCosto: rawData.totalCosto ?? 0,
                     totalComision: rawData.totalComision ?? 0,
                     observaciones: rawData.observaciones || '',
-                    estado: rawData.estado || rawData.status || 'Pendiente de Pago', 
+                    // --- INICIO CAMBIO DE ESTADO (Refactor) ---
+                    // Se mapea 'Pendiente de Pago' al nuevo estado
+                    estado: rawData.estado === 'Pendiente de Pago' ? 'Pendiente de Entrega' : (rawData.estado || rawData.status || 'Pendiente de Entrega'), 
+                    tipo: rawData.tipo || 'venta', // Asumimos 'venta' si no existe
+                    // --- FIN CAMBIO DE ESTADO ---
                     fecha: rawData.fecha || rawData.saleDate || new Date(0), 
                     saldoPendiente: rawData.saldoPendiente ?? 0,
                     paymentMethod: rawData.paymentMethod,
@@ -504,6 +525,92 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         await fetchDataAndStore(true);
     }, [fetchDataAndStore]);
 
+    
+    // --- INICIO DE CAMBIOS: Nuevas Funciones de Lógica de Negocio ---
+    
+    /**
+     * Crea una venta y descuenta el stock, todo en una transacción.
+     * Arroja un error si el stock es insuficiente.
+     */
+    const crearVentaConStock = useCallback(async (saleData: any): Promise<string> => {
+        
+        // Generamos la referencia de la venta *fuera* de la transacción
+        // para poder devolver el ID al final.
+        const saleRef = doc(collection(db, "sales"));
+
+        await runTransaction(db, async (transaction) => {
+            const items = saleData.items as CartItem[];
+
+            if (!items || items.length === 0) {
+                throw new Error("No se pueden procesar 0 items.");
+            }
+
+            // 1. VERIFICAR Y DESCONTAR STOCK
+            for (const item of items) {
+                const productRef = doc(db, "productos", item.id); // Asumimos que item.id es el ID del producto
+                const productSnap = await transaction.get(productRef);
+
+                if (!productSnap.exists()) {
+                    throw new Error(`Producto ${item.nombre} no encontrado.`);
+                }
+                
+                const currentStock = productSnap.data().stock;
+                if (currentStock === undefined || currentStock < item.quantity) {
+                    throw new Error(`Stock insuficiente para ${item.nombre}. Disponible: ${currentStock || 0}`);
+                }
+                
+                const newStock = currentStock - item.quantity;
+                transaction.update(productRef, { stock: newStock });
+            }
+
+            // 2. CREAR EL DOCUMENTO DE VENTA
+            transaction.set(saleRef, {
+                ...saleData,
+                fecha: serverTimestamp() // Asegura la fecha del servidor
+            });
+        });
+
+        // Si la transacción tuvo éxito, devolvemos el ID
+        return saleRef.id;
+
+    }, [db]); // Depende de 'db'
+
+    /**
+     * Anula una venta y revierte el stock, todo en una transacción.
+     */
+    const anularVentaConStock = useCallback(async (saleId: string, items: CartItem[]) => {
+        
+        await runTransaction(db, async (transaction) => {
+            if (!items || items.length === 0) {
+                throw new Error("No hay items para revertir.");
+            }
+
+            // 1. REVERTIR STOCK
+            for (const item of items) {
+                const productRef = doc(db, "products", item.id);
+                const productSnap = await transaction.get(productRef);
+
+                if (productSnap.exists()) {
+                    const currentStock = productSnap.data().stock || 0;
+                    const newStock = currentStock + item.quantity;
+                    transaction.update(productRef, { stock: newStock });
+                } else {
+                    // Si el producto no existe, solo logueamos, no detenemos la anulación
+                    console.warn(`Producto ${item.nombre} (ID: ${item.id}) no encontrado al revertir stock.`);
+                }
+            }
+
+            // 2. ANULAR LA VENTA
+            const saleRef = doc(db, "sales", saleId);
+            transaction.update(saleRef, { 
+                estado: "Anulada",
+                saldoPendiente: 0 
+            });
+        });
+
+    }, [db]);
+    // --- FIN DE CAMBIOS: Nuevas Funciones ---
+
 
     // Valor que se provee a los componentes hijos
     const value: IDataContext = {
@@ -519,6 +626,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         refreshAllData,
         isLoading,
         isInitialDataLoaded,
+        
+        // --- INICIO DE CAMBIOS: Exportar Funciones ---
+        crearVentaConStock,
+        anularVentaConStock,
+        // --- FIN DE CAMBIOS: Exportar Funciones ---
     };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

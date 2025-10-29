@@ -7,7 +7,7 @@ import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
 // Eliminamos el 'useRoute' redundante ya que usamos las props.
-import { RouteDetailScreenProps } from '../navigation/AppNavigator';
+import type { RouteDetailScreenProps } from '../navigation/AppNavigator';
 
 import { useData } from '../../context/DataContext';
 import { db } from '../../db/firebase-service';

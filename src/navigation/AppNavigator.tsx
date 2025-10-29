@@ -5,6 +5,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { CartItem, Client } from '../../context/DataContext';
 
 // --- Importa tus pantallas (Ajusta rutas si moviste carpetas) ---
 import AddClientScreen from '../screens/add-client';
@@ -46,14 +47,20 @@ export type RootStackParamList = {
     clientId: string;
     clientName?: string;    // Nombre para mostrar
     saleToEdit?: BaseSale; // Objeto de venta para editar
+    saleId?: string;     // Para editar
+  isEditing?: string;  // Para editar
+  isReposicion?: boolean;
   };
   // 🔥 CORRECCIÓN: Parámetros para ReviewSale (saleIdToEdit es opcional)
   ReviewSale: {
-    clientId: string;
-    clientName?: string;
-    cart: string;          // Carrito serializado
-    saleIdToEdit?: string; // ID de la venta si se está editando
-  };
+    cliente: Client; // <-- Cambiado: Espera el objeto Client
+    cart: CartItem[]; // <-- Cambiado: Espera un array de CartItem
+    isReposicion: boolean;
+    totalVenta: number;
+    totalCosto: number;
+    totalComision: number;
+    totalDescuento: number; // Mantenemos por si acaso
+};
   SaleDetail: { saleId: string };
   Reports: undefined;
   Promotions: undefined;

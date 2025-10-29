@@ -178,7 +178,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
 // =================================================================================
 // --- PANTALLA DE DETALLE DE RUTA (Stack Screen) ---
 // =================================================================================
-const DriverRouteDetailScreen = ({ navigation, route: routeProps }: RouteDetailScreenProps) => {
+const DriverScreen = ({ navigation, route: routeProps }: RouteDetailScreenProps) => {
     const { routeId } = routeProps.params;
     
     // routes de useData tiene el tipo simple Route, lo casteamos a DriverRoute.
@@ -424,4 +424,4 @@ const styles = StyleSheet.create({
     activeTabText: { color: COLORS.primaryDark },
 });
 
-export default DriverRouteDetailScreen;
+export default DriverScreen;

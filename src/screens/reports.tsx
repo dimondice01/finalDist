@@ -54,7 +54,7 @@ const getStatusColor = (status: Sale['estado']) => {
     switch (status) {
         case 'Pagada': return COLORS.success;
         case 'Adeuda': return COLORS.warning;
-        case 'Pendiente de Pago': return COLORS.warning;
+        case 'Pendiente de Entrega': return COLORS.warning;
         case 'Repartiendo': return COLORS.primary;
         case 'Anulada': return COLORS.danger;
         default: return COLORS.disabled;

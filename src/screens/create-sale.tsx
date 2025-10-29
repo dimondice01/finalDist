@@ -5,7 +5,10 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Print from 'expo-print'; // Necesario para generar el archivo PDF local
 import * as Sharing from 'expo-sharing';
-import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+// --- INICIO DE CAMBIOS: Importaciones ---
+// Quitamos addDoc y collection. Dejamos serverTimestamp y updateDoc para EDITAR
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+// --- FIN DE CAMBIOS: Importaciones ---
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -36,7 +39,7 @@ import {
     Client,
     Product,
     Promotion,
-    useData,
+    useData, // <-- ¡Importante!
     Vendor
 } from '../../context/DataContext'; // Ajusta la ruta si es necesario
 import { auth, db } from '../../db/firebase-service'; // Ajusta la ruta si es necesario
@@ -60,22 +63,25 @@ interface SaleDataToSave {
     fechaUltimaEdicion?: any;
     totalDescuentoPromociones: number;
     observaciones: string; // Ya corregido para ser obligatorio
+    // --- INICIO DE CAMBIOS: Interfaz ---
+    tipo: 'venta' | 'reposicion'; // <-- AÑADIDO
+    // --- FIN DE CAMBIOS: Interfaz ---
 }
 
 // --- Componente Modal Selector de Categoría (REEMPLAZO DEL PICKER) ---
-const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, onSelect }: { 
-    visible: boolean; 
-    onClose: () => void; 
-    categories: Category[]; 
-    selectedId: string; 
-    onSelect: (id: string) => void; 
+const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    categories: Category[];
+    selectedId: string;
+    onSelect: (id: string) => void;
 }) => {
     // Data incluye "Todas las Categorías"
     const dataWithAllOption: Category[] = useMemo(() => [
         { id: '', nombre: 'Todas las Categorías' } as Category,
         ...categories
     ], [categories]);
-    
+
     const renderItem = useCallback(({ item }: { item: Category }) => (
         <TouchableOpacity
             style={styles.modalItem}
@@ -157,7 +163,7 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
         >
             <View style={styles.cardInfo}>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre}</Text>
-                
+
                 {/* Precios */}
                 {displayPrice !== originalPrice ? (
                     <View style={styles.priceContainer}>
@@ -194,10 +200,19 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
 // --- FIN Componente Memoizado ---
 
 
-const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => { 
+const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     // --- Obtener parámetros de useRoute ---
     const route = useRoute();
-    const { clientId, saleId, isEditing } = route.params as { clientId?: string, saleId?: string, isEditing?: string }; 
+    // --- INICIO DE CAMBIOS: Parámetros de Ruta ---
+    // Añadimos 'isReposicion' y 'cliente' (como 'initialCliente')
+    const { clientId, saleId, isEditing, isReposicion = false, cliente: initialCliente } = route.params as {
+        clientId?: string,
+        saleId?: string,
+        isEditing?: string,
+        isReposicion?: boolean,
+        cliente?: Client
+    };
+    // --- FIN DE CAMBIOS: Parámetros de Ruta ---
 
     const editMode = isEditing === 'true';
 
@@ -209,7 +224,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         sales,
         promotions,
         isLoading: isDataLoading,
-        refreshAllData
+        refreshAllData,
+        // --- INICIO DE CAMBIOS: Obtener función de Contexto ---
+        crearVentaConStock // <-- OBTENEMOS LA NUEVA FUNCIÓN
+        // --- FIN DE CAMBIOS: Obtener función de Contexto ---
     } = useData();
 
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -232,10 +250,13 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid);
     }, [currentUser, vendors]);
 
+    // --- INICIO DE CAMBIOS: Memo del Cliente ---
     const client = useMemo(() => {
+        if (initialCliente) return initialCliente; // Damos prioridad al objeto 'cliente'
         if (!clientId || !clients) return null;
         return clients.find((c: Client) => c.id === clientId);
-    }, [clientId, clients]);
+    }, [clientId, clients, initialCliente]);
+    // --- FIN DE CAMBIOS: Memo del Cliente ---
 
     // Obtener nombre de la categoría seleccionada para el botón
     const selectedCategoryName = useMemo(() => {
@@ -256,10 +277,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 setCart(cartItems);
             } else {
                 Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró la venta para editar.', position: 'bottom' });
-                navigation.goBack(); 
+                navigation.goBack();
             }
         }
-    }, [editMode, saleId, sales, navigation]); 
+    }, [editMode, saleId, sales, navigation]);
 
     // --- MEJORA VISUAL (3/3): useEffect de filtrado y orden ---
     useEffect(() => {
@@ -278,11 +299,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             if (editMode) {
                 const aInCart = cart.some(cartItem => cartItem.id === a.id);
                 const bInCart = cart.some(cartItem => cartItem.id === b.id);
-                
+
                 if (aInCart && !bInCart) return -1; // 'a' (en carrito) va primero
                 if (!aInCart && bInCart) return 1;  // 'b' (en carrito) va primero
             }
-            
+
             // Si ambos están (o no están) en el carrito, ordenar alfabéticamente
             return (a.nombre || '').localeCompare(b.nombre || '');
         });
@@ -354,27 +375,27 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
     // --- BLOQUE USEMEMO (Sin cambios, ya estaba correcto) ---
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
-         let sub: number = 0; 
+         let sub: number = 0;
          let comision: number = 0;
          let costo: number = 0;
          let descuentoPrecioEspecial: number = 0;
-         let descuentoPorCantidadTotal: number = 0; 
+         let descuentoPorCantidadTotal: number = 0;
          const itemsModificados: (CartItem & { descuentoPorCantidadAplicado?: number })[] = [];
-         
+
          cart.forEach(item => {
              const subtotalItemBase = item.precio * item.quantity;
-             sub += subtotalItemBase; 
+             sub += subtotalItemBase;
              comision += item.comision;
              costo += (item.costo || 0) * item.quantity;
-             
-             if (item.precioOriginal && item.precioOriginal > item.precio) { 
-                 descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity; 
+
+             if (item.precioOriginal && item.precioOriginal > item.precio) {
+                 descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity;
              }
 
              const quantity = item.quantity;
-             const itemPrice = item.precio; 
-             let descuentoPorCantidadItem: number = 0; 
-             
+             const itemPrice = item.precio;
+             let descuentoPorCantidadItem: number = 0;
+
              const quantityPromosForProduct = promotions.filter(promo => {
                  const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
                  const isProductInPromo = promo.productoIds?.includes(item.id);
@@ -382,49 +403,49 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                  const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
                  return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
              });
-             
+
              if (quantityPromosForProduct.length > 0) {
-                const promo = quantityPromosForProduct[0]; 
-                
-                if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
-                    const X = promo.condicion.cantidadMinima; 
-                    const Y = promo.beneficio.cantidadAPagar;
-                    const itemsGratisPorLote = X - Y;
-                    
-                    if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
-                        const numLotes = Math.floor(quantity / X);
-                        const itemsGratisTotales = numLotes * itemsGratisPorLote;
-                        descuentoPorCantidadItem = itemsGratisTotales * itemPrice; 
-                    }
-                } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
-                    const porcentaje = promo.beneficio.porcentajeDescuento;
-                    
-                    if (porcentaje > 0 && porcentaje <= 100) {
-                        const subtotalItem = itemPrice * quantity; 
-                        const descuentoCalculado = subtotalItem * (porcentaje / 100);
-                        descuentoPorCantidadItem = descuentoCalculado; 
-                    }
-                }
+                 const promo = quantityPromosForProduct[0];
+
+                 if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
+                     const X = promo.condicion.cantidadMinima;
+                     const Y = promo.beneficio.cantidadAPagar;
+                     const itemsGratisPorLote = X - Y;
+
+                     if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
+                         const numLotes = Math.floor(quantity / X);
+                         const itemsGratisTotales = numLotes * itemsGratisPorLote;
+                         descuentoPorCantidadItem = itemsGratisTotales * itemPrice;
+                     }
+                 } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
+                     const porcentaje = promo.beneficio.porcentajeDescuento;
+
+                     if (porcentaje > 0 && porcentaje <= 100) {
+                         const subtotalItem = itemPrice * quantity;
+                         const descuentoCalculado = subtotalItem * (porcentaje / 100);
+                         descuentoPorCantidadItem = descuentoCalculado;
+                     }
+                 }
              }
-             
+
              descuentoPorCantidadTotal += descuentoPorCantidadItem;
 
              itemsModificados.push({
                  ...item,
-                 precioOriginal: item.precioOriginal ?? item.precio, 
-                 descuentoPorCantidadAplicado: descuentoPorCantidadItem 
+                 precioOriginal: item.precioOriginal ?? item.precio,
+                 descuentoPorCantidadAplicado: descuentoPorCantidadItem
              });
          });
-         
+
          const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidadTotal;
-         
-         return { 
-             subtotal: sub, 
-             totalComision: comision, 
-             totalCosto: costo, 
-             totalFinal: sub - descuentoPorCantidadTotal, 
-             totalDescuentoPromociones: totalDescuentoTotal, 
-             itemsConDescuentosAplicados: itemsModificados 
+
+         return {
+             subtotal: sub,
+             totalComision: comision,
+             totalCosto: costo,
+             totalFinal: sub - descuentoPorCantidadTotal,
+             totalDescuentoPromociones: totalDescuentoTotal,
+             itemsConDescuentosAplicados: itemsModificados
          };
     }, [cart, promotions, clientId]);
     // --- FIN DEL BLOQUE USEMEMO ---
@@ -437,32 +458,33 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
 
         try {
-            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName); 
+            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName);
             if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
-            
+
             const { uri } = await Print.printToFileAsync({ html: htmlContent });
             if (!uri) { throw new Error("printToFileAsync no devolvió URI."); }
 
             const isAvailable = await Sharing.isAvailableAsync();
             if (!isAvailable) { throw new Error("La función de compartir no está disponible."); }
 
-            await Sharing.shareAsync(uri, { 
+            await Sharing.shareAsync(uri, {
                 mimeType: 'application/pdf',
                 dialogTitle: `Compartir Comprobante ${saleDataForPdf.id}`,
             });
-            
+
         } catch (shareError: any) {
            console.error("handleShare: Error con expo-sharing/print:", shareError);
            if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
-               Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
+              Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
            }
         }
-    }, [refreshAllData]); 
+    }, [refreshAllData]);
     // --- FIN DE handleShare ---
 
 
-   // --- handleCheckout (Sin cambios) ---
-   const handleCheckout = useCallback(async () => {
+    // --- INICIO DE CAMBIOS: confirmarVenta (antes handleCheckout) ---
+    // 1. RENOMBRAMOS 'handleCheckout' a 'confirmarVenta'
+    const confirmarVenta = useCallback(async () => {
         if (isSubmitting) return;
         if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos del cliente o vendedor."); return; }
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
@@ -470,7 +492,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setIsSubmitting(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        const saleDataToSave: SaleDataToSave = {
+        // Preparamos los datos
+        const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { // Omitimos 'fecha' ya que la maneja el contexto
             clienteId: client.id,
             clientName: client.nombre,
             vendedorId: currentVendedor.id,
@@ -482,36 +505,62 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             totalVenta: totalFinal,
             totalCosto: totalCosto,
             totalComision: totalComision,
-            estado: 'Pendiente de Pago',
+            estado: 'Pendiente de Entrega', // Ya estaba correcto
             saldoPendiente: totalFinal,
             totalDescuentoPromociones: totalDescuentoPromociones,
-            observaciones: originalSale?.observaciones || '', 
-            ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : { fecha: serverTimestamp() })
+            observaciones: originalSale?.observaciones || '',
+            tipo: 'venta', // <-- AÑADIDO TIPO POR DEFECTO
+            ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {})
         };
 
         try {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
+                // Lógica de EDICIÓN (no toca stock por ahora)
                 const saleRef = doc(db, 'ventas', originalSale.id);
                 await updateDoc(saleRef, saleDataToSave as any);
                 Toast.show({ type: 'success', text1: 'Venta Actualizada', position: 'bottom', visibilityTime: 2000 });
+
             } else {
-                const docRef = await addDoc(collection(db, 'ventas'), saleDataToSave as any);
-                savedSaleId = docRef.id;
-                Toast.show({ type: 'success', text1: 'Venta Creada', position: 'bottom', visibilityTime: 2000 });
+                // --- LÓGICA DE NUEVA VENTA (MODIFICADA) ---
+                // Preparamos datos finales con el tipo
+                const finalSaleData = {
+                    ...saleDataToSave,
+                    tipo: 'venta' as 'venta' | 'reposicion'
+                };
+
+                // --- INICIO DE CAMBIOS: Añadir Logs ---
+                console.log("Intentando descontar stock y crear venta...");
+                console.log("Datos de la venta:", JSON.stringify(finalSaleData, null, 2)); // Log detallado de datos
+                // --- FIN DE CAMBIOS: Añadir Logs ---
+
+                // Llamamos a la función del CONTEXTO
+                savedSaleId = await crearVentaConStock(finalSaleData);
+
+                // --- INICIO DE CAMBIOS: Añadir Log ---
+                console.log("Venta creada con ID:", savedSaleId);
+                // --- FIN DE CAMBIOS: Añadir Log ---
+
+                Toast.show({ type: 'success', text1: 'Venta Creada', text2: 'Stock descontado.', position: 'bottom', visibilityTime: 2000 });
+                // --- FIN LÓGICA MODIFICADA ---
             }
 
+            // --- Lógica de Compartir (sin cambios) ---
             const completeSaleDataForPdf: BaseSale = {
-                ...(originalSale as BaseSale || {} as BaseSale), 
+                ...(originalSale as BaseSale || {} as BaseSale),
                 ...saleDataToSave,
                 id: savedSaleId,
-                observaciones: saleDataToSave.observaciones, 
+                observaciones: saleDataToSave.observaciones,
                 // @ts-ignore
-                fecha: new Date(), 
+                fecha: new Date(),
                 items: itemsConDescuentosAplicados,
+                // --- INICIO DE CAMBIOS: Forzar tipo correcto ---
+                estado: saleDataToSave.estado as BaseSale['estado'],
+                tipo: saleDataToSave.tipo as BaseSale['tipo'],
+                // --- FIN DE CAMBIOS: Forzar tipo correcto ---
             };
-            
+
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
 
             Alert.alert(
@@ -519,15 +568,15 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 "¿Desea generar y compartir el comprobante ahora?",
                 [
                     { text: "No, Volver", onPress: () => {
-                        setIsSubmitting(false);
-                        navigation.goBack(); 
+                        setIsSubmitting(false); // Resetear aquí también
+                        navigation.goBack();
                     }, style: "cancel" },
                     { text: "Sí, Compartir", onPress: async () => {
                         try {
-                             await handleShare(completeSaleDataForPdf, client, vendorName);
+                            await handleShare(completeSaleDataForPdf, client, vendorName);
                         } finally {
-                             setIsSubmitting(false);
-                             navigation.goBack(); 
+                            setIsSubmitting(false); // Resetear después de compartir
+                            navigation.goBack();
                         }
                     } }
                 ],
@@ -535,18 +584,58 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             );
 
         } catch (error: any) {
-            console.error("Error detallado al guardar la venta:", error);
-             const firestoreError = error.message || 'No se pudo completar la operación.';
-            Toast.show({ type: 'error', text1: 'Error al Guardar', text2: firestoreError, position: 'bottom' });
-            setIsSubmitting(false);
+            // --- INICIO DE CAMBIOS: Log de Error Mejorado ---
+            console.error("Error capturado en confirmarVenta:", error); // Log más detallado
+            const errorMessage = error.message.includes("Stock insuficiente")
+                ? error.message // Mostramos el error de stock específico
+                : (error.message || 'No se pudo completar la operación.');
+            // --- FIN DE CAMBIOS: Log de Error Mejorado ---
+
+            Toast.show({ type: 'error', text1: 'Error al Guardar', text2: errorMessage, position: 'bottom' });
+            setIsSubmitting(false); // Importante: desbloquear el botón
         }
+        // Quitamos el finally para resetear isSubmitting en los callbacks del Alert o en el catch
     }, [
-        isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision, 
-        totalDescuentoPromociones, 
-        itemsConDescuentosAplicados, 
-        editMode, originalSale, handleShare, refreshAllData, navigation, clientId
+        isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision,
+        totalDescuentoPromociones,
+        itemsConDescuentosAplicados,
+        editMode, originalSale, handleShare, refreshAllData, navigation, clientId,
+        crearVentaConStock // <-- AÑADIR DEPENDENCIA
     ]);
-    // --- Fin handleCheckout ---
+    // --- FIN DE CAMBIOS: confirmarVenta ---
+
+    // --- INICIO DE CAMBIOS: Nueva Función "Tenedor" ---
+    /**
+     * Esta función decide qué hacer cuando se presiona el botón principal:
+     * 1. Si es Reposición -> Navega a ReviewSale
+     * 2. Si es Venta -> Llama a confirmarVenta
+     */
+    const handleConfirmPress = () => {
+        if (isSubmitting) return;
+
+        // Validaciones básicas antes de decidir
+        if (!client) { Alert.alert("Error", "No se ha seleccionado un cliente."); return; }
+        if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
+
+
+        if (isReposicion) {
+            // Es Reposición: Navegamos a ReviewSale
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            navigation.navigate('ReviewSale', { // Asumimos que ReviewSale existe y acepta esto
+                cliente: client!,
+                cart: itemsConDescuentosAplicados, // Usamos los items con descuentos calculados
+                isReposicion: true,
+                totalVenta: 0,
+                totalCosto: totalCosto,
+                totalComision: 0, // Reposición no da comisión
+                totalDescuento: totalDescuentoPromociones, // Pasamos el descuento por si acaso
+            });
+        } else {
+            // Es Venta: Confirmamos
+            confirmarVenta(); // Llamamos a la función renombrada
+        }
+    };
+    // --- FIN DE CAMBIOS: Nueva Función "Tenedor" ---
 
     const renderProductItem = useCallback(({ item }: { item: Product }) => (
         <ProductCard
@@ -587,8 +676,13 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
 
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={24} color={COLORS.textPrimary} /></TouchableOpacity> 
-                <View style={styles.headerTitleContainer}><Text style={styles.title}>{editMode ? 'Editar Venta' : 'Nueva Venta'}</Text><Text style={styles.clientName}>{client?.nombre}</Text></View>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
+                <View style={styles.headerTitleContainer}>
+                    {/* --- INICIO CAMBIO: Título Dinámico --- */}
+                    <Text style={styles.title}>{editMode ? 'Editar Venta' : (isReposicion ? 'Nueva Reposición' : 'Nueva Venta')}</Text>
+                    {/* --- FIN CAMBIO: Título Dinámico --- */}
+                    <Text style={styles.clientName}>{client?.nombre}</Text>
+                </View>
                 <View style={styles.headerButton} />
             </View>
 
@@ -601,8 +695,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 {/* REEMPLAZO DEL PICKER: Botón y Modal */}
                 <View style={styles.pickerContainer}>
                     <Feather name="tag" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TouchableOpacity 
-                        style={styles.pickerButton} 
+                    <TouchableOpacity
+                        style={styles.pickerButton}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsCategoryModalVisible(true); }}
                     >
                          <Text style={[styles.pickerButtonText, { color: categoryFilter ? COLORS.textPrimary : COLORS.textSecondary }]}>
@@ -620,10 +714,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 contentContainerStyle={styles.listContentContainer}
                 ListEmptyComponent={
                  !isDataLoading ? (
-                    <View style={styles.emptyContainer}>
-                        <Feather name="package" size={48} color={COLORS.textSecondary} />
-                        <Text style={styles.emptyText}>No se encontraron productos</Text>
-                    </View>
+                     <View style={styles.emptyContainer}>
+                         <Feather name="package" size={48} color={COLORS.textSecondary} />
+                         <Text style={styles.emptyText}>No se encontraron productos</Text>
+                     </View>
                  ) : null
                 }
                 initialNumToRender={15}
@@ -644,10 +738,26 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     )}
                     <View style={[styles.totalRow, styles.finalTotalRow]}><Text style={styles.finalTotalLabel}>Total a Pagar</Text><Text style={styles.finalTotalValue}>${totalFinal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text></View>
                 </ScrollView>
-                <TouchableOpacity style={[styles.checkoutButton, isSubmitting && styles.checkoutButtonDisabled]} onPress={handleCheckout} disabled={isSubmitting}>
+
+                {/* --- INICIO DE CAMBIOS: Botón Principal --- */}
+                <TouchableOpacity
+                    style={[
+                        styles.checkoutButton,
+                        isSubmitting && styles.checkoutButtonDisabled,
+                        isReposicion && { backgroundColor: COLORS.warning } // Color Naranja si es Reposición
+                    ]}
+                    onPress={handleConfirmPress} // <-- Llama a la nueva función "Tenedor"
+                    disabled={isSubmitting}
+                >
                     {isSubmitting ? ( <ActivityIndicator color={COLORS.primaryDark} /> ) : ( <Feather name={editMode ? "check-circle" : "arrow-right-circle"} size={22} color={COLORS.primaryDark} /> )}
-                    <Text style={styles.checkoutButtonText}>{isSubmitting ? (editMode ? 'Actualizando...' : 'Guardando...') : (editMode ? 'Actualizar Venta' : 'Finalizar Venta')}</Text>
+                    <Text style={styles.checkoutButtonText}>
+                        {isSubmitting
+                            ? (editMode ? 'Actualizando...' : 'Guardando...')
+                            : (isReposicion ? 'Revisar Reposición' : (editMode ? 'Actualizar Venta' : 'Confirmar Venta'))
+                        }
+                    </Text>
                 </TouchableOpacity>
+                {/* --- FIN DE CAMBIOS: Botón Principal --- */}
             </View>
 
             <Modal transparent={true} visible={modalVisible} animationType="fade" onRequestClose={() => setModalVisible(false)}>
@@ -663,7 +773,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     </View>
                 </View>
             </Modal>
-            
+
             {/* NUEVO MODAL DE SELECCIÓN DE CATEGORÍA */}
             <CategorySelectorModal
                 visible={isCategoryModalVisible}
@@ -695,7 +805,7 @@ const styles = StyleSheet.create({
     input: { flex: 1, color: COLORS.textPrimary, fontSize: 16, height: '100%' },
     clearButton: { padding: 5 },
     pickerContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 12, borderWidth: 1, borderColor: COLORS.glassBorder, paddingLeft: 12, justifyContent: 'center', paddingVertical: 5, height: 48 },
-    
+
     // NUEVOS ESTILOS PARA EL SELECTOR BASADO EN TOUCHABLE
     pickerButton: {
         flex: 1,
@@ -708,7 +818,7 @@ const styles = StyleSheet.create({
     pickerButtonText: {
         fontSize: 16,
     },
-    
+
     listContentContainer: { paddingHorizontal: 15, paddingBottom: 10, flexGrow: 1 },
     emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30, gap: 15, minHeight: 200 },
     emptyText: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center' },
@@ -719,7 +829,7 @@ const styles = StyleSheet.create({
     priceContainer: {flexDirection: 'row', alignItems: 'baseline', gap: 5},
     cardPrice: { fontSize: 15, color: COLORS.primary, fontWeight: '600' },
     cardOriginalPrice: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '400', textDecorationLine: 'line-through' },
-    
+
     // --- ESTILOS MEJORA VISUAL ---
     stockText: {
         fontSize: 13,
@@ -749,7 +859,7 @@ const styles = StyleSheet.create({
     checkoutButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: 15, gap: 10, marginTop: 10 },
     checkoutButtonDisabled: { backgroundColor: COLORS.disabled },
     checkoutButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 18 },
-    
+
     // ESTILOS DE MODAL (comunes para cantidad y categoría)
     modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)' },
     modalContent: { width: '80%', backgroundColor: COLORS.backgroundEnd, borderRadius: 15, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: COLORS.glassBorder },

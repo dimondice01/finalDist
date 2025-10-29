@@ -29,7 +29,7 @@ interface Sale {
     items: SaleItem[];
     totalVenta: number;
     saldoPendiente: number;
-    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Pago' | 'Repartiendo' | 'Anulada';
+    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada';
     numeroFactura?: string;
     vendedorId?: string;
     vendedorNombre?: string;

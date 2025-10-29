@@ -34,7 +34,7 @@ const getStatusColor = (estado?: Sale['estado']): string => {
     switch (estado) {
         case 'Pagada': return COLORS.success;
         case 'Adeuda': return COLORS.warning;
-        case 'Pendiente de Pago': return COLORS.textSecondary;
+        case 'Pendiente de Entrega': return COLORS.textSecondary;
         case 'Repartiendo': return COLORS.warning;
         case 'Anulada': return COLORS.danger;
         default: return COLORS.textSecondary;
@@ -45,7 +45,7 @@ const getStatusIcon = (estado?: Sale['estado']): keyof typeof Feather.glyphMap =
     switch (estado) {
         case 'Pagada': return 'check-circle';
         case 'Adeuda': return 'alert-circle';
-        case 'Pendiente de Pago': return 'clock';
+        case 'Pendiente de Entrega': return 'clock';
         case 'Repartiendo': return 'truck';
         case 'Anulada': return 'x-circle';
         default: return 'help-circle';
@@ -88,7 +88,7 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
 
     const color = getStatusColor(item.estado);
     const icon = getStatusIcon(item.estado);
-    const isPending = item.estado === 'Pendiente de Pago';
+    const isPending = item.estado === 'Pendiente de Entrega';
 
     const handleNavigate = useCallback(() => onNavigate(item.id), [item.id, onNavigate]);
     const handleEdit = useCallback((e: any) => {
