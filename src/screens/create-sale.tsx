@@ -144,6 +144,11 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
         handleAddProduct(item);
     }, [handleAddProduct, item]);
 
+    // --- MEJORA VISUAL (1/3): Determinar stock y color ---
+    const stock = item.stock ?? 0; // Usamos 0 si el stock es undefined
+    const lowStock = stock < 10;
+    // --- FIN MEJORA VISUAL (1/3) ---
+
     return (
         <TouchableOpacity
             style={[styles.card, quantityInCart > 0 && styles.cardSelected]}
@@ -152,7 +157,8 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
         >
             <View style={styles.cardInfo}>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre}</Text>
-                {/* Estabilizamos el renderizado condicional del precio */}
+                
+                {/* Precios */}
                 {displayPrice !== originalPrice ? (
                     <View style={styles.priceContainer}>
                         <Text style={styles.cardPrice}>${displayPrice.toLocaleString('es-AR')}</Text>
@@ -161,6 +167,13 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                 ) : (
                     <Text style={styles.cardPrice}>${item.precio.toLocaleString('es-AR')}</Text>
                 )}
+
+                {/* --- MEJORA VISUAL (2/3): Mostrar Stock --- */}
+                <Text style={[styles.stockText, lowStock && styles.stockTextLow]}>
+                    Stock: {stock}
+                </Text>
+                {/* --- FIN MEJORA VISUAL (2/3) --- */}
+
             </View>
 
             {quantityInCart > 0 ? (
@@ -248,6 +261,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
     }, [editMode, saleId, sales, navigation]); 
 
+    // --- MEJORA VISUAL (3/3): useEffect de filtrado y orden ---
     useEffect(() => {
         let products = allProducts;
         if (categoryFilter) {
@@ -257,9 +271,25 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             const lowerQuery = searchQuery.toLowerCase();
             products = products.filter(p => p.nombre.toLowerCase().includes(lowerQuery));
         }
-        products.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
+        // Lógica de ordenamiento mejorada
+        products.sort((a, b) => {
+            // Solo en modo edición, priorizar los que están en el carrito
+            if (editMode) {
+                const aInCart = cart.some(cartItem => cartItem.id === a.id);
+                const bInCart = cart.some(cartItem => cartItem.id === b.id);
+                
+                if (aInCart && !bInCart) return -1; // 'a' (en carrito) va primero
+                if (!aInCart && bInCart) return 1;  // 'b' (en carrito) va primero
+            }
+            
+            // Si ambos están (o no están) en el carrito, ordenar alfabéticamente
+            return (a.nombre || '').localeCompare(b.nombre || '');
+        });
+
         setFilteredProducts(products);
-    }, [allProducts, categoryFilter, searchQuery]);
+    }, [allProducts, categoryFilter, searchQuery, cart, editMode]); // Añadimos cart y editMode a las dependencias
+    // --- FIN MEJORA VISUAL (3/3) ---
 
     const getComision = useCallback((product: Product, quantity: number): number => {
         const comisionGeneral = currentVendedor?.comisionGeneral || 0;
@@ -322,53 +352,41 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setCurrentQuantity('1');
     }, [selectedProduct]);
 
-    // --- BLOQUE USEMEMO CORREGIDO PARA CALCULAR PROMOCIONES ---
-    const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones } = useMemo(() => {
-         let sub: number = 0; // Total (sumando item.precio * quantity, ya con 'precio_especial' aplicado)
+    // --- BLOQUE USEMEMO (Sin cambios, ya estaba correcto) ---
+    const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
+         let sub: number = 0; 
          let comision: number = 0;
          let costo: number = 0;
-         let descuentoPrecioEspecial: number = 0; // Descuento de promociones tipo 'precio_especial'
-         let descuentoPorCantidad: number = 0; // Descuento de LLEVA_X_PAGA_Y o DESCUENTO_POR_CANTIDAD
-
-         // 1. Cálculo base e identificación de descuento por 'precio_especial'
+         let descuentoPrecioEspecial: number = 0;
+         let descuentoPorCantidadTotal: number = 0; 
+         const itemsModificados: (CartItem & { descuentoPorCantidadAplicado?: number })[] = [];
+         
          cart.forEach(item => {
-             // item.precio ya usa el precio final (puede incluir el descuento 'precio_especial')
              const subtotalItemBase = item.precio * item.quantity;
-             sub += subtotalItemBase; // sub es el total de la venta con descuentos de precio especial ya aplicados.
-             
+             sub += subtotalItemBase; 
              comision += item.comision;
              costo += (item.costo || 0) * item.quantity;
              
-             // 1.1 Descuento por "precio_especial" (ya aplicado al item.precio)
              if (item.precioOriginal && item.precioOriginal > item.precio) { 
                  descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity; 
              }
 
-             // 2. Aplicar Promociones Basadas en Cantidad por ítem
              const quantity = item.quantity;
-             const itemPrice = item.precio; // Precio unitario con posible 'precio_especial' aplicado
+             const itemPrice = item.precio; 
+             let descuentoPorCantidadItem: number = 0; 
              
-             // Filtrar promociones de cantidad aplicables para este producto y cliente
              const quantityPromosForProduct = promotions.filter(promo => {
-                 // Debe tener tipo de cantidad y el producto debe estar en la promoción
                  const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
                  const isProductInPromo = promo.productoIds?.includes(item.id);
-                 
-                 // Debe aplicarse al cliente (si la promo tiene clientes restringidos, el cliente actual debe estar en la lista)
                  const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (clientId && promo.clienteIds.includes(clientId as string));
-                 
-                 // Adicionalmente, verificar que la condición exista
                  const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
-                 
                  return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
              });
              
              if (quantityPromosForProduct.length > 0) {
-                // Lógica de prioridad: Tomar la primera promoción aplicable (se asume que no se superponen)
                 const promo = quantityPromosForProduct[0]; 
                 
                 if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
-                    // EJEMPLO: LLEVANDO X PAGAS Y
                     const X = promo.condicion.cantidadMinima; 
                     const Y = promo.beneficio.cantidadAPagar;
                     const itemsGratisPorLote = X - Y;
@@ -376,37 +394,42 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
                         const numLotes = Math.floor(quantity / X);
                         const itemsGratisTotales = numLotes * itemsGratisPorLote;
-                        
-                        // Descuento: Valor de los artículos gratuitos
-                        descuentoPorCantidad += itemsGratisTotales * itemPrice; 
+                        descuentoPorCantidadItem = itemsGratisTotales * itemPrice; 
                     }
                 } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
-                    // EJEMPLO: LLEVANDO 12+ UN 20% DE DESCUENTO
                     const porcentaje = promo.beneficio.porcentajeDescuento;
                     
                     if (porcentaje > 0 && porcentaje <= 100) {
-                        const subtotalItem = itemPrice * quantity; // Ya que subtotalItemBase fue sumado a 'sub'
+                        const subtotalItem = itemPrice * quantity; 
                         const descuentoCalculado = subtotalItem * (porcentaje / 100);
-                        descuentoPorCantidad += descuentoCalculado;
+                        descuentoPorCantidadItem = descuentoCalculado; 
                     }
                 }
              }
+             
+             descuentoPorCantidadTotal += descuentoPorCantidadItem;
+
+             itemsModificados.push({
+                 ...item,
+                 precioOriginal: item.precioOriginal ?? item.precio, 
+                 descuentoPorCantidadAplicado: descuentoPorCantidadItem 
+             });
          });
          
-         // 3. Totales finales
-         const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidad;
+         const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidadTotal;
          
          return { 
-             subtotal: sub, // Total de la venta antes de descuento por cantidad (pero con descuento de precio_especial ya aplicado al ítem)
+             subtotal: sub, 
              totalComision: comision, 
              totalCosto: costo, 
-             totalFinal: sub - descuentoPorCantidad, // Total a pagar (Subtotal - descuentos por cantidad)
-             totalDescuentoPromociones: totalDescuentoTotal // Total de todos los descuentos (para guardar en BD)
+             totalFinal: sub - descuentoPorCantidadTotal, 
+             totalDescuentoPromociones: totalDescuentoTotal, 
+             itemsConDescuentosAplicados: itemsModificados 
          };
     }, [cart, promotions, clientId]);
-    // --- FIN DEL BLOQUE USEMEMO CORREGIDO ---
+    // --- FIN DEL BLOQUE USEMEMO ---
 
-    // --- Adaptación handleShare (FIX CRÍTICO para error 'data' URI) ---
+    // --- handleShare (Sin cambios) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
         if (!clientData) {
            Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
@@ -414,42 +437,32 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
 
         try {
-            // 1. Generar el contenido HTML string (asumiendo que generatePdf retorna HTML)
             const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName); 
-           
             if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
             
-            // 2. Convertir el HTML a una URI de ARCHIVO LOCAL (file://)
-            // ESTO RESUELVE EL ERROR: 'expected scheme to be file, got data.'
             const { uri } = await Print.printToFileAsync({ html: htmlContent });
-           
-            if (!uri) { 
-                throw new Error("printToFileAsync no devolvió URI."); 
-            }
+            if (!uri) { throw new Error("printToFileAsync no devolvió URI."); }
 
-            // 3. Compartir el URI de ARCHIVO LOCAL
             const isAvailable = await Sharing.isAvailableAsync();
-            if (!isAvailable) { 
-                throw new Error("La función de compartir no está disponible."); 
-            }
+            if (!isAvailable) { throw new Error("La función de compartir no está disponible."); }
 
             await Sharing.shareAsync(uri, { 
-    mimeType: 'application/pdf',
-    dialogTitle: `Compartir Comprobante ${saleDataForPdf.id}`,
-});
+                mimeType: 'application/pdf',
+                dialogTitle: `Compartir Comprobante ${saleDataForPdf.id}`,
+            });
             
         } catch (shareError: any) {
            console.error("handleShare: Error con expo-sharing/print:", shareError);
            if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
-               // Mostrar el error si no fue cancelado por el usuario
                Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
            }
         }
     }, [refreshAllData]); 
-    // --- FIN DE handleShare CORREGIDO ---
+    // --- FIN DE handleShare ---
 
 
-    const handleCheckout = useCallback(async () => {
+   // --- handleCheckout (Sin cambios) ---
+   const handleCheckout = useCallback(async () => {
         if (isSubmitting) return;
         if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos del cliente o vendedor."); return; }
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
@@ -464,7 +477,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             vendedorName: currentVendedor.nombreCompleto || currentVendedor.nombre,
             items: cart.map((item: CartItem) => {
                 const { precioOriginal, ...restOfItem } = item;
-                // Guardamos precioOriginal solo si es diferente al precio final
                 return { ...restOfItem, ...(precioOriginal !== undefined && precioOriginal !== item.precio && { precioOriginal }) };
             }),
             totalVenta: totalFinal,
@@ -495,10 +507,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 ...saleDataToSave,
                 id: savedSaleId,
                 observaciones: saleDataToSave.observaciones, 
-                // @ts-ignore - Usamos Date para el PDF generator
+                // @ts-ignore
                 fecha: new Date(), 
-                // Usamos la lista de items completa, incluyendo precioOriginal (si existe) para el cálculo correcto de Bruto en el PDF
-                items: cart.map((item: CartItem) => ({ ...item, precioOriginal: item.precioOriginal ?? item.precio })),
+                items: itemsConDescuentosAplicados,
             };
             
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
@@ -529,7 +540,13 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             Toast.show({ type: 'error', text1: 'Error al Guardar', text2: firestoreError, position: 'bottom' });
             setIsSubmitting(false);
         }
-    }, [isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision, totalDescuentoPromociones, editMode, originalSale, handleShare, refreshAllData, navigation, clientId]); 
+    }, [
+        isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision, 
+        totalDescuentoPromociones, 
+        itemsConDescuentosAplicados, 
+        editMode, originalSale, handleShare, refreshAllData, navigation, clientId
+    ]);
+    // --- Fin handleCheckout ---
 
     const renderProductItem = useCallback(({ item }: { item: Product }) => (
         <ProductCard
@@ -659,7 +676,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     );
 };
 
-// --- ESTILOS --- (Añadidos estilos para el nuevo selector y modal)
+// --- ESTILOS --- (Añadidos estilos de Stock)
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -702,6 +719,20 @@ const styles = StyleSheet.create({
     priceContainer: {flexDirection: 'row', alignItems: 'baseline', gap: 5},
     cardPrice: { fontSize: 15, color: COLORS.primary, fontWeight: '600' },
     cardOriginalPrice: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '400', textDecorationLine: 'line-through' },
+    
+    // --- ESTILOS MEJORA VISUAL ---
+    stockText: {
+        fontSize: 13,
+        color: COLORS.textSecondary,
+        marginTop: 4,
+        fontWeight: '500',
+    },
+    stockTextLow: {
+        color: COLORS.danger, // Asumiendo que COLORS.danger es tu rojo
+        fontWeight: 'bold',
+    },
+    // --- FIN ESTILOS MEJORA ---
+
     inCartControls: { flexDirection: 'row', alignItems: 'center' },
     quantityBadge: { backgroundColor: COLORS.primary, borderRadius: 12, minWidth: 24, height: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
     quantityBadgeText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 14 },

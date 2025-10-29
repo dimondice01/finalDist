@@ -112,7 +112,10 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
             if (promo) {
                 if (promo.tipo === 'LLEVA_X_PAGA_Y' && promo.condicion?.cantidadMinima && item.quantity >= promo.condicion.cantidadMinima) {
                     const numPromos = Math.floor(item.quantity / promo.condicion.cantidadMinima);
-                    const unidadesGratis = numPromos * (promo.condicion.cantidadMinima - (promo.beneficio?.cantidadAPagar || promo.condicion.cantidadMinima));
+                    // 🔥 CORRECCIÓN: Usar 0 como fallback si 'cantidadAPagar' no está definido, 
+                    // evitando que el descuento sea (X - X) = 0.
+                    const cantidadAPagar = promo.beneficio?.cantidadAPagar || 0; 
+                    const unidadesGratis = numPromos * (promo.condicion.cantidadMinima - cantidadAPagar);
                     itemDiscount = unidadesGratis * basePrice;
                     promoDescription = promo.descripcion || 'Promo X por Y';
                 } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && promo.condicion?.cantidadMinima && item.quantity >= promo.condicion.cantidadMinima && promo.beneficio?.porcentajeDescuento) {
@@ -188,13 +191,13 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
         }, 0);
         const totalDescuentoParaDB = Math.round((cartWithDiscounts.totalDiscount + totalDescuentoPrecioEspecial) * 100) / 100;
 
-        // 3. Crear el objeto para guardar en Firestore (SIN itemDiscounts)
+        // 3. Crear el objeto para guardar en Firestore (AÑADIENDO itemDiscounts)
         const saleDataForDb = {
             clienteId: clientId as string, clientName: clientName as string, vendedorId,
             items: itemsToPersist,
             
-            // 🔥 CRÍTICO: NO INCLUIMOS itemDiscounts aquí, ya que el campo totalDescuentoPromociones
-            // ya incluye el total de ambos (precio especial + bulk).
+            // 🔥 CORRECCIÓN CRÍTICA: Incluir el mapa de descuentos por ítem para la re-impresión
+            itemDiscounts: cartWithDiscounts.itemDiscounts, 
             
             totalVentaBruto: cartTotal + cartWithDiscounts.totalDiscount,
             totalDescuento: cartWithDiscounts.totalDiscount, 
@@ -237,7 +240,7 @@ const ReviewSaleScreen = ({ navigation, route }: ReviewSaleScreenProps) => {
 
             // 4. Crear el objeto para el PDF (AÑADIENDO EL MAPA DE DESCUENTOS CALCULADO)
             const pdfData: BaseSale = {
-                // @ts-ignore (Copiamos los campos del objeto de DB, que ahora no incluye itemDiscounts)
+                // @ts-ignore (Copiamos los campos del objeto de DB)
                 ...saleDataForDb,
                 id: newSaleRef.id,
                 fecha: saleDataForDb.fecha.toDate(),

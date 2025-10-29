@@ -26,22 +26,34 @@ import SaleDetailScreen from '../screens/sale-detail';
 import SelectClientForSaleScreen from '../screens/select-client-for-sale';
 
 // --- Contextos y Auth (Ajusta rutas) ---
-import { useData } from '../../context/DataContext';
+// 🔥 CORRECCIÓN: Importar Sale as BaseSale
+import { Sale as BaseSale, useData } from '../../context/DataContext';
 import { auth, db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
-// --- 1. Define los Parámetros de Ruta ---
+// --- 1. Define los Parámetros de Ruta CORREGIDOS ---
 export type RootStackParamList = {
   Login: undefined;
-  Home: undefined; // <-- Ahora Home y Driver serán la misma entrada lógica
-  Driver: undefined; // <-- Mantenemos Driver para el tipo del componente, pero no en el Stack principal
+  Home: undefined; // Home y Driver usan esta misma entrada
+  Driver: undefined; // Mantenido para el tipo del componente, pero no en Stack principal
   ClientList: undefined;
   ClientDashboard: { clientId: string };
   AddClient: undefined;
   EditClient: { clientId: string };
   SelectClientForSale: undefined;
-  CreateSale: { clientId: string; saleId?: string; isEditing?: string };
-  ReviewSale: { clientId: string; clientName?: string; cart: string };
+  // 🔥 CORRECCIÓN: Parámetros para CreateSale
+  CreateSale: {
+    clientId: string;
+    clientName?: string;    // Nombre para mostrar
+    saleToEdit?: BaseSale; // Objeto de venta para editar
+  };
+  // 🔥 CORRECCIÓN: Parámetros para ReviewSale (saleIdToEdit es opcional)
+  ReviewSale: {
+    clientId: string;
+    clientName?: string;
+    cart: string;          // Carrito serializado
+    saleIdToEdit?: string; // ID de la venta si se está editando
+  };
   SaleDetail: { saleId: string };
   Reports: undefined;
   Promotions: undefined;
@@ -51,7 +63,7 @@ export type RootStackParamList = {
   RouteDetail: { routeId: string };
 };
 
-// --- 2. Define los Tipos de Props (Omitidos por brevedad) ---
+// --- 2. Define los Tipos de Props (Sin cambios, pero ahora reflejan RootStackParamList corregido) ---
 export type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
 export type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 export type DriverScreenProps = NativeStackScreenProps<RootStackParamList, 'Driver'>;
@@ -77,7 +89,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 // --- Componente Navegador Principal con Lógica de Autenticación y Rol ---
 function RootNavigator() {
     // 1. Estados de control
-    const [isAppReady, setIsAppReady] = useState(false); 
+    const [isAppReady, setIsAppReady] = useState(false);
     const [user, setUser] = useState<User | null>(null);
     const [userRole, setUserRole] = useState<'Vendedor' | 'Reparto' | 'Admin' | null>(null);
     const [loadingMessage, setLoadingMessage] = useState('Verificando sesión...');
@@ -94,37 +106,43 @@ function RootNavigator() {
 
         const subscriber = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
-            setUserRole(null); 
+            setUserRole(null);
 
             if (currentUser) {
                 setLoadingMessage('Sincronizando datos...');
                 try {
-                    await syncData(); 
+                    await syncData();
 
                     const userDocRef = doc(db, 'vendedores', currentUser.uid);
                     const userDocSnap = await getDoc(userDocRef);
-                    
+
                     if (userDocSnap.exists()) {
                         setUserRole(userDocSnap.data().rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
                     } else {
+                        // Podríamos intentar buscar por firebaseAuthUid como fallback si es necesario
+                        console.warn("Datos de vendedor no encontrados por UID directo, intentando fallback...");
+                        // Aquí iría la lógica de fallback si la implementas
                         throw new Error("Datos de vendedor no encontrados en DB.");
                     }
-                    
+
                 } catch (error) {
                     console.error("Error al sincronizar datos o obtener rol:", error);
-                    await auth.signOut();
-                    setUser(null);
+                    // Considera no cerrar sesión automáticamente aquí, quizás mostrar un error persistente
+                    // await auth.signOut();
+                    // setUser(null);
+                    // setUserRole(null); // Asegura limpiar el rol en error
+                     alert("Error de Sincronización");
                 }
 
             } else {
                  setLoadingMessage('Esperando credenciales...');
             }
-            
-            setIsAppReady(true);
+
+            setIsAppReady(true); // Marca la app como lista después de verificar auth y rol (o fallo)
         });
-        
-        return subscriber;
-    }, [isInitialDataLoaded, syncData]);
+
+        return subscriber; // Limpia la suscripción al desmontar
+    }, [isInitialDataLoaded, syncData]); // Depende de la carga inicial y la función sync
 
     // --- LOADER DE INICIO (Condición Triple) ---
     if (!isAppReady || isDataLoading || !isInitialDataLoaded) {
@@ -139,45 +157,35 @@ function RootNavigator() {
     // --- Componente que devuelve la pantalla inicial según el rol ---
     const HomeOrDriverScreen = (props: any) => {
         if (userRole === 'Reparto') {
-            // Pasamos las props de Stack al componente DriverScreen
             return <DriverScreen {...props} />;
         }
-        // Pasamos las props de Stack al componente HomeScreen
+        // Vendedor, Admin o rol no determinado (cae en Home por defecto)
         return <HomeScreen {...props} />;
     };
 
     const screenOptions = {
         headerShown: false,
-        animation: 'slide_from_right' as const,
+        animation: 'slide_from_right' as const, // Animación estándar
     };
 
-    // Definición de las opciones de desmontaje para evitar el error de tipado
+    // Opciones específicas para desmontar pantallas y liberar memoria
     const unmountOptions = {
-        headerShown: false,
-        animation: 'slide_from_right' as const,
-        unmountOnBlur: true, // <-- La propiedad que soluciona el Memory Leak
+        ...screenOptions, // Hereda las opciones base
+        unmountOnBlur: true, // Desmonta la pantalla cuando pierde el foco
     };
 
     return (
-        
-        <Stack.Navigator screenOptions={screenOptions}
-        // @ts-ignore
-        detachInactiveScreens={true}>
-            {user && userRole ? (
+
+        <Stack.Navigator screenOptions={screenOptions}>
+            {user && userRole ? ( // Solo muestra el stack principal si hay usuario Y rol
                 // --- USUARIO AUTENTICADO: Definición del Stack Principal ---
                 <>
-                    {/* Home se mantiene montada para manejar el estado principal/Driver */}
+                    {/* Home/Driver siempre activa */}
                     <Stack.Screen name="Home" component={HomeOrDriverScreen} />
-                    
-                    {/* Pantallas con listas y lógica compleja (se desmontan al salir para liberar recursos) */}
+
+                    {/* Pantallas que se desmontan para liberar memoria */}
                     <Stack.Screen name="ClientList" component={ClientListScreen} options={unmountOptions} />
                     <Stack.Screen name="ClientDashboard" component={ClientDashboardScreen} options={unmountOptions} />
-                    
-                    {/* Pantallas de formulario simples (mantienen el comportamiento por defecto) */}
-                    <Stack.Screen name="AddClient" component={AddClientScreen} />
-                    <Stack.Screen name="EditClient" component={EditClientScreen} />
-
-                    {/* Pantallas de proceso y reportes (se desmontan al salir) */}
                     <Stack.Screen name="SelectClientForSale" component={SelectClientForSaleScreen} options={unmountOptions} />
                     <Stack.Screen name="CreateSale" component={CreateSaleScreen} options={unmountOptions} />
                     <Stack.Screen name="ReviewSale" component={ReviewSaleScreen} options={unmountOptions} />
@@ -188,10 +196,14 @@ function RootNavigator() {
                     <Stack.Screen name="ClientDebts" component={ClientDebtsScreen} options={unmountOptions} />
                     <Stack.Screen name="RegisterPayment" component={RegisterPaymentScreen} options={unmountOptions} />
                     <Stack.Screen name="RouteDetail" component={RouteDetailScreen} options={unmountOptions} />
-                    
+
+                    {/* Pantallas simples que pueden permanecer montadas (o usa unmountOptions si prefieres) */}
+                    <Stack.Screen name="AddClient" component={AddClientScreen} />
+                    <Stack.Screen name="EditClient" component={EditClientScreen} />
+
                 </>
             ) : (
-                // --- Pantalla de Login si el usuario NO está logueado ---
+                // --- Pantalla de Login si el usuario NO está logueado o no tiene rol ---
                 <Stack.Screen name="Login" component={LoginScreen} />
             )}
         </Stack.Navigator>
@@ -204,11 +216,11 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: COLORS.backgroundEnd,
+        backgroundColor: COLORS.backgroundEnd, // Fondo oscuro
     },
     loaderText: {
         marginTop: 15,
-        color: COLORS.textSecondary,
+        color: COLORS.textSecondary, // Texto gris claro
         fontSize: 16
     }
 });
