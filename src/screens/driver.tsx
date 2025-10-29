@@ -1,19 +1,24 @@
+// src/screens/driver.tsx
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { doc, increment, onSnapshot, runTransaction, Timestamp, writeBatch } from 'firebase/firestore';
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Linking, Modal, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// --- INICIO CORRECCIÓN FECHA: Importar Timestamp ---
+import { Timestamp } from 'firebase/firestore'; // Asegúrate de importar Timestamp
+// --- FIN CORRECCIÓN FECHA ---
+import React, { memo, useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
-import { RouteDetailScreenProps } from '../navigation/AppNavigator'; // Importamos tipos de props
+import type { DriverScreenProps } from '../navigation/AppNavigator';
 
-import { useData } from '../../context/DataContext';
-import { db } from '../../db/firebase-service';
+// --- Contexto y Estilos ---
+// Renombramos Route de DataContext para evitar colisión
+// Usamos directamente la interfaz Route importada ya que DataContext la exporta
+import { Route as DataContextRoute, useData } from '../../context/DataContext';
 import { COLORS } from '../../styles/theme';
 
-// --- INTERFACES (RENOMBRADAS PARA EVITAR COLISIÓN CON DATA CONTEXT) ---
+// --- INTERFACES (Definidas correctamente) ---
 interface DriverItem {
     productId: string;
     nombre: string;
@@ -26,402 +31,414 @@ interface DriverInvoice {
     clienteNombre: string;
     clienteDireccion: string;
     totalVenta: number;
-    estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda';
+    // Ajustamos los estados posibles si son diferentes en DataContext
+    estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' ; // Ampliamos con los estados de Sale
     items: DriverItem[];
 }
 interface DriverRoute {
     id: string;
-    nombre: string;
-    estado: string;
-    repartidorId: string;
+    nombre: string; // Nombre para mostrar
+    fecha: Date | null; // <-- Mantenemos Date | null
+    estado: 'Creada' | 'En Curso' | 'Completada';
     facturas: DriverInvoice[];
 }
 
-// --- HELPERS ---
-const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
+// --- Helper Functions ---
+const formatCurrency = (value?: number): string => (
+    typeof value === 'number'
+        ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : '$0,00'
+);
 
-// =================================================================================
-// --- MODAL DE AJUSTE DE ENTREGA ---
-// =================================================================================
-interface DeliveryAdjustmentModalProps {
-    visible: boolean;
-    onClose: () => void;
-    stop: DriverInvoice; // Usamos el tipo corregido
-    routeId: string;
-    onConfirm: (updatedStop: DriverInvoice) => void; // Usamos el tipo corregido
-}
+// --- INICIO CORRECCIÓN FECHA: Función formatDate ---
+const formatDate = (date: Date | null): string => {
+    // Verifica si la fecha es válida
+    // Chequeamos null, undefined, isNaN y año > 0 (evita 1969/1970)
+    if (!date || isNaN(date.getTime()) || date.getFullYear() < 1971) {
+        // Devuelve un placeholder más claro si la fecha es inválida/ausente
+        return 'Fecha N/A';
+    }
+    // Formato DD/MM/AAAA (Argentina)
+    try {
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0'); // Meses son 0-indexados
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
+    } catch (e) {
+        // Fallback por si acaso
+        console.error("Error formateando fecha:", date, e);
+        return 'Error Fecha';
+    }
+};
+// --- FIN CORRECCIÓN FECHA ---
 
-const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }: DeliveryAdjustmentModalProps) => {
-    const [modifiedItems, setModifiedItems] = useState<DriverItem[]>([]); // Usamos el tipo corregido
-    const [pagoEfectivo, setPagoEfectivo] = useState('');
-    const [pagoTransferencia, setPagoTransferencia] = useState('');
-    const [isSaving, setIsSaving] = useState(false);
+// --- Componente Header (Memoizado y sin cambios) ---
+const Header = memo(({ title, onRefresh, isLoading }: { title: string, onRefresh: () => void, isLoading: boolean }) => (
+    <View style={styles.header}>
+        <View style={styles.headerButton} /> {/* Placeholder para centrar título */}
+        <Text style={styles.title}>{title}</Text>
+        <TouchableOpacity onPress={onRefresh} style={styles.headerButton} disabled={isLoading}>
+            {isLoading
+                ? <ActivityIndicator color={COLORS.primary} size="small" />
+                : <Feather name="refresh-cw" size={22} color={COLORS.primary} />}
+        </TouchableOpacity>
+    </View>
+));
 
-    useEffect(() => {
-        if (stop) {
-            setModifiedItems(JSON.parse(JSON.stringify(stop.items || [])));
-        }
-    }, [stop]);
-
-    const newTotalVenta = useMemo(() => {
-        return modifiedItems.reduce((total, item) => total + (item.precio * item.quantity), 0);
-    }, [modifiedItems]);
-
-    const handleQuantityChange = (productId: string, change: 'increment' | 'decrement') => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setModifiedItems(currentItems => {
-            return currentItems.map(item => {
-                if (item.productId === productId) {
-                    const newQuantity = change === 'increment' ? item.quantity + 1 : Math.max(0, item.quantity - 1);
-                    return { ...item, quantity: newQuantity };
-                }
-                return item;
-            }).filter(item => item.quantity > 0);
-        });
-    };
-    
-    // --- LÓGICA DE TRANSACCIÓN ---
-    const executeTransaction = async () => {
-        setIsSaving(true);
-        const efectivo = parseFloat(pagoEfectivo) || 0;
-        const transferencia = parseFloat(pagoTransferencia) || 0;
-        const totalPagado = efectivo + transferencia;
-
-        try {
-            const finalStatus = totalPagado < newTotalVenta ? 'Adeuda' : 'Pagada';
-
-            await runTransaction(db, async (transaction) => {
-                const ventaRef = doc(db, 'ventas', stop.id);
-                const routeRef = doc(db, 'rutas', routeId);
-                const routeDoc = await transaction.get(routeRef);
-                if (!routeDoc.exists()) throw new Error("La ruta no fue encontrada.");
-
-                const originalItemsMap = new Map(stop.items.map(i => [i.productId, i.quantity]));
-                const modifiedItemsMap = new Map(modifiedItems.map(i => [i.productId, i.quantity]));
-
-                // Ajuste de Stock
-                for (const [productId, originalQty] of originalItemsMap.entries()) {
-                    const newQty = modifiedItemsMap.get(productId) || 0;
-                    if (originalQty - newQty !== 0) {
-                        const productRef = doc(db, 'productos', productId);
-                        transaction.update(productRef, { stock: increment(originalQty - newQty) });
-                    }
-                }
-
-                transaction.update(ventaRef, {
-                    estado: finalStatus, 
-                    items: modifiedItems,
-                    totalVenta: newTotalVenta,
-                    pagoEfectivo: efectivo,
-                    pagoTransferencia: transferencia,
-                    saldoPendiente: newTotalVenta - totalPagado,
-                    fechaRendicion: Timestamp.now(),
-                });
-
-                const routeData = routeDoc.data() as DriverRoute; // Usamos el tipo corregido
-                const updatedFacturas = routeData.facturas.map(f =>
-                    f.id === stop.id ? { ...f, estadoVisita: finalStatus, totalVenta: newTotalVenta, items: modifiedItems } : f
-                ) as DriverInvoice[]; // Usamos el tipo corregido
-                transaction.update(routeRef, { facturas: updatedFacturas });
-            });
-
-            Toast.show({ type: 'success', text1: `Entrega guardada como "${finalStatus}"` });
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            onConfirm({ ...stop, estadoVisita: finalStatus, totalVenta: newTotalVenta, items: modifiedItems });
-            onClose();
-
-        } catch (error) {
-            console.error("Error en la transacción de entrega:", error);
-            Toast.show({ type: 'error', text1: (error as Error).message || 'Error al guardar.' });
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleConfirmDelivery = async () => {
-        const totalPagado = (parseFloat(pagoEfectivo) || 0) + (parseFloat(pagoTransferencia) || 0);
-        if (totalPagado > newTotalVenta) {
-            Alert.alert("Error", `El monto pagado (${formatCurrency(totalPagado)}) no puede ser mayor al total de la factura (${formatCurrency(newTotalVenta)}).`);
-            return;
-        }
-        if (totalPagado < newTotalVenta) {
-             Alert.alert("Saldo Pendiente", `La factura se marcará como "Adeuda" con un saldo de ${formatCurrency(newTotalVenta - totalPagado)}. ¿Continuar?`, [
-                 { text: 'No', style: 'cancel' },
-                 { text: 'Sí, Continuar', onPress: executeTransaction }
-             ]);
-        } else {
-           await executeTransaction();
-        }
-    };
-
-    if (!stop) return null;
+// --- Componente RouteItem (Estilos Modernizados) ---
+const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (route: DriverRoute) => void }) => {
+    // Usamos 'Pendiente' y 'Pendiente de Entrega' como pendientes
+    const totalPendiente = useMemo(() => route.facturas.filter(f => f.estadoVisita === 'Pendiente' || f.estadoVisita === 'Pendiente de Entrega').length, [route.facturas]);
+    const totalAmount = useMemo(() => route.facturas.reduce((sum, f) => sum + f.totalVenta, 0), [route.facturas]);
+    const isCompleted = route.estado === 'Completada';
 
     return (
-        <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
-            <View style={styles.modalOverlay}>
-                <View style={styles.adjustmentModalContent}>
-                    <Text style={styles.modalTitle}>Gestionar Entrega</Text>
-                    <Text style={styles.modalSubtitle}>{stop.clienteNombre}</Text>
-                    <FlatList data={modifiedItems} keyExtractor={item => item.productId} renderItem={({ item }) => (<View style={styles.itemRow}><Text style={styles.itemName} numberOfLines={1}>{item.nombre}</Text><View style={styles.quantityControl}><TouchableOpacity style={styles.quantityButton} onPress={() => handleQuantityChange(item.productId, 'decrement')}><Feather name="minus" size={16} color={COLORS.primary} /></TouchableOpacity><Text style={styles.quantityText}>{item.quantity}</Text><TouchableOpacity style={styles.quantityButton} onPress={() => handleQuantityChange(item.productId, 'increment')}><Feather name="plus" size={16} color={COLORS.primary} /></TouchableOpacity></View><Text style={styles.itemTotal}>{formatCurrency(item.precio * item.quantity)}</Text></View>)} style={styles.itemList}/>
-                    <View style={styles.summaryContainer}><Text style={styles.summaryLabel}>Total Original:</Text><Text style={styles.summaryValueOriginal}>{formatCurrency(stop.totalVenta)}</Text><Text style={styles.summaryLabel}>Nuevo Total a Cobrar:</Text><Text style={styles.summaryValueFinal}>{formatCurrency(newTotalVenta)}</Text></View>
-                    <View style={styles.inputContainer}><Feather name="dollar-sign" size={20} color={COLORS.textSecondary} style={styles.inputIcon} /><TextInput style={styles.input} placeholder="Monto en Efectivo" keyboardType="numeric" value={pagoEfectivo} onChangeText={setPagoEfectivo} /></View>
-                    <View style={styles.inputContainer}><Feather name="credit-card" size={20} color={COLORS.textSecondary} style={styles.inputIcon} /><TextInput style={styles.input} placeholder="Monto en Transferencia" keyboardType="numeric" value={pagoTransferencia} onChangeText={setPagoTransferencia} /></View>
-                    <View style={styles.modalButtons}><TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={onClose}><Text style={styles.cancelButtonText}>Cancelar</Text></TouchableOpacity><TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={handleConfirmDelivery} disabled={isSaving}>{isSaving ? <ActivityIndicator color={COLORS.primaryDark} /> : <Text style={styles.confirmButtonText}>Confirmar</Text>}</TouchableOpacity></View>
+        <TouchableOpacity
+            style={[styles.routeCard, isCompleted && styles.routeCardCompleted]} // Estilo diferente si está completada
+            onPress={() => onPress(route)}
+            activeOpacity={0.8} // Efecto visual al tocar
+        >
+            {/* Header de la Card */}
+            <View style={styles.routeCardHeader}>
+                <View style={styles.routeCardHeaderLeft}>
+                    {/* Icono cambia si está completada */}
+                    <Feather name={isCompleted ? "check-circle" : "truck"} size={20} color={isCompleted ? COLORS.success : COLORS.primary} />
+                    <Text style={styles.routeName}>{route.nombre || `Ruta ${route.id.substring(0, 6)}`}</Text>
                 </View>
+                {/* Fecha ahora usa formatDate corregido */}
+                <Text style={styles.routeDate}>{formatDate(route.fecha)}</Text>
             </View>
-        </Modal>
+
+            {/* Detalles (Contenido Principal) */}
+            <View style={styles.routeDetails}>
+                <View style={styles.detailItem}>
+                    <Feather name="file-text" size={16} color={COLORS.textSecondary} />
+                    <Text style={styles.detailText}>{route.facturas.length} Facturas</Text>
+                </View>
+                <View style={styles.detailItem}>
+                    <Feather name="dollar-sign" size={16} color={COLORS.textSecondary} />
+                    <Text style={styles.detailText}>{formatCurrency(totalAmount)}</Text>
+                </View>
+                 {/* Mostramos pendientes solo si no está completada */}
+                 {!isCompleted && totalPendiente > 0 && (
+                    <View style={[styles.detailItem, styles.detailItemPending]}>
+                        <Feather name="alert-circle" size={16} color={COLORS.warning} />
+                        <Text style={[styles.detailText, { color: COLORS.warning, fontWeight: 'bold' }]}>{totalPendiente} Pendientes</Text>
+                    </View>
+                )}
+            </View>
+
+            {/* Footer con Flecha (Posicionada absolutamente) */}
+            <View style={styles.routeCardFooter}>
+                <Feather name="chevron-right" size={24} color={COLORS.textSecondary} />
+            </View>
+        </TouchableOpacity>
     );
-};
+});
 
 
-// =================================================================================
-// --- PANTALLA DE DETALLE DE RUTA (Stack Screen) ---
-// =================================================================================
-const DriverScreen = ({ navigation, route: routeProps }: RouteDetailScreenProps) => {
-    const { routeId } = routeProps.params;
-    
-    // routes de useData tiene el tipo simple Route, lo casteamos a DriverRoute.
-    const { clients, routes, syncData } = useData();
-    const routeData = useMemo(() => routes.find((r) => r.id === routeId) as DriverRoute | undefined, [routes, routeId]);
+// --- Pantalla Principal: DriverScreen ---
+const DriverScreen = ({ navigation }: DriverScreenProps) => {
 
-    const [route, setRoute] = useState<DriverRoute | null>(routeData || null); // Usamos el tipo corregido
-    
-    // Usaremos onSnapshot para la ruta actual para tener updates en tiempo real
-    useEffect(() => {
-        if (!routeId) return;
-        const routeRef = doc(db, 'rutas', routeId);
-        const unsubscribe = onSnapshot(routeRef, (docSnap) => {
-            if (docSnap.exists()) {
-                // CASTING: Casteamos el resultado de Firestore al tipo completo esperado
-                setRoute(docSnap.data() as DriverRoute); 
+    const { routes: dataContextRoutes, isLoading: isDataLoading, syncData } = useData();
+    const [isLoadingLocal, setIsLoadingLocal] = useState(false); // Estado local para refresh
+    const [selectedTab, setSelectedTab] = useState<'En Curso' | 'Finalizadas'>('En Curso');
+
+    // Mapeamos y Filtramos las rutas del DataContext
+    const filteredRoutes: DriverRoute[] = useMemo(() => {
+        // Log para ver qué llega del DataContext
+        // console.log("DataContext Routes:", JSON.stringify(dataContextRoutes, null, 2));
+
+        const mappedRoutes = (dataContextRoutes || []).map((r: DataContextRoute): DriverRoute => {
+            // --- INICIO CORRECCIÓN FECHA: Conversión robusta ---
+            let routeDate: Date | null = null;
+            const sourceDate = r.fecha; // Usamos variable temporal
+
+            if (sourceDate) {
+                if (sourceDate instanceof Timestamp) { // Si es Timestamp de Firestore
+                    routeDate = sourceDate.toDate();
+                    // console.log(`[MAPEO ${r.id}] Timestamp -> Date:`, routeDate);
+                } else if (sourceDate instanceof Date) { // Si ya es Date (cargado de AsyncStorage o directo)
+                    if (!isNaN(sourceDate.getTime())) { // Verificar si es válido
+                       routeDate = sourceDate;
+                       // console.log(`[MAPEO ${r.id}] Date object -> Date:`, routeDate);
+                    } else {
+                       console.warn(`[MAPEO ${r.id}] Fecha inválida (Date object from context):`, sourceDate);
+                    }
+                } else if (typeof sourceDate === 'object' && (sourceDate as any).seconds !== undefined && typeof (sourceDate as any).seconds === 'number') {
+                    // Intenta convertir desde objeto {seconds, nanoseconds} (Común desde JSON)
+                    try {
+                        // Verificamos que 'seconds' sea un número razonable (mayor a 0, evita 1969)
+                        if ((sourceDate as any).seconds > 0) {
+                            routeDate = new Timestamp((sourceDate as any).seconds, (sourceDate as any).nanoseconds || 0).toDate();
+                            // console.log(`[MAPEO ${r.id}] Object {seconds...} -> Date:`, routeDate);
+                        } else {
+                             console.warn(`[MAPEO ${r.id}] Timestamp con seconds <= 0 encontrado:`, sourceDate);
+                        }
+                    } catch (e) { console.warn(`[MAPEO ${r.id}] Error convirtiendo objeto a Timestamp:`, sourceDate, e); }
+                } else if (typeof sourceDate === 'string') {
+                     // Intenta convertir desde string ISO (Común desde JSON)
+                     const parsedDate = new Date(sourceDate);
+                     if (!isNaN(parsedDate.getTime())) {
+                         routeDate = parsedDate;
+                         // console.log(`[MAPEO ${r.id}] String -> Date:`, routeDate);
+                     } else {
+                         console.warn(`[MAPEO ${r.id}] Fecha inválida (string from context):`, sourceDate);
+                     }
+                } else {
+                     console.warn(`[MAPEO ${r.id}] Tipo de fecha no reconocido en context:`, sourceDate);
+                }
             } else {
-                setRoute(null);
-                navigation.goBack();
+                // console.log(`[MAPEO ${r.id}] Fecha es null o undefined.`);
             }
-        }, (error) => {
-            console.error("Error al sincronizar ruta:", error);
-            Toast.show({ type: 'error', text1: 'Error de sincronización de ruta.' });
+            // Última validación: si la conversión resultó en fecha inválida o muy antigua, la ponemos null
+            if (routeDate && (isNaN(routeDate.getTime()) || routeDate.getFullYear() < 1971)) {
+                 // console.warn(`[MAPEO ${r.id}] Fecha parseada es inválida o < 1971, seteando a null:`, routeDate);
+                 routeDate = null;
+            }
+            // --- FIN CORRECCIÓN FECHA ---
+
+            // Mapeo de facturas (sin cambios)
+            const facturas = (r.facturas || []).map((f: any): DriverInvoice => ({
+                id: f.id || f.saleId || '',
+                clienteId: f.clienteId || '',
+                clienteNombre: f.clienteNombre || f.clientName || 'Cliente Anónimo',
+                clienteDireccion: f.clienteDireccion || f.direccion || 'Dirección no disponible',
+                totalVenta: f.totalVenta || f.totalAmount || 0,
+                estadoVisita: f.estadoVisita || f.estado || 'Pendiente',
+                items: (f.items || []).map((i: any): DriverItem => ({
+                    productId: i.id || i.productId || '',
+                    nombre: i.nombre || 'Producto Anónimo',
+                    quantity: i.quantity || i.cantidad || 0,
+                    precio: i.precio || 0,
+                }))
+            }));
+
+            return {
+                id: r.id,
+                nombre: `Ruta ${r.id.substring(0, 6)}`, // O el nombre real si lo tienes
+                fecha: routeDate, // <-- Fecha Corregida
+                estado: r.estado || 'Creada',
+                facturas: facturas
+            };
         });
 
-        return () => unsubscribe();
-    }, [routeId, navigation]);
+        // Filtramos según la pestaña seleccionada
+        const filtered = mappedRoutes.filter(route => {
+            if (selectedTab === 'En Curso') {
+                // Rutas 'Creada' o 'En Curso' van aquí
+                return route.estado !== 'Completada';
+            } else {
+                // Rutas 'Completada' van aquí
+                return route.estado === 'Completada';
+            }
+        });
 
-    const [isAdjustmentModalVisible, setAdjustmentModalVisible] = useState(false);
-    const [selectedStop, setSelectedStop] = useState<DriverInvoice | null>(null); // Usamos el tipo corregido
-    const [isSaving, setIsSaving] = useState(false);
+        // Ordenamos: 'En Curso' primero, luego 'Creada', y por fecha descendente
+        return filtered.sort((a, b) => {
+             // Prioridad por estado si estamos en "En Curso"
+             if (selectedTab === 'En Curso') {
+                 if (a.estado === 'En Curso' && b.estado !== 'En Curso') return -1;
+                 if (a.estado !== 'En Curso' && b.estado === 'En Curso') return 1;
+             }
+             // Luego por fecha (más reciente primero, las inválidas/null al final)
+            const dateA = a.fecha?.getTime() || 0; // Fechas inválidas/null van al final
+            const dateB = b.fecha?.getTime() || 0;
+            return dateB - dateA;
+        });
 
-    // stops ahora usa el tipo correcto del estado local
-    const stops = route?.facturas || []; 
-    const areAllStopsCompleted = useMemo(() => stops.every(stop => stop.estadoVisita !== 'Pendiente'), [stops]);
+    }, [dataContextRoutes, selectedTab]); // Depende de las rutas y la pestaña
 
-    const handleNavigate = (stop: DriverInvoice) => { 
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); 
-        const client = clients.find(c => c.id === stop.clienteId); 
-        if (client?.location) { 
-            const { latitude, longitude } = client.location; 
-            const url = Platform.select({ 
-                ios: `comgooglemaps://?daddr=${latitude},${longitude}&directionsmode=driving`, 
-                android: `google.navigation:q=${latitude},${longitude}&mode=d` 
-            }); 
-            if (url) Linking.openURL(url).catch(() => Alert.alert("Error", "No se pudo abrir la aplicación de mapas.")); 
-        } else { 
-            Alert.alert("Sin Ubicación", "Este cliente no tiene una ubicación guardada."); 
-        } 
+    // --- Funciones handleRefresh y handleSelectRoute (Sin cambios lógicos) ---
+    const handleRefresh = useCallback(async () => {
+        setIsLoadingLocal(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        try {
+            await syncData();
+            Toast.show({ type: 'success', text1: 'Rutas Actualizadas', position: 'bottom' });
+        } catch (error) {
+            Toast.show({ type: 'error', text1: 'Error al actualizar', position: 'bottom' });
+            console.error("Error refreshing driver data:", error);
+        } finally {
+            setIsLoadingLocal(false);
+        }
+    }, [syncData]);
+
+    const handleSelectRoute = (route: DriverRoute) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        navigation.navigate('RouteDetail', { routeId: route.id });
     };
 
-    const handleFailedDelivery = (stop: DriverInvoice) => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        Alert.alert("Confirmar Entrega Fallida", `¿Seguro que no se pudo entregar a ${stop.clienteNombre}?`,
-            [{ text: 'Cancelar', style: 'cancel' }, {
-                text: 'Confirmar', style: 'destructive', onPress: async () => {
-                    const batch = writeBatch(db);
-                    const ventaRef = doc(db, 'ventas', stop.id);
-                    const routeRef = doc(db, 'rutas', routeId);
+    // --- Función renderRouteItem (Usa el componente RouteItem actualizado) ---
+    const renderRouteItem = useCallback(({ item }: { item: DriverRoute }) => (
+        <RouteItem route={item} onPress={handleSelectRoute} />
+    ), [handleSelectRoute]); // Solo depende de la función de navegación
 
-                    batch.update(ventaRef, { estado: 'Anulada' });
-                    
-                    const updatedFacturas = stops.map(f => f.id === stop.id ? { ...f, estadoVisita: 'Anulada' as const } : f) as DriverInvoice[];
-                    
-                    batch.update(routeRef, { facturas: updatedFacturas });
-                    
-                    stop.items.forEach(item => {
-                        const productRef = doc(db, 'productos', item.productId);
-                        batch.update(productRef, { stock: increment(item.quantity) });
-                    });
-
-                    try {
-                        await batch.commit();
-                        syncData(); // Sincroniza después del batch
-                        Toast.show({ type: 'info', text1: `Parada marcada como Anulada` });
-                    } catch (error) {
-                        console.error("Error al anular entrega: ", error);
-                        Toast.show({ type: 'error', text1: 'Error al anular la entrega.' });
-                    }
-                }
-            }]
-        );
-    };
-    
-    const handleConfirmAndUpdateUI = (updatedStop: DriverInvoice) => { 
-        const updatedFacturas = stops.map(s => s.id === updatedStop.id ? updatedStop : s) as DriverInvoice[];
-        setRoute(prev => prev ? { ...prev, facturas: updatedFacturas } : null);
-        syncData(); // Sincroniza los datos
-    };
-    
-    const handleOpenAdjustmentModal = (stop: DriverInvoice) => { setSelectedStop(stop); setAdjustmentModalVisible(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); };
-
-    const handleCompleteRoute = async () => { 
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); 
-        Alert.alert("Finalizar Ruta", "¿Estás seguro de que has completado todas las entregas?", 
-        [{ text: 'Cancelar', style: 'cancel' }, 
-        { text: 'Sí, Finalizar', style: 'default', onPress: async () => { 
-            setIsSaving(true); 
-            try { 
-                await runTransaction(db, async (transaction) => { 
-                    const routeRef = doc(db, 'rutas', routeId); 
-                    const routeDoc = await transaction.get(routeRef); 
-                    if (!routeDoc.exists() || routeDoc.data().estado !== 'En Curso') throw new Error("Esta ruta ya no está en curso."); 
-                    transaction.update(routeRef, { estado: 'Completada' }); 
-                }); 
-                Toast.show({ type: 'success', text1: '¡Ruta completada con éxito!' }); 
-                navigation.goBack(); // Vuelve al Home del Repartidor
-                syncData(); // Sincroniza el estado final
-            } catch (error) { 
-                Toast.show({ type: 'error', text1: 'Error al finalizar la ruta' }); 
-                console.error("Error al finalizar la ruta:", error); 
-            } finally { 
-                setIsSaving(false); 
-            } 
-        } }]); 
-    };
-
-    if (!route) {
-        return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
-    }
-
+    // --- Renderizado Principal ---
     return (
         <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="light-content" />
+            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}><Feather name="arrow-left" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
-                <Text style={styles.title} numberOfLines={1}>{route.nombre}</Text>
+
+            <Header title="Mis Rutas" onRefresh={handleRefresh} isLoading={isLoadingLocal || isDataLoading} />
+
+            {/* --- Pestañas (Sin cambios visuales/lógicos) --- */}
+            <View style={styles.tabContainer}>
+                <TouchableOpacity
+                    style={[styles.tabButton, selectedTab === 'En Curso' && styles.activeTab]}
+                    onPress={() => setSelectedTab('En Curso')}
+                >
+                    <Text style={[styles.tabText, selectedTab === 'En Curso' && styles.activeTabText]}>En Curso</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.tabButton, selectedTab === 'Finalizadas' && styles.activeTab]}
+                    onPress={() => setSelectedTab('Finalizadas')}
+                >
+                    <Text style={[styles.tabText, selectedTab === 'Finalizadas' && styles.activeTabText]}>Finalizadas</Text>
+                </TouchableOpacity>
             </View>
 
-            <FlatList
-                data={stops}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.listContentContainer}
-                renderItem={({ item, index }) => {
-                    const statusColor = item.estadoVisita === 'Pagada' ? COLORS.success 
-                                      : item.estadoVisita === 'Anulada' ? COLORS.danger
-                                      : item.estadoVisita === 'Adeuda' ? COLORS.warning
-                                      : COLORS.primary;
-
-                    return (
-                        <View style={[styles.card, item.estadoVisita !== 'Pendiente' && styles.cardCompleted]}>
-                            <View style={styles.cardHeader}>
-                                <Text style={styles.stopNumber}>{index + 1}</Text>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.cardTitle}>{item.clienteNombre}</Text>
-                                    <Text style={styles.cardSubtitle}>{item.clienteDireccion}</Text>
-                                </View>
-                                <View style={[styles.statusBadge, { backgroundColor: statusColor }]}><Text style={styles.statusText}>{item.estadoVisita}</Text></View>
-                            </View>
-                            <View style={styles.cardBody}>
-                                <Text style={styles.amountLabel}>Monto a Cobrar:</Text>
-                                <Text style={styles.amountValue}>{formatCurrency(item.totalVenta)}</Text>
-                            </View>
-                            {item.estadoVisita === 'Pendiente' && (
-                                <View style={styles.cardActions}>
-                                    <TouchableOpacity style={styles.actionButton} onPress={() => handleNavigate(item)}><Feather name="map-pin" size={20} color={COLORS.primary} /><Text style={styles.actionButtonText}>Navegar</Text></TouchableOpacity>
-                                    <TouchableOpacity style={styles.actionButton} onPress={() => handleFailedDelivery(item)}><Feather name="x-circle" size={20} color={COLORS.danger} /><Text style={[styles.actionButtonText, { color: COLORS.danger }]}>No Entregado</Text></TouchableOpacity>
-                                    <TouchableOpacity style={[styles.actionButton, styles.mainActionButton]} onPress={() => handleOpenAdjustmentModal(item)}>
-                                        <Feather name="edit" size={20} color={COLORS.primaryDark} /><Text style={[styles.actionButtonText, { color: COLORS.primaryDark, fontWeight: 'bold' }]}>Gestionar</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            )}
+            {/* --- Lista o Loader --- */}
+            {isDataLoading && filteredRoutes.length === 0 ? (
+                // Loader inicial
+                <View style={styles.loaderContainer}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                    <Text style={styles.loadingText}>Cargando rutas...</Text>
+                </View>
+            ) : (
+                // Lista de rutas
+                <FlatList
+                    data={filteredRoutes} // Usa las rutas filtradas y ordenadas
+                    renderItem={renderRouteItem}
+                    keyExtractor={(item) => item.id}
+                    contentContainerStyle={styles.listContentContainer}
+                    ListEmptyComponent={ // Mensaje si no hay rutas en la pestaña actual
+                        <View style={styles.emptyContainer}>
+                            <Feather name={selectedTab === 'En Curso' ? "truck" : "check-square"} size={48} color={COLORS.textSecondary} />
+                            <Text style={styles.emptyText}>
+                                {selectedTab === 'En Curso' ? 'No tienes rutas pendientes.' : 'No hay rutas finalizadas.'}
+                            </Text>
+                            <TouchableOpacity style={styles.refreshButton} onPress={handleRefresh} disabled={isLoadingLocal}>
+                                <Text style={styles.refreshButtonText}>Volver a Cargar</Text>
+                            </TouchableOpacity>
                         </View>
-                    );
-                }}
-            />
-            
-            {areAllStopsCompleted && (
-                 <View style={styles.cardActions}>
-                    <TouchableOpacity style={styles.cardCompleted} onPress={handleCompleteRoute} disabled={isSaving}>
-                        {isSaving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.cardCompleted}>Finalizar Ruta</Text>}
-                    </TouchableOpacity>
-                 </View>
-            )}
-            
-            {selectedStop && (
-                <DeliveryAdjustmentModal 
-                    visible={isAdjustmentModalVisible} 
-                    onClose={() => setAdjustmentModalVisible(false)} 
-                    stop={selectedStop} 
-                    routeId={route.id} 
-                    onConfirm={handleConfirmAndUpdateUI}
+                    }
+                    // Optimizaciones de FlatList (sin cambios)
+                    initialNumToRender={10}
+                    maxToRenderPerBatch={5}
+                    windowSize={11}
                 />
             )}
         </SafeAreaView>
     );
 };
 
+// --- Estilos (Actualizados para Card Moderna) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
-    background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundEnd },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingBottom: 20, paddingHorizontal: 20 },
-    backButton: { position: 'absolute', left: 20, top: 60, padding: 10 },
-    title: { fontSize: 24, fontWeight: 'bold', color: COLORS.textPrimary, flex: 1, textAlign: 'center', marginRight: 40 },
-    listContentContainer: { padding: 15 },
-    card: { backgroundColor: COLORS.glass, borderRadius: 20, marginBottom: 15, borderWidth: 1, borderColor: COLORS.glassBorder, overflow: 'hidden' },
-    cardCompleted: { opacity: 0.5 },
-    cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 15, padding: 15, backgroundColor: 'rgba(0,0,0,0.1)' },
-    stopNumber: { fontSize: 22, fontWeight: 'bold', color: COLORS.primary, width: 30, textAlign: 'center' },
-    cardTitle: { fontSize: 18, fontWeight: 'bold', color: COLORS.textPrimary },
-    cardSubtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
-    statusBadge: { backgroundColor: COLORS.primary, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 'auto' },
-    statusText: { color: COLORS.primaryDark, fontSize: 12, fontWeight: 'bold' },
-    cardBody: { padding: 20, alignItems: 'center' },
-    amountLabel: { color: COLORS.textSecondary, fontSize: 14 },
-    amountValue: { color: COLORS.textPrimary, fontSize: 32, fontWeight: 'bold' },
-    cardActions: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: COLORS.glassBorder },
-    actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 15, gap: 8 },
-    actionButtonText: { color: COLORS.primary, fontWeight: '600' },
-    mainActionButton: { backgroundColor: COLORS.success, borderBottomRightRadius: 20, },
-    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)' },
-    modalContent: { width: '90%', backgroundColor: COLORS.backgroundStart, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
-    modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
-    modalSubtitle: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20 },
-    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 15, borderWidth: 1, borderColor: COLORS.glassBorder, paddingHorizontal: 15, marginBottom: 15, height: 58 },
-    inputIcon: { marginRight: 10 },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: 16 },
-    modalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 10 },
-    modalButton: { flex: 1, padding: 15, borderRadius: 12, alignItems: 'center' },
-    cancelButton: { backgroundColor: COLORS.disabled },
-    cancelButtonText: { color: COLORS.textPrimary, fontWeight: 'bold' },
-    confirmButton: { backgroundColor: COLORS.primary },
-    confirmButtonText: { color: COLORS.primaryDark, fontWeight: 'bold' },
-    // Estilos del modal que se deben añadir
-    adjustmentModalContent: { width: '95%', maxHeight: '85%', backgroundColor: COLORS.backgroundStart, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
-    itemList: { marginBottom: 15, maxHeight: '40%' },
-    itemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.glassBorder },
-    itemName: { flex: 1, color: COLORS.textPrimary, fontSize: 16, marginRight: 8 },
-    quantityControl: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 10 },
-    quantityButton: { padding: 8 },
-    quantityText: { color: COLORS.textPrimary, fontWeight: 'bold', fontSize: 16, paddingHorizontal: 12 },
-    itemTotal: { width: 80, textAlign: 'right', color: COLORS.textPrimary, fontWeight: 'bold', fontSize: 16 },
-    summaryContainer: { paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: COLORS.glassBorder, marginBottom: 15 },
-    summaryLabel: { fontSize: 14, color: COLORS.textSecondary },
-    summaryValueOriginal: { fontSize: 18, color: COLORS.textSecondary, fontWeight: 'bold', textDecorationLine: 'line-through', textAlign: 'right' },
-    summaryValueFinal: { fontSize: 24, color: COLORS.success, fontWeight: 'bold', textAlign: 'right' },
-    tabContainer: { flexDirection: 'row', justifyContent: 'space-around', backgroundColor: COLORS.glass, marginHorizontal: 20, borderRadius: 15, padding: 5, marginBottom: 10, },
-    tabButton: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
-    activeTab: { backgroundColor: COLORS.primary },
-    tabText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: 16 },
-    activeTabText: { color: COLORS.primaryDark },
+    background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0, paddingBottom: 15, paddingHorizontal: 10 },
+    headerButton: { padding: 10, width: 44, alignItems: 'center' },
+    title: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
+    // --- Pestañas (Estilos sin cambios) ---
+    tabContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        backgroundColor: COLORS.glass,
+        marginHorizontal: 15,
+        borderRadius: 15,
+        padding: 4,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: COLORS.glassBorder,
+    },
+    tabButton: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+    activeTab: { backgroundColor: COLORS.primary, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 },
+    tabText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: 15 },
+    activeTabText: { color: COLORS.primaryDark, fontWeight: 'bold' },
+    // --- Fin Pestañas ---
+    loaderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    loadingText: { marginTop: 10, color: COLORS.textSecondary },
+    listContentContainer: { paddingHorizontal: 15, paddingBottom: 20 },
+    // --- INICIO ESTILOS CARD MODERNA ---
+    routeCard: {
+        backgroundColor: COLORS.glass, // Fondo glassmorphism
+        borderRadius: 15, // Bordes más redondeados
+        marginBottom: 15,
+        borderWidth: 1, // Borde sutil
+        borderColor: COLORS.glassBorder,
+        shadowColor: "#000", // Sombra iOS
+        shadowOffset: { width: 0, height: 3, },
+        shadowOpacity: 0.15,
+        shadowRadius: 5,
+        elevation: 4, // Sombra Android
+        overflow: 'hidden', // Para asegurar bordes redondeados
+    },
+    routeCardCompleted: { // Estilo tenue para completadas
+        backgroundColor: 'rgba(40, 40, 40, 0.6)', // Más oscuro y translúcido
+        borderColor: 'rgba(80, 80, 80, 0.9)',
+    },
+    routeCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 18, // Más padding horizontal
+        paddingVertical: 14, // Más padding vertical
+        borderBottomWidth: 1, // Separador sutil
+        borderBottomColor: COLORS.glassBorder,
+        backgroundColor: 'rgba(0,0,0,0.1)', // Fondo ligeramente diferente
+    },
+    routeCardHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12, // Mayor espacio icono-texto
+    },
+    routeName: {
+        color: COLORS.textPrimary,
+        fontSize: 17,
+        fontWeight: 'bold',
+    },
+    routeDate: {
+        color: COLORS.textSecondary,
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    routeDetails: {
+        paddingHorizontal: 18, // Consistente con header
+        paddingTop: 14, // Padding superior
+        paddingBottom: 10, // Menos padding inferior antes de la flecha
+        flexDirection: 'row',
+        justifyContent: 'flex-start', // Alinear a la izquierda
+        gap: 20, // Mayor espacio entre items
+        flexWrap: 'wrap',
+    },
+    detailItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7, // Espacio icono-texto
+        paddingVertical: 3,
+    },
+    detailItemPending: { // Estilo para pendientes
+        backgroundColor: 'rgba(255, 193, 7, 0.15)', // Amarillo más visible
+        paddingHorizontal: 10, // Padding horizontal
+        borderRadius: 8, // Bordes redondeados
+    },
+    detailText: {
+        color: COLORS.textSecondary,
+        fontSize: 14,
+        fontWeight: '500',
+    },
+    routeCardFooter: { // Contenedor solo para la flecha, posicionado absoluto
+        position: 'absolute',
+        right: 15, // Alinear con padding
+        top: '55%', // Ajustar verticalmente si es necesario
+        transform: [{ translateY: -12 }],
+    },
+    // --- FIN ESTILOS CARD MODERNA ---
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30, gap: 15 },
+    emptyText: { fontSize: 17, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20 },
+    refreshButton: { backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 25, borderRadius: 25 },
+    refreshButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 16 },
 });
 
 export default DriverScreen;

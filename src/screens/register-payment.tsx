@@ -1,5 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+
 // Quitamos import { router, useLocalSearchParams } from 'expo-router';
 import { doc, runTransaction } from 'firebase/firestore';
 import React, { useState } from 'react';

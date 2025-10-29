@@ -381,7 +381,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 const routesSnap = await routesQuery;
                 finalData.routes = routesSnap.docs.map(processFirebaseDoc).map(r => ({
                     ...r, 
-                    fecha: r.fecha || new Date(0)
+                    fecha: r.fechaCreacion || r.fecha || new Date(0)
                 })) as Route[];
 
             } else { // Vendedor o Admin
@@ -536,7 +536,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         
         // Generamos la referencia de la venta *fuera* de la transacción
         // para poder devolver el ID al final.
-        const saleRef = doc(collection(db, "sales"));
+        const saleRef = doc(collection(db, "ventas"));
 
         await runTransaction(db, async (transaction) => {
             const items = saleData.items as CartItem[];
@@ -587,7 +587,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
             // 1. REVERTIR STOCK
             for (const item of items) {
-                const productRef = doc(db, "products", item.id);
+                const productRef = doc(db, "productos", item.id);
                 const productSnap = await transaction.get(productRef);
 
                 if (productSnap.exists()) {
@@ -601,7 +601,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             }
 
             // 2. ANULAR LA VENTA
-            const saleRef = doc(db, "sales", saleId);
+            const saleRef = doc(db, "ventas", saleId);
             transaction.update(saleRef, { 
                 estado: "Anulada",
                 saldoPendiente: 0 
