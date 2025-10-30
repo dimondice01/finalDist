@@ -39,7 +39,8 @@ interface DriverRoute {
     id: string;
     nombre: string; // Nombre para mostrar
     fecha: Date | null; // <-- Mantenemos Date | null
-    estado: 'Creada' | 'En Curso' | 'Completada';
+    // --- CAMBIO LÓGICA ARCHIVADA: Aseguramos que el tipo incluya 'Archivada' ---
+    estado: 'Creada' | 'En Curso' | 'Completada' | 'Archivada';
     facturas: DriverInvoice[];
 }
 
@@ -90,19 +91,33 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
     // Usamos 'Pendiente' y 'Pendiente de Entrega' como pendientes
     const totalPendiente = useMemo(() => route.facturas.filter(f => f.estadoVisita === 'Pendiente' || f.estadoVisita === 'Pendiente de Entrega').length, [route.facturas]);
     const totalAmount = useMemo(() => route.facturas.reduce((sum, f) => sum + f.totalVenta, 0), [route.facturas]);
+
+    // --- INICIO CAMBIOS LÓGICA ARCHIVADA ---
     const isCompleted = route.estado === 'Completada';
+    // Definimos 'Archivada'
+    const isArchived = route.estado === 'Archivada';
+    // Definimos 'Finalizada' como cualquiera de los dos estados
+    const isFinalizada = isCompleted || isArchived;
+    // --- FIN CAMBIOS LÓGICA ARCHIVADA ---
 
     return (
         <TouchableOpacity
-            style={[styles.routeCard, isCompleted && styles.routeCardCompleted]} // Estilo diferente si está completada
+            // --- CAMBIO: Aplicamos estilo 'Completed' si está completada, y 'Disabled' si está archivada ---
+            style={[
+                styles.routeCard, 
+                isCompleted && styles.routeCardCompleted,
+                isArchived && styles.routeCardDisabled // Nuevo estilo para archivadas
+            ]}
             onPress={() => onPress(route)}
-            activeOpacity={0.8} // Efecto visual al tocar
+            // --- CAMBIO: Deshabilitamos el 'activeOpacity' y el botón si está archivada ---
+            activeOpacity={isArchived ? 1.0 : 0.8} // Sin feedback visual si está deshabilitada
+            disabled={isArchived} // ¡BLOQUEA EL CLIC!
         >
             {/* Header de la Card */}
             <View style={styles.routeCardHeader}>
                 <View style={styles.routeCardHeaderLeft}>
-                    {/* Icono cambia si está completada */}
-                    <Feather name={isCompleted ? "check-circle" : "truck"} size={20} color={isCompleted ? COLORS.success : COLORS.primary} />
+                    {/* --- CAMBIO: Icono cambia si está 'Finalizada' (Completada O Archivada) --- */}
+                    <Feather name={isFinalizada ? "check-circle" : "truck"} size={20} color={isFinalizada ? COLORS.success : COLORS.primary} />
                     <Text style={styles.routeName}>{route.nombre || `Ruta ${route.id.substring(0, 6)}`}</Text>
                 </View>
                 {/* Fecha ahora usa formatDate corregido */}
@@ -119,8 +134,8 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
                     <Feather name="dollar-sign" size={16} color={COLORS.textSecondary} />
                     <Text style={styles.detailText}>{formatCurrency(totalAmount)}</Text>
                 </View>
-                 {/* Mostramos pendientes solo si no está completada */}
-                 {!isCompleted && totalPendiente > 0 && (
+                 {/* --- CAMBIO: Mostramos pendientes solo si NO está 'Finalizada' --- */}
+                 {!isFinalizada && totalPendiente > 0 && (
                     <View style={[styles.detailItem, styles.detailItemPending]}>
                         <Feather name="alert-circle" size={16} color={COLORS.warning} />
                         <Text style={[styles.detailText, { color: COLORS.warning, fontWeight: 'bold' }]}>{totalPendiente} Pendientes</Text>
@@ -160,10 +175,10 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                     // console.log(`[MAPEO ${r.id}] Timestamp -> Date:`, routeDate);
                 } else if (sourceDate instanceof Date) { // Si ya es Date (cargado de AsyncStorage o directo)
                     if (!isNaN(sourceDate.getTime())) { // Verificar si es válido
-                       routeDate = sourceDate;
-                       // console.log(`[MAPEO ${r.id}] Date object -> Date:`, routeDate);
+                        routeDate = sourceDate;
+                        // console.log(`[MAPEO ${r.id}] Date object -> Date:`, routeDate);
                     } else {
-                       console.warn(`[MAPEO ${r.id}] Fecha inválida (Date object from context):`, sourceDate);
+                        console.warn(`[MAPEO ${r.id}] Fecha inválida (Date object from context):`, sourceDate);
                     }
                 } else if (typeof sourceDate === 'object' && (sourceDate as any).seconds !== undefined && typeof (sourceDate as any).seconds === 'number') {
                     // Intenta convertir desde objeto {seconds, nanoseconds} (Común desde JSON)
@@ -177,24 +192,24 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                         }
                     } catch (e) { console.warn(`[MAPEO ${r.id}] Error convirtiendo objeto a Timestamp:`, sourceDate, e); }
                 } else if (typeof sourceDate === 'string') {
-                     // Intenta convertir desde string ISO (Común desde JSON)
-                     const parsedDate = new Date(sourceDate);
-                     if (!isNaN(parsedDate.getTime())) {
-                         routeDate = parsedDate;
-                         // console.log(`[MAPEO ${r.id}] String -> Date:`, routeDate);
-                     } else {
-                         console.warn(`[MAPEO ${r.id}] Fecha inválida (string from context):`, sourceDate);
-                     }
+                      // Intenta convertir desde string ISO (Común desde JSON)
+                      const parsedDate = new Date(sourceDate);
+                      if (!isNaN(parsedDate.getTime())) {
+                          routeDate = parsedDate;
+                          // console.log(`[MAPEO ${r.id}] String -> Date:`, routeDate);
+                      } else {
+                          console.warn(`[MAPEO ${r.id}] Fecha inválida (string from context):`, sourceDate);
+                      }
                 } else {
-                     console.warn(`[MAPEO ${r.id}] Tipo de fecha no reconocido en context:`, sourceDate);
+                    console.warn(`[MAPEO ${r.id}] Tipo de fecha no reconocido en context:`, sourceDate);
                 }
             } else {
                 // console.log(`[MAPEO ${r.id}] Fecha es null o undefined.`);
             }
             // Última validación: si la conversión resultó en fecha inválida o muy antigua, la ponemos null
             if (routeDate && (isNaN(routeDate.getTime()) || routeDate.getFullYear() < 1971)) {
-                 // console.warn(`[MAPEO ${r.id}] Fecha parseada es inválida o < 1971, seteando a null:`, routeDate);
-                 routeDate = null;
+                // console.warn(`[MAPEO ${r.id}] Fecha parseada es inválida o < 1971, seteando a null:`, routeDate);
+                routeDate = null;
             }
             // --- FIN CORRECCIÓN FECHA ---
 
@@ -218,21 +233,26 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                 id: r.id,
                 nombre: `Ruta ${r.id.substring(0, 6)}`, // O el nombre real si lo tienes
                 fecha: routeDate, // <-- Fecha Corregida
+                // Aseguramos que el estado se mapee correctamente
                 estado: r.estado || 'Creada',
                 facturas: facturas
             };
         });
 
-        // Filtramos según la pestaña seleccionada
-        const filtered = mappedRoutes.filter(route => {
-            if (selectedTab === 'En Curso') {
-                // Rutas 'Creada' o 'En Curso' van aquí
-                return route.estado !== 'Completada';
-            } else {
-                // Rutas 'Completada' van aquí
-                return route.estado === 'Completada';
-            }
-        });
+        // Filtramos según la pestaña seleccionada (¡ESTA LÓGICA YA ESTÁ CORRECTA!)
+      const filtered = mappedRoutes.filter(route => {
+      if (selectedTab === 'En Curso') {
+          // --- CAMBIO ---
+          // Ahora 'En Curso' solo muestra estados activos ('Creada' o 'En Curso')
+          const estadosEnCurso = ['Creada', 'En Curso'];
+          return estadosEnCurso.includes(route.estado);
+      } else {
+          // --- CAMBIO ---
+          // 'Finalizadas' ahora muestra 'Completada' Y 'Archivada'
+          const estadosFinalizados = ['Completada', 'Archivada'];
+          return estadosFinalizados.includes(route.estado);
+      }
+    });
 
         // Ordenamos: 'En Curso' primero, luego 'Creada', y por fecha descendente
         return filtered.sort((a, b) => {
@@ -266,6 +286,8 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
 
     const handleSelectRoute = (route: DriverRoute) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        // La navegación se bloqueará por la propiedad 'disabled' en la tarjeta
+        // pero la función sigue aquí por si se habilita
         navigation.navigate('RouteDetail', { routeId: route.id });
     };
 
@@ -378,6 +400,13 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(253, 234, 234, 0.99)', // Más oscuro y translúcido
         borderColor: 'rgba(80, 80, 80, 0.9)',
     },
+    // --- ¡NUEVO ESTILO! ---
+    routeCardDisabled: { // Estilo para Archivadas (deshabilitadas)
+        opacity: 0.6,
+        backgroundColor: 'rgba(255, 231, 231, 1)', // Un gris más oscuro
+        borderColor: 'rgba(80, 80, 80, 0.9)',
+    },
+    // --- FIN NUEVO ESTILO ---
     routeCardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
