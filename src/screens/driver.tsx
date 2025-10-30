@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
         overflow: 'hidden', // Para asegurar bordes redondeados
     },
     routeCardCompleted: { // Estilo tenue para completadas
-        backgroundColor: 'rgba(40, 40, 40, 0.6)', // Más oscuro y translúcido
+        backgroundColor: 'rgba(253, 234, 234, 0.99)', // Más oscuro y translúcido
         borderColor: 'rgba(80, 80, 80, 0.9)',
     },
     routeCardHeader: {
