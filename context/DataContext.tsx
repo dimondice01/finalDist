@@ -239,7 +239,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                             setter([]); // Resetea si está corrupto
                         }
                     } else {
-                         setter([]); // Si no hay datos, inicializa como array vacío
+                        setter([]); // Si no hay datos, inicializa como array vacío
                     }
                 };
 
@@ -354,8 +354,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     pagoTransferencia: rawData.pagoTransferencia ?? 0,
                     // 🔥 Nuevo campo (Aseguramos que sea un objeto)
                     itemDiscounts: rawData.itemDiscounts || {}, 
-                 } as Sale;
-            };
+                   } as Sale;
+             };
 
             // Ejecuta queries base
             const [productsSnap, categoriesSnap, promosSnap, vendorsSnap] = await Promise.all([
@@ -403,7 +403,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                          const zonesQuery = getDocs(query(collection(db, 'zonas'), where('__name__', 'in', zoneIds)));
                          finalData.availableZones = (await zonesQuery).docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
                      }
-                } else { finalData.availableZones = []; }
+                 } else { finalData.availableZones = []; }
             }
 
             // Guardar en AsyncStorage
@@ -441,7 +441,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                      Toast.show({ type: 'error', text1: 'Error Crítico', text2: 'Datos de usuario incompletos. Cerrando sesión.' });
                      await auth.signOut(); 
                 } else {
-                    Toast.show({ type: 'error', text1: 'Error de Sincronización', text2: error.message || 'No se pudieron obtener los datos.' });
+                     Toast.show({ type: 'error', text1: 'Error de Sincronización', text2: error.message || 'No se pudieron obtener los datos.' });
                 }
             }
             throw error;
@@ -538,6 +538,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         // para poder devolver el ID al final.
         const saleRef = doc(collection(db, "ventas"));
 
+        // --- ¡¡¡INICIO DE LA CORRECCIÓN!!! ---
         await runTransaction(db, async (transaction) => {
             const items = saleData.items as CartItem[];
 
@@ -545,10 +546,14 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 throw new Error("No se pueden procesar 0 items.");
             }
 
-            // 1. VERIFICAR Y DESCONTAR STOCK
+            // Arrays para guardar las operaciones pendientes
+            const productUpdates: { ref: any, newStock: number }[] = [];
+
+            // --- 1. FASE DE LECTURA (Stock) ---
+            // Primero leemos TODO el stock y verificamos.
             for (const item of items) {
                 const productRef = doc(db, "productos", item.id); // Asumimos que item.id es el ID del producto
-                const productSnap = await transaction.get(productRef);
+                const productSnap = await transaction.get(productRef); // <-- LECTURA
 
                 if (!productSnap.exists()) {
                     throw new Error(`Producto ${item.nombre} no encontrado.`);
@@ -560,15 +565,25 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 }
                 
                 const newStock = currentStock - item.quantity;
-                transaction.update(productRef, { stock: newStock });
+                // Guardamos la operación de escritura para después
+                productUpdates.push({ ref: productRef, newStock: newStock });
+            }
+            
+            // (Aquí es donde irían OTRAS LECTURAS, como promos de combo)
+
+            // --- 2. FASE DE ESCRITURA (Stock) ---
+            // Ahora que todas las lecturas terminaron, ejecutamos las escrituras.
+            for (const update of productUpdates) {
+                transaction.update(update.ref, { stock: update.newStock }); // <-- ESCRITURA
             }
 
-            // 2. CREAR EL DOCUMENTO DE VENTA
+            // --- 3. FASE DE ESCRITURA (Venta) ---
             transaction.set(saleRef, {
                 ...saleData,
                 fecha: serverTimestamp() // Asegura la fecha del servidor
-            });
+            }); // <-- ESCRITURA
         });
+        // --- ¡¡¡FIN DE LA CORRECCIÓN!!! ---
 
         // Si la transacción tuvo éxito, devolvemos el ID
         return saleRef.id;
@@ -584,28 +599,40 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             if (!items || items.length === 0) {
                 throw new Error("No hay items para revertir.");
             }
+            
+            // --- ¡¡¡INICIO DE CORRECCIÓN (Misma lógica)!!! ---
+            
+            // Arrays para guardar las operaciones pendientes
+            const productUpdates: { ref: any, newStock: number }[] = [];
 
-            // 1. REVERTIR STOCK
+            // --- 1. FASE DE LECTURA (Stock) ---
             for (const item of items) {
                 const productRef = doc(db, "productos", item.id);
-                const productSnap = await transaction.get(productRef);
+                const productSnap = await transaction.get(productRef); // <-- LECTURA
 
                 if (productSnap.exists()) {
                     const currentStock = productSnap.data().stock || 0;
                     const newStock = currentStock + item.quantity;
-                    transaction.update(productRef, { stock: newStock });
+                    // Guardamos la operación de escritura para después
+                    productUpdates.push({ ref: productRef, newStock: newStock });
                 } else {
-                    // Si el producto no existe, solo logueamos, no detenemos la anulación
                     console.warn(`Producto ${item.nombre} (ID: ${item.id}) no encontrado al revertir stock.`);
                 }
             }
+            
+            // --- 2. FASE DE ESCRITURA (Stock) ---
+            for (const update of productUpdates) {
+                transaction.update(update.ref, { stock: update.newStock }); // <-- ESCRITURA
+            }
 
-            // 2. ANULAR LA VENTA
+            // --- 3. FASE DE ESCRITURA (Venta) ---
             const saleRef = doc(db, "ventas", saleId);
             transaction.update(saleRef, { 
                 estado: "Anulada",
                 saldoPendiente: 0 
-            });
+            }); // <-- ESCRITURA
+            
+            // --- ¡¡¡FIN DE CORRECCIÓN!!! ---
         });
 
     }, [db]);

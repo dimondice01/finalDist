@@ -1,11 +1,15 @@
 // src/screens/route-detail.tsx
 import { Feather } from '@expo/vector-icons';
+// --- INICIO CAMBIOS: Importar Haptics ---
 import * as Haptics from 'expo-haptics';
+// --- FIN CAMBIOS ---
 import { LinearGradient } from 'expo-linear-gradient';
+// --- INICIO CAMBIOS: Importar lógica de Transacción ---
 import { doc, increment, runTransaction, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+// --- FIN CAMBIOS ---
 import React, { useEffect, useMemo, useState } from 'react';
-// --- INICIO CAMBIOS: Importar KeyboardAvoidingView ---
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// --- INICIO CAMBIOS: FlatList, KeyboardAvoidingView y ScrollView ---
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 // --- FIN CAMBIOS ---
 import Toast from 'react-native-toast-message';
 
@@ -19,12 +23,14 @@ import { COLORS } from '../../styles/theme';
 const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
 
 // --- INTERFACES LOCALES (ACTUALIZADAS) ---
+// --- INICIO CAMBIOS: Añadir DriverItem ---
 interface DriverItem {
     productId: string;
     nombre: string;
     quantity: number;
     precio: number;
 }
+// --- FIN CAMBIOS ---
 
 interface Invoice {
     id: string;
@@ -35,7 +41,7 @@ interface Invoice {
     estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda';
     location?: { latitude: number; longitude: number; };
     telefono?: string;
-    items: DriverItem[];
+    items: DriverItem[]; // <-- CAMBIO: Aseguramos que items esté aquí
 }
 interface RouteFull {
     id: string;
@@ -87,11 +93,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
             const itemToModify = currentItems[index];
             if (!itemToModify) return currentItems;
 
-            // --- CAMBIO: Buscamos el original por productId, pero desde la lista de ORIGINALES ---
             const originalItem = originalItems.find(item => item.productId === itemToModify.productId);
-            // Usamos la cantidad original de ese item. Si hay duplicados, esto asume que todos tienen el mismo límite.
-            // Para una lógica de duplicados *perfecta*, necesitaríamos un ID único por *línea* de item, no solo por producto.
-            // Pero para este caso, usamos el primer original que coincida.
             const maxQuantity = originalItem ? originalItem.quantity : 0;
 
             return currentItems.map((item, idx) => {
@@ -143,33 +145,23 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                 const routeDoc = await transaction.get(routeRef);
                 if (!routeDoc.exists()) throw new Error("La ruta no fue encontrada.");
 
-                // --- INICIO CORRECCIÓN LÓGICA DE STOCK (Bug 'indexOf') ---
-                // Reemplazamos la lógica de Map por una que suma y resta,
-                // manejando correctamente productos duplicados.
-                
                 const stockDevueltoMap = new Map<string, number>();
 
-                // 1. Contar cuánto DEBERÍA HABERSE ENTREGADO (Original)
                 for (const item of originalItems) {
                     stockDevueltoMap.set(item.productId, (stockDevueltoMap.get(item.productId) || 0) + item.quantity);
                 }
                 
-                // 2. Restar lo que SÍ SE ENTREGÓ (Modificado)
                 for (const item of finalItemsToDeliver) {
                      stockDevueltoMap.set(item.productId, (stockDevueltoMap.get(item.productId) || 0) - item.quantity);
                 }
                 
-                // 3. Lo que queda en stockDevueltoMap es la cantidad NETA a devolver
                 for (const [productId, stockDifference] of stockDevueltoMap.entries()) {
-                    // Solo actualizamos si la diferencia es positiva (se devuelve stock)
-                    if (stockDifference > 0) {
+                    if (stockDifference > 0 && productId) { 
                         const productRef = doc(db, 'productos', productId);
                         transaction.update(productRef, { stock: increment(stockDifference) });
                     }
                 }
-                // --- FIN CORRECCIÓN LÓGICA DE STOCK ---
 
-                // 4. Actualizar la Venta
                 transaction.update(ventaRef, {
                     estado: finalStatus === 'Pagada' ? 'Pagada' : 'Pendiente de Pago',
                     items: finalItemsToDeliver,
@@ -180,9 +172,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                     fechaUltimoPago: Timestamp.now(),
                 });
 
-                // 5. Actualizar la copia de la factura dentro de la Ruta
                 const routeData = routeDoc.data();
-                // --- CAMBIO: Añadimos '?' por si routeData es null (aunque no debería)
                 const updatedFacturas = (routeData?.facturas || []).map((f: any) =>
                     f.id === stop.id ? {
                         ...f,
@@ -203,7 +193,6 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
         } catch (error) {
             console.error("Error en la transacción de entrega:", error);
             const err = error as Error;
-            // --- CAMBIO: Mostramos el error real ---
             Toast.show({ type: 'error', text1: 'Error en la transacción', text2: err.message || 'Error desconocido' });
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         } finally {
@@ -211,7 +200,6 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
         }
     };
 
-    // Manejador del botón "Confirmar" (Sin cambios)
     const handleConfirmDelivery = async () => {
         const efectivo = parseFloat(pagoEfectivo.replace(',', '.')) || 0;
         const transferencia = parseFloat(pagoTransferencia.replace(',', '.')) || 0;
@@ -256,90 +244,87 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
 
     return (
         <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
-            {/* --- INICIO CAMBIO TECLADO --- */}
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={styles.keyboardAvoidingContainer} // Usamos flex: 1 y centrado
+                style={styles.keyboardAvoidingContainer} 
             >
                 <View style={styles.adjustmentModalContent}>
-                    {/* --- FIN CAMBIO TECLADO --- */}
+                    <ScrollView> 
+                        <Text style={styles.modalTitle}>Gestionar Entrega</Text>
+                        <Text style={styles.modalSubtitle}>{stop.clienteNombre}</Text>
 
-                    <Text style={styles.modalTitle}>Gestionar Entrega</Text>
-                    <Text style={styles.modalSubtitle}>{stop.clienteNombre}</Text>
-
-                    <FlatList
-                        data={modifiedItems}
-                        keyExtractor={(item, index) => `${item.productId}-${index}`}
-                        renderItem={({ item, index }) => {
-                            const isEditing = editingItemIndex === index;
-                            
-                            return (
-                                <View style={[styles.itemRow, item.quantity === 0 && { opacity: 0.4 }]}>
-                                    <Text style={styles.itemName} numberOfLines={1}>{item.nombre}</Text>
-                                    
-                                    <View style={styles.quantityControl}>
-                                        <TouchableOpacity style={styles.quantityButton} onPress={() => handleQuantityChange(index, 'decrement')}>
-                                            <Feather name="minus" size={16} color={COLORS.primary} />
-                                        </TouchableOpacity>
-
-                                        {isEditing ? (
-                                            <TextInput
-                                                style={styles.quantityInput}
-                                                value={item.quantity.toString()}
-                                                onChangeText={(text) => handleQuantityChange(index, 'input', text)}
-                                                onBlur={() => setEditingItemIndex(null)}
-                                                keyboardType="numeric"
-                                                autoFocus
-                                                maxLength={3}
-                                                selectTextOnFocus
-                                            />
-                                        ) : (
-                                            <TouchableOpacity onPress={() => setEditingItemIndex(index)}>
-                                                <Text style={styles.quantityText}>{item.quantity}</Text>
+                        <FlatList
+                            data={modifiedItems}
+                            keyExtractor={(item, index) => `${item.productId}-${index}`}
+                            renderItem={({ item, index }) => {
+                                const isEditing = editingItemIndex === index;
+                                
+                                return (
+                                    <View style={[styles.itemRow, item.quantity === 0 && { opacity: 0.4 }]}>
+                                        <Text style={styles.itemName} numberOfLines={1}>{item.nombre}</Text>
+                                        
+                                        <View style={styles.quantityControl}>
+                                            <TouchableOpacity style={styles.quantityButton} onPress={() => handleQuantityChange(index, 'decrement')}>
+                                                <Feather name="minus" size={16} color={COLORS.primary} />
                                             </TouchableOpacity>
-                                        )}
 
-                                        <TouchableOpacity style={styles.quantityButton} onPress={() => handleQuantityChange(index, 'increment')}>
-                                            <Feather name="plus" size={16} color={COLORS.primary} />
-                                        </TouchableOpacity>
+                                            {isEditing ? (
+                                                <TextInput
+                                                    style={styles.quantityInput}
+                                                    value={item.quantity.toString()}
+                                                    onChangeText={(text) => handleQuantityChange(index, 'input', text)}
+                                                    onBlur={() => setEditingItemIndex(null)}
+                                                    keyboardType="numeric"
+                                                    autoFocus
+                                                    maxLength={3}
+                                                    selectTextOnFocus
+                                                />
+                                            ) : (
+                                                <TouchableOpacity onPress={() => setEditingItemIndex(index)}>
+                                                    <Text style={styles.quantityText}>{item.quantity}</Text>
+                                                </TouchableOpacity>
+                                            )}
+
+                                            <TouchableOpacity style={styles.quantityButton} onPress={() => handleQuantityChange(index, 'increment')}>
+                                                <Feather name="plus" size={16} color={COLORS.primary} />
+                                            </TouchableOpacity>
+                                        </View>
+                                        
+                                        <Text style={styles.itemTotal}>{formatCurrency(item.precio * item.quantity)}</Text>
                                     </View>
-                                    
-                                    <Text style={styles.itemTotal}>{formatCurrency(item.precio * item.quantity)}</Text>
-                                </View>
-                            );
-                        }}
-                        style={styles.itemList}
-                        extraData={editingItemIndex}
-                    />
+                                );
+                            }}
+                            style={styles.itemList}
+                            extraData={editingItemIndex}
+                        />
 
-                    <View style={styles.summaryContainer}>
-                        <Text style={styles.summaryLabel}>Total Original:</Text>
-                        <Text style={styles.summaryValueOriginal}>{formatCurrency(stop.totalVenta)}</Text>
-                        <Text style={styles.summaryLabel}>Nuevo Total a Cobrar:</Text>
-                        <Text style={styles.summaryValueFinal}>{formatCurrency(newTotalVenta)}</Text>
-                    </View>
+                        <View style={styles.summaryContainer}>
+                            <Text style={styles.summaryLabel}>Total Original:</Text>
+                            <Text style={styles.summaryValueOriginal}>{formatCurrency(stop.totalVenta)}</Text>
+                            <Text style={styles.summaryLabel}>Nuevo Total a Cobrar:</Text>
+                            <Text style={styles.summaryValueFinal}>{formatCurrency(newTotalVenta)}</Text>
+                        </View>
 
-                    <View style={styles.inputContainer}>
-                        <Feather name="dollar-sign" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                        <TextInput style={styles.input} placeholder="Monto en Efectivo" placeholderTextColor={COLORS.textSecondary} keyboardType="numeric" value={pagoEfectivo} onChangeText={setPagoEfectivo} />
-                    </View>
-                    <View style={styles.inputContainer}>
-                        <Feather name="credit-card" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                        <TextInput style={styles.input} placeholder="Monto en Transferencia" placeholderTextColor={COLORS.textSecondary} keyboardType="numeric" value={pagoTransferencia} onChangeText={setPagoTransferencia} />
-                    </View>
+                        <View style={styles.inputContainer}>
+                            <Feather name="dollar-sign" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TextInput style={styles.input} placeholder="Monto en Efectivo" placeholderTextColor={COLORS.textSecondary} keyboardType="numeric" value={pagoEfectivo} onChangeText={setPagoEfectivo} />
+                        </View>
+                        <View style={styles.inputContainer}>
+                            <Feather name="credit-card" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TextInput style={styles.input} placeholder="Monto en Transferencia" placeholderTextColor={COLORS.textSecondary} keyboardType="numeric" value={pagoTransferencia} onChangeText={setPagoTransferencia} />
+                        </View>
 
-                    <View style={styles.modalButtons}>
-                        <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={onClose}>
-                            <Text style={[styles.buttonText, { color: COLORS.textSecondary }]}>Cancelar</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={handleConfirmDelivery} disabled={isSaving}>
-                            {isSaving ? <ActivityIndicator color={COLORS.primaryDark} /> : <Text style={styles.buttonText}>Confirmar</Text>}
-                        </TouchableOpacity>
-                    </View>
-                {/* --- INICIO CAMBIO TECLADO --- */}
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={onClose}>
+                                <Text style={[styles.buttonText, { color: COLORS.textSecondary }]}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={handleConfirmDelivery} disabled={isSaving}>
+                                {isSaving ? <ActivityIndicator color={COLORS.primaryDark} /> : <Text style={styles.buttonText}>Confirmar</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </ScrollView> 
                 </View> 
             </KeyboardAvoidingView>
-            {/* --- FIN CAMBIO TECLADO --- */}
         </Modal>
     );
 };
@@ -364,16 +349,19 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         const foundRoute = routes.find(r => r.id === routeId);
         if (!foundRoute) return undefined;
 
+        // --- ¡¡¡INICIO DE LA CORRECCIÓN (Error 'undefined')!!! ---
         const enrichedFacturas = (foundRoute.facturas || []).map(f => {
             const clientData = clients.find(c => c.id === f.clienteId);
             return {
                 ...f,
                 estadoVisita: f.estadoVisita || 'Pendiente',
-                location: clientData?.location,
-                telefono: clientData?.telefono,
+                // Si 'clientData' no existe, 'location' y 'telefono' deben ser NULL, no undefined.
+                location: clientData?.location || null, 
+                telefono: clientData?.telefono || null,
                 items: f.items || [] 
             };
         });
+        // --- ¡¡¡FIN DE LA CORRECCIÓN!!! ---
 
         let routeDate = foundRoute.fecha;
         if (routeDate && !(routeDate instanceof Date) && (routeDate as any).seconds !== undefined) {
@@ -502,6 +490,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         );
     };
 
+    // --- ¡¡¡INICIO DE LA CORRECCIÓN (Lógica Anulación)!!! ---
     const handleCancelInvoice = async (invoice: Invoice) => {
         if (invoice.estadoVisita === 'Anulada') return;
 
@@ -512,7 +501,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
 
         Alert.alert(
             "Anular Factura",
-            `¿Está seguro que desea ANULAR la visita a ${invoice.clienteNombre}? ESTA ACCIÓN DEVOLVERÁ EL STOCK AL INVENTARIO.`,
+            `¿Está seguro que desea ANULAR la visita a ${invoice.clienteNombre}? ESTA ACCIÓN DEVOLVERÁ EL STOCK ORIGINAL AL INVENTARIO.`,
             [
                 { text: "Cancelar", style: "cancel" },
                 {
@@ -521,30 +510,57 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     onPress: async () => {
                         setIsUpdating(true);
                         try {
+                            // 1. Encontrar la ruta original desde el contexto (la fuente de verdad)
+                            const originalRoute = routes.find(r => r.id === routeId);
+
+                            // 2. Encontrar la factura ORIGINAL (con los items originales)
+                            // (Corrección TS 18048: Se añade '?' después de 'facturas')
+                            const originalInvoice = originalRoute?.facturas?.find(f => f.id === invoice.id);
+                            
+                            // 3. Determinar qué items devolver
+                            // Si encontramos la factura original en el contexto, usamos esos items.
+                            // Si no (fallback muy improbable), usamos los items de la factura local.
+                            const itemsToReturn = originalInvoice?.items || invoice.items;
+                            
+                            if (!originalInvoice) {
+                                console.warn(`ADVERTENCIA: No se encontró la factura original en DataContext (ID: ${invoice.id}). Se usará la factura local para anular. El stock devuelto podría ser incorrecto si la factura fue modificada.`);
+                            }
+                            
                             const batch = writeBatch(db);
                             const saleRef = doc(db, 'ventas', invoice.id);
                             const routeRef = doc(db, 'rutas', routeId);
 
+                            // 4. Actualizar la Venta
                             batch.update(saleRef, {
                                 estado: 'Anulada',
-                                saldoPendiente: invoice.totalVenta
+                                saldoPendiente: invoice.totalVenta // El saldo pendiente es el total
                             });
 
+                            // 5. Actualizar la Factura en la Ruta
                             const updatedFacturas = localInvoices.map(f =>
                                 f.id === invoice.id ? { ...f, estadoVisita: 'Anulada' as const } : f
                             );
                             batch.update(routeRef, { facturas: updatedFacturas });
 
-                            invoice.items.forEach(item => {
-                                const productRef = doc(db, 'productos', item.productId);
-                                batch.update(productRef, { stock: increment(item.quantity) });
+                            // 6. Devolver Stock usando los items ORIGINALES (itemsToReturn)
+                            // (Corrección TS 7006: Se añade el tipo 'DriverItem' a 'item')
+                            itemsToReturn.forEach((item: DriverItem) => {
+                                // Doble validación: que exista productId Y que quantity sea un número válido > 0
+                                if (item.productId && typeof item.quantity === 'number' && item.quantity > 0) {
+                                    const productRef = doc(db, 'productos', item.productId);
+                                    batch.update(productRef, { stock: increment(item.quantity) });
+                                } else {
+                                    console.warn("Item inválido al anular, no se devuelve stock para este item:", item);
+                                }
                             });
                             
+                            // 7. Ejecutar
                             await batch.commit();
-                            setLocalInvoices(updatedFacturas);
                             
+                            // 8. Actualizar UI
+                            setLocalInvoices(updatedFacturas);
                             Toast.show({ type: 'info', text1: 'Visita Anulada y Stock Devuelto', position: 'bottom' });
-                            syncData();
+                            syncData(); // Sincronizar datos
 
                         } catch (error: any) {
                             console.error("Error al anular factura:", error);
@@ -557,6 +573,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
             ]
         );
     };
+    // --- ¡¡¡FIN DE LA CORRECCIÓN!!! ---
 
     const handleFinalizeRoute = async () => {
         if (!currentRoute || routeReport.pendientes > 0 || isUpdating) {
@@ -787,33 +804,38 @@ const styles = StyleSheet.create({
     statusAnulada: { borderColor: COLORS.danger, opacity: 0.7 },
     
     // --- Estilos del Modal de Gestión ---
-    // --- INICIO CAMBIO TECLADO ---
     keyboardAvoidingContainer: {
-        flex: 1, // Ocupa todo el overlay
-        justifyContent: 'center', // Centra el contenido
+        flex: 1,
+        justifyContent: 'center',
         alignItems: 'center',
         width: '100%',
     },
-    // --- FIN CAMBIO TECLADO ---
     adjustmentModalContent: {
-        width: '95%', // El contenido del modal
-        maxHeight: '85%',
+        width: '95%',
+        maxHeight: '85%', // El modal se encogerá si es necesario
         backgroundColor: COLORS.backgroundStart, 
         borderRadius: 20, 
-        padding: 20, 
         borderWidth: 1, 
-        borderColor: COLORS.glassBorder 
+        borderColor: COLORS.glassBorder,
+        // --- CORRECCIÓN TECLADO: El padding se mueve al ScrollView ---
+        padding: 0, 
+        overflow: 'hidden' // Para que el ScrollView respete el borde redondeado
+    },
+    // --- CORRECCIÓN TECLADO: Estilo para el contenido del ScrollView ---
+    modalScrollViewContent: {
+        padding: 20, // El padding que antes estaba en adjustmentModalContent
     },
     modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
     modalSubtitle: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20 },
     
     itemList: { 
         marginBottom: 15, 
-        maxHeight: '40%',
+        // --- CORRECCIÓN TECLADO: Quitamos maxHeight para que el ScrollView maneje la altura ---
+        // maxHeight: '40%', 
         borderTopWidth: 1,
         borderBottomWidth: 1,
         borderColor: COLORS.glassBorder,
-        flexGrow: 0, // Evita que la flatlist crezca infinitamente
+        flexGrow: 0, // Importante para que FlatList no intente ocupar todo el espacio
     },
     itemRow: { 
         flexDirection: 'row', 

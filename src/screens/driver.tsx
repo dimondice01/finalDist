@@ -2,19 +2,20 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-// --- INICIO CORRECCIÓN FECHA: Importar Timestamp ---
-import { Timestamp } from 'firebase/firestore'; // Asegúrate de importar Timestamp
-// --- FIN CORRECCIÓN FECHA ---
+// --- INICIO CAMBIO LOGOUT: Importar Auth de Firebase ---
+import { getAuth, signOut } from 'firebase/auth';
+import { Timestamp } from 'firebase/firestore';
+// --- FIN CAMBIO LOGOUT ---
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+// --- INICIO CAMBIO LOGOUT: Importar Alert ---
+import { ActivityIndicator, Alert, FlatList, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+// --- FIN CAMBIO LOGOUT ---
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
 import type { DriverScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
-// Renombramos Route de DataContext para evitar colisión
-// Usamos directamente la interfaz Route importada ya que DataContext la exporta
 import { Route as DataContextRoute, useData } from '../../context/DataContext';
 import { COLORS } from '../../styles/theme';
 
@@ -31,14 +32,13 @@ interface DriverInvoice {
     clienteNombre: string;
     clienteDireccion: string;
     totalVenta: number;
-    // Ajustamos los estados posibles si son diferentes en DataContext
-    estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' ; // Ampliamos con los estados de Sale
+    estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' ;
     items: DriverItem[];
 }
 interface DriverRoute {
     id: string;
-    nombre: string; // Nombre para mostrar
-    fecha: Date | null; // <-- Mantenemos Date | null
+    nombre: string; 
+    fecha: Date | null; 
     // --- CAMBIO LÓGICA ARCHIVADA: Aseguramos que el tipo incluya 'Archivada' ---
     estado: 'Creada' | 'En Curso' | 'Completada' | 'Archivada';
     facturas: DriverInvoice[];
@@ -51,33 +51,33 @@ const formatCurrency = (value?: number): string => (
         : '$0,00'
 );
 
-// --- INICIO CORRECCIÓN FECHA: Función formatDate ---
 const formatDate = (date: Date | null): string => {
-    // Verifica si la fecha es válida
-    // Chequeamos null, undefined, isNaN y año > 0 (evita 1969/1970)
     if (!date || isNaN(date.getTime()) || date.getFullYear() < 1971) {
-        // Devuelve un placeholder más claro si la fecha es inválida/ausente
         return 'Fecha N/A';
     }
-    // Formato DD/MM/AAAA (Argentina)
     try {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0'); // Meses son 0-indexados
         const year = date.getFullYear();
         return `${day}/${month}/${year}`;
     } catch (e) {
-        // Fallback por si acaso
         console.error("Error formateando fecha:", date, e);
         return 'Error Fecha';
     }
 };
-// --- FIN CORRECCIÓN FECHA ---
 
-// --- Componente Header (Memoizado y sin cambios) ---
-const Header = memo(({ title, onRefresh, isLoading }: { title: string, onRefresh: () => void, isLoading: boolean }) => (
+// --- Componente Header (Memoizado y con Logout) ---
+const Header = memo(({ title, onRefresh, isLoading, onLogout }: { title: string, onRefresh: () => void, isLoading: boolean, onLogout: () => void }) => (
     <View style={styles.header}>
-        <View style={styles.headerButton} /> {/* Placeholder para centrar título */}
+        {/* --- INICIO CAMBIO LOGOUT: Placeholder por Botón --- */}
+        <TouchableOpacity onPress={onLogout} style={styles.headerButton}>
+            {/* Usamos el color 'danger' o 'warning' si existe, si no 'textSecondary' */}
+            <Feather name="log-out" size={22} color={COLORS.danger || COLORS.warning || COLORS.textSecondary} /> 
+        </TouchableOpacity>
+        {/* --- FIN CAMBIO LOGOUT --- */}
+        
         <Text style={styles.title}>{title}</Text>
+        
         <TouchableOpacity onPress={onRefresh} style={styles.headerButton} disabled={isLoading}>
             {isLoading
                 ? <ActivityIndicator color={COLORS.primary} size="small" />
@@ -94,33 +94,27 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
 
     // --- INICIO CAMBIOS LÓGICA ARCHIVADA ---
     const isCompleted = route.estado === 'Completada';
-    // Definimos 'Archivada'
     const isArchived = route.estado === 'Archivada';
-    // Definimos 'Finalizada' como cualquiera de los dos estados
     const isFinalizada = isCompleted || isArchived;
     // --- FIN CAMBIOS LÓGICA ARCHIVADA ---
 
     return (
         <TouchableOpacity
-            // --- CAMBIO: Aplicamos estilo 'Completed' si está completada, y 'Disabled' si está archivada ---
             style={[
                 styles.routeCard, 
                 isCompleted && styles.routeCardCompleted,
                 isArchived && styles.routeCardDisabled // Nuevo estilo para archivadas
             ]}
             onPress={() => onPress(route)}
-            // --- CAMBIO: Deshabilitamos el 'activeOpacity' y el botón si está archivada ---
             activeOpacity={isArchived ? 1.0 : 0.8} // Sin feedback visual si está deshabilitada
             disabled={isArchived} // ¡BLOQUEA EL CLIC!
         >
             {/* Header de la Card */}
             <View style={styles.routeCardHeader}>
                 <View style={styles.routeCardHeaderLeft}>
-                    {/* --- CAMBIO: Icono cambia si está 'Finalizada' (Completada O Archivada) --- */}
                     <Feather name={isFinalizada ? "check-circle" : "truck"} size={20} color={isFinalizada ? COLORS.success : COLORS.primary} />
                     <Text style={styles.routeName}>{route.nombre || `Ruta ${route.id.substring(0, 6)}`}</Text>
                 </View>
-                {/* Fecha ahora usa formatDate corregido */}
                 <Text style={styles.routeDate}>{formatDate(route.fecha)}</Text>
             </View>
 
@@ -134,7 +128,6 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
                     <Feather name="dollar-sign" size={16} color={COLORS.textSecondary} />
                     <Text style={styles.detailText}>{formatCurrency(totalAmount)}</Text>
                 </View>
-                 {/* --- CAMBIO: Mostramos pendientes solo si NO está 'Finalizada' --- */}
                  {!isFinalizada && totalPendiente > 0 && (
                     <View style={[styles.detailItem, styles.detailItemPending]}>
                         <Feather name="alert-circle" size={16} color={COLORS.warning} />
@@ -159,44 +152,63 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
     const [isLoadingLocal, setIsLoadingLocal] = useState(false); // Estado local para refresh
     const [selectedTab, setSelectedTab] = useState<'En Curso' | 'Finalizadas'>('En Curso');
 
+    // --- INICIO CAMBIO LOGOUT: Handler ---
+    const handleLogout = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Alert.alert(
+            "Cerrar Sesión",
+            "¿Estás seguro de que quieres cerrar sesión?",
+            [
+                { text: "Cancelar", style: "cancel" },
+                {
+                    text: "Sí, Cerrar Sesión",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const auth = getAuth();
+                            await signOut(auth);
+                            // No necesitamos navegar. El listener de Auth (en App.tsx)
+                            // se encargará de mover al usuario al Login.
+                            Toast.show({ type: 'info', text1: 'Sesión cerrada', position: 'bottom' });
+                        } catch (error) {
+                            console.error("Error al cerrar sesión:", error);
+                            Toast.show({ type: 'error', text1: 'Error al cerrar sesión', position: 'bottom' });
+                        }
+                    }
+                }
+            ]
+        );
+    };
+    // --- FIN CAMBIO LOGOUT ---
+
     // Mapeamos y Filtramos las rutas del DataContext
     const filteredRoutes: DriverRoute[] = useMemo(() => {
-        // Log para ver qué llega del DataContext
-        // console.log("DataContext Routes:", JSON.stringify(dataContextRoutes, null, 2));
 
         const mappedRoutes = (dataContextRoutes || []).map((r: DataContextRoute): DriverRoute => {
-            // --- INICIO CORRECCIÓN FECHA: Conversión robusta ---
             let routeDate: Date | null = null;
-            const sourceDate = r.fecha; // Usamos variable temporal
+            const sourceDate = r.fecha; 
 
             if (sourceDate) {
-                if (sourceDate instanceof Timestamp) { // Si es Timestamp de Firestore
+                if (sourceDate instanceof Timestamp) { 
                     routeDate = sourceDate.toDate();
-                    // console.log(`[MAPEO ${r.id}] Timestamp -> Date:`, routeDate);
-                } else if (sourceDate instanceof Date) { // Si ya es Date (cargado de AsyncStorage o directo)
-                    if (!isNaN(sourceDate.getTime())) { // Verificar si es válido
+                } else if (sourceDate instanceof Date) { 
+                    if (!isNaN(sourceDate.getTime())) { 
                         routeDate = sourceDate;
-                        // console.log(`[MAPEO ${r.id}] Date object -> Date:`, routeDate);
                     } else {
                         console.warn(`[MAPEO ${r.id}] Fecha inválida (Date object from context):`, sourceDate);
                     }
                 } else if (typeof sourceDate === 'object' && (sourceDate as any).seconds !== undefined && typeof (sourceDate as any).seconds === 'number') {
-                    // Intenta convertir desde objeto {seconds, nanoseconds} (Común desde JSON)
                     try {
-                        // Verificamos que 'seconds' sea un número razonable (mayor a 0, evita 1969)
                         if ((sourceDate as any).seconds > 0) {
                             routeDate = new Timestamp((sourceDate as any).seconds, (sourceDate as any).nanoseconds || 0).toDate();
-                            // console.log(`[MAPEO ${r.id}] Object {seconds...} -> Date:`, routeDate);
                         } else {
                              console.warn(`[MAPEO ${r.id}] Timestamp con seconds <= 0 encontrado:`, sourceDate);
                         }
                     } catch (e) { console.warn(`[MAPEO ${r.id}] Error convirtiendo objeto a Timestamp:`, sourceDate, e); }
                 } else if (typeof sourceDate === 'string') {
-                      // Intenta convertir desde string ISO (Común desde JSON)
                       const parsedDate = new Date(sourceDate);
                       if (!isNaN(parsedDate.getTime())) {
                           routeDate = parsedDate;
-                          // console.log(`[MAPEO ${r.id}] String -> Date:`, routeDate);
                       } else {
                           console.warn(`[MAPEO ${r.id}] Fecha inválida (string from context):`, sourceDate);
                       }
@@ -206,14 +218,10 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
             } else {
                 // console.log(`[MAPEO ${r.id}] Fecha es null o undefined.`);
             }
-            // Última validación: si la conversión resultó en fecha inválida o muy antigua, la ponemos null
             if (routeDate && (isNaN(routeDate.getTime()) || routeDate.getFullYear() < 1971)) {
-                // console.warn(`[MAPEO ${r.id}] Fecha parseada es inválida o < 1971, seteando a null:`, routeDate);
                 routeDate = null;
             }
-            // --- FIN CORRECCIÓN FECHA ---
 
-            // Mapeo de facturas (sin cambios)
             const facturas = (r.facturas || []).map((f: any): DriverInvoice => ({
                 id: f.id || f.saleId || '',
                 clienteId: f.clienteId || '',
@@ -231,45 +239,35 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
 
             return {
                 id: r.id,
-                nombre: `Ruta ${r.id.substring(0, 6)}`, // O el nombre real si lo tienes
-                fecha: routeDate, // <-- Fecha Corregida
-                // Aseguramos que el estado se mapee correctamente
+                nombre: `Ruta ${r.id.substring(0, 6)}`,
+                fecha: routeDate,
                 estado: r.estado || 'Creada',
                 facturas: facturas
             };
         });
 
-        // Filtramos según la pestaña seleccionada (¡ESTA LÓGICA YA ESTÁ CORRECTA!)
       const filtered = mappedRoutes.filter(route => {
-      if (selectedTab === 'En Curso') {
-          // --- CAMBIO ---
-          // Ahora 'En Curso' solo muestra estados activos ('Creada' o 'En Curso')
-          const estadosEnCurso = ['Creada', 'En Curso'];
-          return estadosEnCurso.includes(route.estado);
-      } else {
-          // --- CAMBIO ---
-          // 'Finalizadas' ahora muestra 'Completada' Y 'Archivada'
-          const estadosFinalizados = ['Completada', 'Archivada'];
-          return estadosFinalizados.includes(route.estado);
-      }
-    });
+          if (selectedTab === 'En Curso') {
+              const estadosEnCurso = ['Creada', 'En Curso'];
+              return estadosEnCurso.includes(route.estado);
+          } else {
+              const estadosFinalizados = ['Completada', 'Archivada'];
+              return estadosFinalizados.includes(route.estado);
+          }
+      });
 
-        // Ordenamos: 'En Curso' primero, luego 'Creada', y por fecha descendente
         return filtered.sort((a, b) => {
-             // Prioridad por estado si estamos en "En Curso"
              if (selectedTab === 'En Curso') {
                  if (a.estado === 'En Curso' && b.estado !== 'En Curso') return -1;
                  if (a.estado !== 'En Curso' && b.estado === 'En Curso') return 1;
              }
-             // Luego por fecha (más reciente primero, las inválidas/null al final)
-            const dateA = a.fecha?.getTime() || 0; // Fechas inválidas/null van al final
+            const dateA = a.fecha?.getTime() || 0;
             const dateB = b.fecha?.getTime() || 0;
             return dateB - dateA;
         });
 
-    }, [dataContextRoutes, selectedTab]); // Depende de las rutas y la pestaña
+    }, [dataContextRoutes, selectedTab]);
 
-    // --- Funciones handleRefresh y handleSelectRoute (Sin cambios lógicos) ---
     const handleRefresh = useCallback(async () => {
         setIsLoadingLocal(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -286,15 +284,12 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
 
     const handleSelectRoute = (route: DriverRoute) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        // La navegación se bloqueará por la propiedad 'disabled' en la tarjeta
-        // pero la función sigue aquí por si se habilita
         navigation.navigate('RouteDetail', { routeId: route.id });
     };
 
-    // --- Función renderRouteItem (Usa el componente RouteItem actualizado) ---
     const renderRouteItem = useCallback(({ item }: { item: DriverRoute }) => (
         <RouteItem route={item} onPress={handleSelectRoute} />
-    ), [handleSelectRoute]); // Solo depende de la función de navegación
+    ), [handleSelectRoute]);
 
     // --- Renderizado Principal ---
     return (
@@ -302,7 +297,14 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
 
-            <Header title="Mis Rutas" onRefresh={handleRefresh} isLoading={isLoadingLocal || isDataLoading} />
+            {/* --- INICIO CAMBIO LOGOUT: Pasar handler al Header --- */}
+            <Header 
+                title="Mis Rutas" 
+                onRefresh={handleRefresh} 
+                isLoading={isLoadingLocal || isDataLoading}
+                onLogout={handleLogout} // <-- Prop nueva
+            />
+            {/* --- FIN CAMBIO LOGOUT --- */}
 
             {/* --- Pestañas (Sin cambios visuales/lógicos) --- */}
             <View style={styles.tabContainer}>
@@ -330,11 +332,11 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
             ) : (
                 // Lista de rutas
                 <FlatList
-                    data={filteredRoutes} // Usa las rutas filtradas y ordenadas
+                    data={filteredRoutes} 
                     renderItem={renderRouteItem}
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.listContentContainer}
-                    ListEmptyComponent={ // Mensaje si no hay rutas en la pestaña actual
+                    ListEmptyComponent={ 
                         <View style={styles.emptyContainer}>
                             <Feather name={selectedTab === 'En Curso' ? "truck" : "check-square"} size={48} color={COLORS.textSecondary} />
                             <Text style={styles.emptyText}>
@@ -345,7 +347,6 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                             </TouchableOpacity>
                         </View>
                     }
-                    // Optimizaciones de FlatList (sin cambios)
                     initialNumToRender={10}
                     maxToRenderPerBatch={5}
                     windowSize={11}
@@ -384,43 +385,43 @@ const styles = StyleSheet.create({
     listContentContainer: { paddingHorizontal: 15, paddingBottom: 20 },
     // --- INICIO ESTILOS CARD MODERNA ---
     routeCard: {
-        backgroundColor: COLORS.glass, // Fondo glassmorphism
-        borderRadius: 15, // Bordes más redondeados
+        backgroundColor: COLORS.glass, 
+        borderRadius: 15, 
         marginBottom: 15,
-        borderWidth: 1, // Borde sutil
+        borderWidth: 1, 
         borderColor: COLORS.glassBorder,
-        shadowColor: "#000", // Sombra iOS
+        shadowColor: "#000", 
         shadowOffset: { width: 0, height: 3, },
         shadowOpacity: 0.15,
         shadowRadius: 5,
-        elevation: 4, // Sombra Android
-        overflow: 'hidden', // Para asegurar bordes redondeados
+        elevation: 4, 
+        overflow: 'hidden', 
     },
-    routeCardCompleted: { // Estilo tenue para completadas
-        backgroundColor: 'rgba(253, 234, 234, 0.99)', // Más oscuro y translúcido
+    routeCardCompleted: { 
+        backgroundColor: 'rgba(253, 234, 234, 0.99)', 
         borderColor: 'rgba(80, 80, 80, 0.9)',
     },
-    // --- ¡NUEVO ESTILO! ---
-    routeCardDisabled: { // Estilo para Archivadas (deshabilitadas)
+    // --- INICIO CAMBIO LOGOUT: Estilo para 'Archivada' (ya existía) ---
+    routeCardDisabled: { 
         opacity: 0.6,
-        backgroundColor: 'rgba(255, 231, 231, 1)', // Un gris más oscuro
+        backgroundColor: 'rgba(80, 80, 80, 0.7)', 
         borderColor: 'rgba(80, 80, 80, 0.9)',
     },
-    // --- FIN NUEVO ESTILO ---
+    // --- FIN CAMBIO LOGOUT ---
     routeCardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 18, // Más padding horizontal
-        paddingVertical: 14, // Más padding vertical
-        borderBottomWidth: 1, // Separador sutil
+        paddingHorizontal: 18, 
+        paddingVertical: 14, 
+        borderBottomWidth: 1, 
         borderBottomColor: COLORS.glassBorder,
-        backgroundColor: 'rgba(0,0,0,0.1)', // Fondo ligeramente diferente
+        backgroundColor: 'rgba(0,0,0,0.1)', 
     },
     routeCardHeaderLeft: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12, // Mayor espacio icono-texto
+        gap: 12, 
     },
     routeName: {
         color: COLORS.textPrimary,
@@ -433,34 +434,34 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     routeDetails: {
-        paddingHorizontal: 18, // Consistente con header
-        paddingTop: 14, // Padding superior
-        paddingBottom: 10, // Menos padding inferior antes de la flecha
+        paddingHorizontal: 18, 
+        paddingTop: 14, 
+        paddingBottom: 10, 
         flexDirection: 'row',
-        justifyContent: 'flex-start', // Alinear a la izquierda
-        gap: 20, // Mayor espacio entre items
+        justifyContent: 'flex-start', 
+        gap: 20, 
         flexWrap: 'wrap',
     },
     detailItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 7, // Espacio icono-texto
+        gap: 7, 
         paddingVertical: 3,
     },
-    detailItemPending: { // Estilo para pendientes
-        backgroundColor: 'rgba(255, 193, 7, 0.15)', // Amarillo más visible
-        paddingHorizontal: 10, // Padding horizontal
-        borderRadius: 8, // Bordes redondeados
+    detailItemPending: { 
+        backgroundColor: 'rgba(255, 193, 7, 0.15)', 
+        paddingHorizontal: 10, 
+        borderRadius: 8, 
     },
     detailText: {
         color: COLORS.textSecondary,
         fontSize: 14,
         fontWeight: '500',
     },
-    routeCardFooter: { // Contenedor solo para la flecha, posicionado absoluto
+    routeCardFooter: { 
         position: 'absolute',
-        right: 15, // Alinear con padding
-        top: '55%', // Ajustar verticalmente si es necesario
+        right: 15, 
+        top: '55%', 
         transform: [{ translateY: -12 }],
     },
     // --- FIN ESTILOS CARD MODERNA ---
