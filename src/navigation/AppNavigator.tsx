@@ -37,35 +37,43 @@ export type RootStackParamList = {
   Login: undefined;
   Home: undefined; // Home y Driver usan esta misma entrada
   Driver: undefined; // Mantenido para el tipo del componente, pero no en Stack principal
-  ClientList: undefined;
-  ClientDashboard: { clientId: string };
-  AddClient: undefined;
-  EditClient: { clientId: string };
+ClientList: undefined;
+    ClientDashboard: { clientId: string };
+    ClientDebts: { clientId: string, clientName: string }; // <-- CORRECCIÓN: Tu dashboard solo envía clientId
+    SaleDetail: { saleId: string; clientName: string }; // <-- CORRECCIÓN: Tu dashboard SÍ envía clientName
+    AddClient: undefined;
+    EditClient: { client: Client}; // <-- CORRECCIÓN: Espera el objeto 'client'
   SelectClientForSale: undefined;
   // 🔥 CORRECCIÓN: Parámetros para CreateSale
   CreateSale: {
+   
+
     clientId: string;
     clientName?: string;    // Nombre para mostrar
     saleToEdit?: BaseSale; // Objeto de venta para editar
     saleId?: string;     // Para editar
   isEditing?: string;  // Para editar
   isReposicion?: boolean;
+  isDevolucion?: boolean; // <-- AÑADIDO
+  cliente?: Client;
   };
   // 🔥 CORRECCIÓN: Parámetros para ReviewSale (saleIdToEdit es opcional)
   ReviewSale: {
-    cliente: Client; // <-- Cambiado: Espera el objeto Client
+    cliente: Client;
+   clientId: string;
     cart: CartItem[]; // <-- Cambiado: Espera un array de CartItem
     isReposicion: boolean;
     totalVenta: number;
     totalCosto: number;
     totalComision: number;
     totalDescuento: number; // Mantenemos por si acaso
+    isDevolucion: boolean; // <-- AÑADIDO
 };
-  SaleDetail: { saleId: string };
+  
   Reports: undefined;
   Promotions: undefined;
   ClientMap: undefined;
-  ClientDebts: { clientId: string; clientName?: string };
+
   RegisterPayment: { saleId: string; saldoPendiente: string; saleInfo?: string; clientName?: string; };
   RouteDetail: { routeId: string };
 };

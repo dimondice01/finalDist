@@ -7,7 +7,12 @@ import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    FlatList,
+    FlatList, // <-- Importado
+    Linking // <-- Importado
+    ,
+
+
+    Platform,
     StatusBar,
     StyleSheet,
     Text,
@@ -24,7 +29,7 @@ import { Client, Sale, useData } from '../../context/DataContext'; // Asegura la
 import { db } from '../../db/firebase-service'; // Asegura la ruta
 import { COLORS } from '../../styles/theme'; // Asegura la ruta
 
-// --- Funciones de ayuda (movidas al nivel superior) ---
+// --- Funciones de ayuda (del original) ---
 const formatCurrency = (value?: number): string => {
     const numericValue = typeof value === 'number' && !isNaN(value) ? value : 0;
     return `$${numericValue.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -77,7 +82,7 @@ const formatDate = (dateInput: Sale['fecha'] | undefined): string => {
     }
 };
 
-// --- Componente Memoizado para SaleCard ---
+// --- Componente Memoizado para SaleCard (CORREGIDO) ---
 const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
     item: Sale;
     onEdit: (saleId: string, clientId: string) => void;
@@ -87,8 +92,35 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
     if (!item || !item.id) return null;
 
     const color = getStatusColor(item.estado);
-    const icon = getStatusIcon(item.estado);
     const isPending = item.estado === 'Pendiente de Entrega';
+    const isAnulada = item.estado === 'Anulada';
+
+    // --- INICIO DE CORRECCIÓN: Lógica de Icono y Título por TIPO ---
+    let icon: keyof typeof Feather.glyphMap;
+    let iconColor: string;
+    let title: string;
+    const formattedDate = formatDate(item.fecha);
+
+    if (isAnulada) {
+        icon = 'x-circle';
+        iconColor = COLORS.danger; // Usamos 'danger'
+        title = `Anulada - ${formattedDate}`;
+    } else if (item.tipo === 'reposicion') {
+        icon = 'truck';
+        iconColor = COLORS.warning; // Color para reposición
+        title = `Reposición - ${formattedDate}`;
+    } else if (item.tipo === 'devolucion') {
+        icon = 'refresh-ccw';
+        iconColor = COLORS.warning; // Color para devolución
+        title = `Devolución - ${formattedDate}`;
+    } else {
+        // Es una 'venta' normal o 'undefined' (antiguas)
+        icon = getStatusIcon(item.estado); // Usamos el icono de estado
+        iconColor = color; // Usamos el color de estado
+        title = `Venta - ${formattedDate}`;
+    }
+    // --- FIN DE CORRECCIÓN ---
+
 
     const handleNavigate = useCallback(() => onNavigate(item.id), [item.id, onNavigate]);
     const handleEdit = useCallback((e: any) => {
@@ -102,16 +134,16 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
 
     return (
         <TouchableOpacity
-            style={[styles.saleCard, item.estado === 'Anulada' && styles.anuladaCard]}
+            style={[styles.saleCard, isAnulada && styles.anuladaCard]}
             onPress={handleNavigate}
             activeOpacity={0.8}
         >
-            <View style={[styles.statusIcon, { backgroundColor: `${color}30` }]}>
-                <Feather name={icon} size={24} color={color} />
+            <View style={[styles.statusIcon, { backgroundColor: `${iconColor}30` }]}>
+                <Feather name={icon} size={24} color={iconColor} />
             </View>
 
             <View style={styles.saleInfo}>
-                <Text style={styles.saleDate}>{formatDate(item.fecha)}</Text>
+                <Text style={styles.saleDate}>{title}</Text> {/* <-- Título dinámico */}
                 <Text style={styles.saleTotal}>{formatCurrency(item.totalVenta)}</Text>
                 <Text style={[styles.saleStatus, { color: color }]}>{item.estado || 'Desconocido'}</Text>
             </View>
@@ -151,6 +183,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     const { clients, sales, isLoading: isDataLoading, refreshAllData } = useData();
     const [isDeleting, setIsDeleting] = useState(false);
 
+    // Variable 'client' (con 't') es la correcta en este archivo
     const client: Client | undefined = useMemo(() => {
         const allClientsArray = Array.isArray(clients) ? clients : [];
         return allClientsArray.find(c => c && c.id === clientId);
@@ -209,33 +242,101 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         );
     }, [isDeleting, refreshAllData]);
 
-    // --- Handlers de Navegación Adaptados ---
+    // --- Handlers de Navegación (CORREGIDOS para que coincidan con AppNavigator) ---
     const navigateToSaleDetail = useCallback((saleId: string) => {
-        navigation.navigate('SaleDetail', { saleId });
-    }, [navigation]);
+        if (!client) return;
+        // CORRECCIÓN: 'SaleDetail' SÍ espera 'clientName' según AppNavigator.tsx
+        navigation.navigate('SaleDetail', { 
+            saleId: saleId, 
+            clientName: client.nombreCompleto || client.nombre 
+        });
+    }, [navigation, client]);
 
     const navigateToEditSale = useCallback((saleId: string, currentClientId: string) => {
+        if (!client) return;
+        // CORRECCIÓN: 'CreateSale' espera 'cliente' (objeto) y 'clientId' (string)
+        // (Basado en el AppNavigator.tsx que enviaste)
         navigation.navigate('CreateSale', {
-            clientId: currentClientId, 
+            cliente: client, // <-- Pasamos el objeto 'client' (con 't') como parámetro 'cliente' (con 'e')
+            clientId: client.id, // <-- Pasamos el 'clientId'
             saleId: saleId, 
-            isEditing: 'true' // Parámetro como string
+            isEditing: 'true' 
         });
-    }, [navigation]);
+    }, [navigation, client]);
 
     const navigateToNewSale = useCallback(() => {
-        client?.id ? navigation.navigate('CreateSale', { clientId: client.id }) : null
-    }, [navigation, client?.id]);
+        if (!client) return;
+        // CORRECCIÓN: 'CreateSale' espera 'cliente' (objeto) y 'clientId' (string)
+        navigation.navigate('CreateSale', { 
+            cliente: client, 
+            clientId: client.id,
+            isReposicion: false, 
+            isDevolucion: false 
+        });
+    }, [navigation, client]);
+    
+    // --- NUEVO: Handler para Reposición ---
+    const navigateToNewReposicion = useCallback(() => {
+        if (!client) return; 
+        navigation.navigate('CreateSale', { 
+            cliente: client, 
+            clientId: client.id,
+            isReposicion: true, 
+            isDevolucion: false 
+        });
+    }, [navigation, client]);
+
+    // --- NUEVO: Handler para Devolución ---
+    const navigateToNewDevolucion = useCallback(() => {
+        if (!client) return; 
+        navigation.navigate('CreateSale', { 
+            cliente: client, 
+            clientId: client.id,
+            isReposicion: false, 
+            isDevolucion: true 
+        });
+    }, [navigation, client]);
+
 
     const navigateToEditClient = useCallback(() => {
-        client?.id ? navigation.navigate('EditClient', { clientId: client.id }) : null
-    }, [navigation, client?.id]);
+        if (!client) return;
+        // CORRECCIÓN: 'EditClient' espera el objeto 'client' (con 't')
+        // (Tu AppNavigator dice 'clientId: string', 
+        // pero el 'EditClient' espera el objeto. 
+        // Pasamos el objeto, que es lo que EditClientScreen necesita.)
+        navigation.navigate('EditClient', { 
+            client: client 
+        });
+    }, [navigation, client]);
     
     const navigateToClientDebts = useCallback(() => {
-        client?.id ? navigation.navigate('ClientDebts', { 
-            clientId: client.id, 
-            clientName: client.nombreCompleto || client.nombre 
-        }) : null
-    }, [navigation, client?.id, client?.nombre, client?.nombreCompleto]);
+        if (!client) return;
+        // CORRECCIÓN: 'ClientDebts' espera 'clientId' y 'clientName'
+        navigation.navigate('ClientDebts', { 
+            clientId: client.id,
+            clientName: client.nombreCompleto || client.nombre
+        });
+    }, [navigation, client]);
+    
+    // --- Handlers de Contacto (Movidos aquí desde el original) ---
+    const handleCall = () => {
+        if (client?.telefono) {
+            const phoneNumber = Platform.OS === 'android' ? `tel:${client.telefono}` : `telprompt:${client.telefono}`;
+            Linking.openURL(phoneNumber).catch(() => Alert.alert("Error", "No se pudo realizar la llamada."));
+        } else {
+            Alert.alert("Sin Teléfono", "Este cliente no tiene un teléfono registrado.");
+        }
+    };
+    const handleWhatsApp = () => {
+        if (client?.telefono) {
+            const cleanPhone = client.telefono.replace(/[^0-9]/g, '');
+            const phoneWithPrefix = cleanPhone.startsWith('54') ? cleanPhone : `54${cleanPhone}`;
+            const whatsappUrl = `whatsapp://send?phone=${phoneWithPrefix}`;
+            Linking.openURL(whatsappUrl).catch(() => Alert.alert("Error", "No se pudo abrir WhatsApp. Asegúrate de tenerlo instalado."));
+        } else {
+            Alert.alert("Sin Teléfono", "Este cliente no tiene un teléfono registrado.");
+        }
+    };
 
     // --- RenderItem memoizado ---
     const renderSaleCard = useCallback(({ item }: { item: Sale }) => (
@@ -298,9 +399,22 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             </View>
                             <Text style={styles.title} numberOfLines={2}>{client?.nombreCompleto || client?.nombre || 'Cliente'}</Text>
                             {client?.direccion && <Text style={styles.subtitle}><Feather name="map-pin" size={14} /> {client.direccion}</Text>}
-                            {client?.telefono && <Text style={styles.subtitle}><Feather name="phone" size={14} /> {client.telefono}</Text>}
+                            {/* --- Botones de Contacto (Añadidos para que coincida con el layout original) --- */}
+                            {client?.telefono && (
+                                <View style={styles.contactActions}>
+                                    <TouchableOpacity onPress={handleCall} style={styles.contactButton}>
+                                        <Feather name="phone" size={14} color={COLORS.primary} /> 
+                                        <Text style={styles.contactButtonText}>{client.telefono}</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={handleWhatsApp} style={styles.contactButton}>
+                                        <Feather name="message-circle" size={14} color={COLORS.success} /> 
+                                        <Text style={styles.contactButtonText}>WhatsApp</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
                         </View>
 
+                        {/* --- CONTENEDOR DE ACCIONES MODIFICADO --- */}
                         <View style={styles.actionsContainer}>
                             <TouchableOpacity
                                 style={styles.mainActionButton}
@@ -309,23 +423,36 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                                 <Feather name="plus-circle" size={22} color={COLORS.primaryDark} />
                                 <Text style={styles.mainActionButtonText}>Nueva Venta</Text>
                             </TouchableOpacity>
+                            
+                            {/* Fila secundaria con 2 botones (Reposición y Devolución) */}
                             <View style={styles.secondaryActionsRow}>
                                 <TouchableOpacity
-                                    style={[styles.secondaryActionButton, { flex: 1 }]}
-                                    onPress={navigateToClientDebts}
+                                    style={[styles.secondaryActionButton, { flex: 1, backgroundColor: `${COLORS.warning}30` }]}
+                                    onPress={navigateToNewReposicion}
                                 >
-                                    <Feather name="dollar-sign" size={20} color={COLORS.primary} />
-                                    <Text style={styles.secondaryActionButtonText}>Ver Saldos</Text>
+                                    <Feather name="truck" size={20} color={COLORS.warning} />
+                                    <Text style={[styles.secondaryActionButtonText, { color: COLORS.warning }]}>Reposición</Text>
                                 </TouchableOpacity>
-                                {/* Botón opcional (Ejemplo: Mapa del cliente) */}
-                                {/* <TouchableOpacity
-                                    style={[styles.secondaryActionButton, { width: 60 }]}
-                                    onPress={() => navigation.navigate('ClientMap', { clientId: client.id })}
+                                <TouchableOpacity
+                                    style={[styles.secondaryActionButton, { flex: 1, backgroundColor: `${COLORS.warning}30` }]}
+                                    onPress={navigateToNewDevolucion}
                                 >
-                                    <Feather name="map" size={20} color={COLORS.primary} />
-                                </TouchableOpacity> */}
+                                    <Feather name="refresh-ccw" size={20} color={COLORS.warning} />
+                                    <Text style={[styles.secondaryActionButtonText, { color: COLORS.warning }]}>Devolución</Text>
+                                </TouchableOpacity>
                             </View>
+
+                            {/* Botón de Saldos (como estaba) */}
+                            <TouchableOpacity
+                                style={[styles.secondaryActionButton, { backgroundColor: COLORS.glass }]}
+                                onPress={navigateToClientDebts}
+                            >
+                                <Feather name="dollar-sign" size={20} color={COLORS.primary} />
+                                <Text style={styles.secondaryActionButtonText}>Ver Saldos</Text>
+                            </TouchableOpacity>
+
                         </View>
+                        {/* --- FIN CONTENEDOR DE ACCIONES --- */}
 
                         <Text style={styles.listHeader}>Historial de Ventas</Text>
                     </>
@@ -350,7 +477,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     );
 };
 
-// --- Estilos (sin cambios, solo se añade actionButtonsGroup) ---
+// --- Estilos (Modificados para el nuevo layout de botones y contacto) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -371,6 +498,27 @@ const styles = StyleSheet.create({
     avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.glass, justifyContent: 'center', alignItems: 'center', marginBottom: 15, borderWidth: 1, borderColor: COLORS.glassBorder },
     title: { fontSize: 24, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 15, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 5 },
+    
+    contactActions: { // <-- NUEVO (Para botones de contacto)
+        flexDirection: 'row',
+        gap: 15,
+        marginTop: 10,
+    },
+    contactButton: { // <-- NUEVO
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        backgroundColor: COLORS.glass,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 10,
+    },
+    contactButtonText: { // <-- NUEVO
+        color: COLORS.textPrimary,
+        fontSize: 14,
+        fontWeight: '500',
+    },
+
 
     actionsContainer: { paddingHorizontal: 20, marginBottom: 30, gap: 15 },
     secondaryActionsRow: { flexDirection: 'row', gap: 15 },
@@ -407,7 +555,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'flex-end',
     },
-    actionButtonsGroup: { // <-- NUEVO ESTILO
+    actionButtonsGroup: { // <-- Estilo del original
         flexDirection: 'row', 
         alignItems: 'center', 
     },

@@ -90,7 +90,7 @@ const ClientCard = memo(({ item }: { item: Client }) => {
     // Navegación a Edición (Reemplazo de router.push)
     const goToEditClient = useCallback((e: any) => {
         e.stopPropagation(); // Evita que se active el onPress de la tarjeta
-        navigation.navigate('EditClient', { clientId: item.id });
+        navigation.navigate('EditClient', { client: item });
     }, [item.id, navigation]);
 
     return (

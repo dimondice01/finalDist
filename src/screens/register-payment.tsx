@@ -61,12 +61,18 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
 
                 const data = saleDoc.data();
                 const nuevoSaldo = (data.saldoPendiente || 0) - totalPagado;
+                let nuevoEstado = data.estado;
+                if (nuevoSaldo <= 0.01) {
+                    nuevoEstado = 'Pagada';
+                } else if (totalPagado > 0) { // Si pagó algo pero no todo
+                    nuevoEstado = 'Adeuda'; // <-- ¡AÑADIR ESTO!
+                }
                 
                 transaction.update(saleRef, {
                     saldoPendiente: nuevoSaldo,
                     pagoEfectivo: (data.pagoEfectivo || 0) + efectivo,
                     pagoTransferencia: (data.pagoTransferencia || 0) + transferencia,
-                    estado: nuevoSaldo <= 0.01 ? 'Pagada' : data.estado,
+                    estado: nuevoEstado
                 });
             });
             

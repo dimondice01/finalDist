@@ -50,7 +50,8 @@ import { COLORS } from '../../styles/theme'; // Ajusta la ruta si es necesario
 // Interface para la venta que guardaremos (con campos de BD correctos)
 interface SaleDataToSave {
     clienteId: string;
-    clientName: string;
+    // --- CAMBIO: Estandarización de BD (de la charla anterior) ---
+    clienteNombre: string; // ANTES: clientName
     vendedorId: string;
     vendedorName: string;
     items: CartItem[];
@@ -62,10 +63,8 @@ interface SaleDataToSave {
     fecha?: any;
     fechaUltimaEdicion?: any;
     totalDescuentoPromociones: number;
-    observaciones: string; // Ya corregido para ser obligatorio
-    // --- INICIO DE CAMBIOS: Interfaz ---
-    tipo: 'venta' | 'reposicion'; // <-- AÑADIDO
-    // --- FIN DE CAMBIOS: Interfaz ---
+    observaciones: string; 
+    tipo: 'venta' | 'reposicion' | 'devolucion'; // <-- AÑADIDO 'devolucion'
 }
 
 // --- Componente Modal Selector de Categoría (REEMPLAZO DEL PICKER) ---
@@ -151,15 +150,20 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
     }, [handleAddProduct, item]);
 
     // --- MEJORA VISUAL (1/3): Determinar stock y color ---
-    const stock = item.stock ?? 0; // Usamos 0 si el stock es undefined
+    const stock = item.stock ?? 0;
     const lowStock = stock < 10;
-    // --- FIN MEJORA VISUAL (1/3) ---
+    const noStock = stock <= 0; 
 
     return (
         <TouchableOpacity
-            style={[styles.card, quantityInCart > 0 && styles.cardSelected]}
+            style={[
+                styles.card, 
+                quantityInCart > 0 && styles.cardSelected,
+                noStock && styles.cardDisabled 
+            ]}
             onPress={handlePress}
             activeOpacity={0.8}
+            disabled={noStock} 
         >
             <View style={styles.cardInfo}>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre}</Text>
@@ -175,7 +179,11 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                 )}
 
                 {/* --- MEJORA VISUAL (2/3): Mostrar Stock --- */}
-                <Text style={[styles.stockText, lowStock && styles.stockTextLow]}>
+                <Text style={[
+                    styles.stockText, 
+                    lowStock && !noStock && styles.stockTextLow,
+                    noStock && styles.stockTextNoStock
+                ]}>
                     Stock: {stock}
                 </Text>
                 {/* --- FIN MEJORA VISUAL (2/3) --- */}
@@ -204,13 +212,14 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     // --- Obtener parámetros de useRoute ---
     const route = useRoute();
     // --- INICIO DE CAMBIOS: Parámetros de Ruta ---
-    // Añadimos 'isReposicion' y 'cliente' (como 'initialCliente')
-    const { clientId, saleId, isEditing, isReposicion = false, cliente: initialCliente } = route.params as {
-        clientId?: string,
+    // Añadimos 'isDevolucion'
+    const { clientId, saleId, isEditing, isReposicion = false, isDevolucion = false, cliente: initialCliente } = route.params as {
+        clientId?: string, // <--- Este es el clientId (string) que viene de AppNavigator
         saleId?: string,
         isEditing?: string,
         isReposicion?: boolean,
-        cliente?: Client
+        isDevolucion?: boolean, // <-- AÑADIDO
+        cliente?: Client // <--- Este es el objeto Cliente que también puede venir
     };
     // --- FIN DE CAMBIOS: Parámetros de Ruta ---
 
@@ -225,9 +234,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         promotions,
         isLoading: isDataLoading,
         refreshAllData,
-        // --- INICIO DE CAMBIOS: Obtener función de Contexto ---
-        crearVentaConStock // <-- OBTENEMOS LA NUEVA FUNCIÓN
-        // --- FIN DE CAMBIOS: Obtener función de Contexto ---
+        crearVentaConStock 
     } = useData();
 
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -236,7 +243,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     const [searchQuery, setSearchQuery] = useState('');
 
     const [modalVisible, setModalVisible] = useState(false);
-    const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false); // Nuevo: Modal de categoría
+    const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false); 
     const [selectedProduct, setSelectedProduct] = useState<Product & { precioOriginal?: number } | null>(null);
     const [currentQuantity, setCurrentQuantity] = useState('1');
 
@@ -250,13 +257,18 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid);
     }, [currentUser, vendors]);
 
-    // --- INICIO DE CAMBIOS: Memo del Cliente ---
+    // --- ¡¡¡CORRECCIÓN CLAVE!!! ---
+    // Aquí definimos 'client' (con 't') como un OBJETO Client, no un string.
     const client = useMemo(() => {
-        if (initialCliente) return initialCliente; // Damos prioridad al objeto 'cliente'
+        // Si nos pasaron el objeto 'cliente' (desde client-dashboard), lo usamos.
+        if (initialCliente) return initialCliente;
+        
+        // Si solo nos pasaron 'clientId' (desde otra pantalla), lo buscamos.
         if (!clientId || !clients) return null;
         return clients.find((c: Client) => c.id === clientId);
-    }, [clientId, clients, initialCliente]);
-    // --- FIN DE CAMBIOS: Memo del Cliente ---
+        
+    }, [clientId, clients, initialCliente]); // <-- Dependemos de initialCliente
+    // --- FIN CORRECCIÓN ---
 
     // Obtener nombre de la categoría seleccionada para el botón
     const selectedCategoryName = useMemo(() => {
@@ -282,7 +294,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
     }, [editMode, saleId, sales, navigation]);
 
-    // --- MEJORA VISUAL (3/3): useEffect de filtrado y orden ---
+    // --- useEffect de filtrado y orden (sin cambios) ---
     useEffect(() => {
         let products = allProducts;
         if (categoryFilter) {
@@ -293,26 +305,26 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             products = products.filter(p => p.nombre.toLowerCase().includes(lowerQuery));
         }
 
-        // Lógica de ordenamiento mejorada
         products.sort((a, b) => {
-            // Solo en modo edición, priorizar los que están en el carrito
             if (editMode) {
                 const aInCart = cart.some(cartItem => cartItem.id === a.id);
                 const bInCart = cart.some(cartItem => cartItem.id === b.id);
 
-                if (aInCart && !bInCart) return -1; // 'a' (en carrito) va primero
-                if (!aInCart && bInCart) return 1;  // 'b' (en carrito) va primero
+                if (aInCart && !bInCart) return -1; 
+                if (!aInCart && bInCart) return 1;  
             }
-
-            // Si ambos están (o no están) en el carrito, ordenar alfabéticamente
             return (a.nombre || '').localeCompare(b.nombre || '');
         });
 
         setFilteredProducts(products);
-    }, [allProducts, categoryFilter, searchQuery, cart, editMode]); // Añadimos cart y editMode a las dependencias
-    // --- FIN MEJORA VISUAL (3/3) ---
+    }, [allProducts, categoryFilter, searchQuery, cart, editMode]);
+    // --- FIN useEffect de filtrado ---
 
     const getComision = useCallback((product: Product, quantity: number): number => {
+        // --- INICIO CAMBIO: Comisión Cero para Repos/Devolución ---
+        if (isReposicion || isDevolucion) return 0;
+        // --- FIN CAMBIO ---
+
         const comisionGeneral = currentVendedor?.comisionGeneral || 0;
         const precio = product.precio || 0;
         const costo = product.costo || 0;
@@ -326,26 +338,32 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             comisionPorItem = precio * (comisionGeneral / 100);
         }
         return comisionPorItem * quantity;
-    }, [currentVendedor]);
+    }, [currentVendedor, isReposicion, isDevolucion]); // <-- Añadidas dependencias
 
      const handleAddProduct = useCallback((product: Product) => {
         const existingItem = cart.find(item => item.id === product.id);
         let precioFinal = product.precio;
         let precioOriginal = product.precio;
-        const promoAplicable: Promotion | undefined = promotions.find(promo =>
-            promo.tipo === 'precio_especial' &&
-            promo.productoIds.includes(product.id) &&
-            (!promo.clienteIds || promo.clienteIds.length === 0 || (clientId && promo.clienteIds.includes(clientId as string)))
-        );
-        if (promoAplicable && promoAplicable.nuevoPrecio) {
-            precioFinal = promoAplicable.nuevoPrecio;
-            precioOriginal = product.precio; // Usar product.precio para precioOriginal
+
+        // --- INICIO CAMBIO: Sin promos para Repos/Devolución ---
+        if (!isReposicion && !isDevolucion) {
+            const promoAplicable: Promotion | undefined = promotions.find(promo =>
+                promo.tipo === 'precio_especial' &&
+                promo.productoIds.includes(product.id) &&
+                (!promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id))) // <-- Usar client.id
+            );
+            if (promoAplicable && promoAplicable.nuevoPrecio) {
+                precioFinal = promoAplicable.nuevoPrecio;
+                precioOriginal = product.precio;
+            }
         }
+        // --- FIN CAMBIO ---
+
         const productToAdd = { ...product, precio: precioFinal, precioOriginal: precioOriginal };
         setSelectedProduct(productToAdd);
         setCurrentQuantity(existingItem ? existingItem.quantity.toString() : '1');
         setModalVisible(true);
-    }, [cart, promotions, clientId]);
+    }, [cart, promotions, client, isReposicion, isDevolucion]); // <-- Añadidas dependencias
 
     const handleConfirmQuantity = useCallback(() => {
         const quantity = parseInt(currentQuantity, 10);
@@ -373,8 +391,22 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setCurrentQuantity('1');
     }, [selectedProduct]);
 
-    // --- BLOQUE USEMEMO (Sin cambios, ya estaba correcto) ---
+    // --- BLOQUE USEMEMO ---
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
+         // --- INICIO CAMBIO: Total Cero para Repos/Devolución ---
+         if (isReposicion || isDevolucion) {
+            const costo = cart.reduce((acc, item) => acc + (item.costo || 0) * item.quantity, 0);
+            return {
+                subtotal: 0,
+                totalComision: 0,
+                totalCosto: costo,
+                totalFinal: 0,
+                totalDescuentoPromociones: 0,
+                itemsConDescuentosAplicados: cart.map(item => ({...item, precio: 0, precioOriginal: 0, comision: 0})),
+            };
+         }
+         // --- FIN CAMBIO ---
+
          let sub: number = 0;
          let comision: number = 0;
          let costo: number = 0;
@@ -399,7 +431,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
              const quantityPromosForProduct = promotions.filter(promo => {
                  const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
                  const isProductInPromo = promo.productoIds?.includes(item.id);
-                 const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (clientId && promo.clienteIds.includes(clientId as string));
+                 const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)); // <-- Usar client.id
                  const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
                  return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
              });
@@ -447,10 +479,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
              totalDescuentoPromociones: totalDescuentoTotal,
              itemsConDescuentosAplicados: itemsModificados
          };
-    }, [cart, promotions, clientId]);
+    }, [cart, promotions, client, isReposicion, isDevolucion]); // <-- Añadidas dependencias
     // --- FIN DEL BLOQUE USEMEMO ---
 
-    // --- handleShare (Sin cambios) ---
+    // --- handleShare (Modificado para pasar el tipo) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
         if (!clientData) {
            Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
@@ -458,7 +490,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
 
         try {
-            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName);
+            // --- INICIO CAMBIO: Pasar tipo a PDF ---
+            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName,);
+            // --- FIN CAMBIO ---
             if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
 
             const { uri } = await Print.printToFileAsync({ html: htmlContent });
@@ -482,8 +516,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     // --- FIN DE handleShare ---
 
 
-    // --- INICIO DE CAMBIOS: confirmarVenta (antes handleCheckout) ---
-    // 1. RENOMBRAMOS 'handleCheckout' a 'confirmarVenta'
+    // --- confirmarVenta (antes handleCheckout) ---
     const confirmarVenta = useCallback(async () => {
         if (isSubmitting) return;
         if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos del cliente o vendedor."); return; }
@@ -493,9 +526,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         // Preparamos los datos
-        const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { // Omitimos 'fecha' ya que la maneja el contexto
+        const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { 
             clienteId: client.id,
-            clientName: client.nombre,
+            clienteNombre: client.nombre, // <-- Corregido (de la charla anterior)
             vendedorId: currentVendedor.id,
             vendedorName: currentVendedor.nombreCompleto || currentVendedor.nombre,
             items: cart.map((item: CartItem) => {
@@ -505,11 +538,12 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             totalVenta: totalFinal,
             totalCosto: totalCosto,
             totalComision: totalComision,
-            estado: 'Pendiente de Entrega', // Ya estaba correcto
+            estado: 'Pendiente de Entrega', 
             saldoPendiente: totalFinal,
             totalDescuentoPromociones: totalDescuentoPromociones,
             observaciones: originalSale?.observaciones || '',
-            tipo: 'venta', // <-- AÑADIDO TIPO POR DEFECTO
+            // --- CAMBIO: 'tipo' es solo 'venta' aquí ---
+            tipo: 'venta', 
             ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {})
         };
 
@@ -517,36 +551,26 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
-                // Lógica de EDICIÓN (no toca stock por ahora)
+                // Lógica de EDICIÓN
                 const saleRef = doc(db, 'ventas', originalSale.id);
                 await updateDoc(saleRef, saleDataToSave as any);
                 Toast.show({ type: 'success', text1: 'Venta Actualizada', position: 'bottom', visibilityTime: 2000 });
 
             } else {
-                // --- LÓGICA DE NUEVA VENTA (MODIFICADA) ---
-                // Preparamos datos finales con el tipo
+                // --- LÓGICA DE NUEVA VENTA ---
                 const finalSaleData = {
                     ...saleDataToSave,
-                    tipo: 'venta' as 'venta' | 'reposicion'
+                    tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' // Asegurar tipo
                 };
-
-                // --- INICIO DE CAMBIOS: Añadir Logs ---
+                
                 console.log("Intentando descontar stock y crear venta...");
-                console.log("Datos de la venta:", JSON.stringify(finalSaleData, null, 2)); // Log detallado de datos
-                // --- FIN DE CAMBIOS: Añadir Logs ---
-
-                // Llamamos a la función del CONTEXTO
                 savedSaleId = await crearVentaConStock(finalSaleData);
-
-                // --- INICIO DE CAMBIOS: Añadir Log ---
                 console.log("Venta creada con ID:", savedSaleId);
-                // --- FIN DE CAMBIOS: Añadir Log ---
 
                 Toast.show({ type: 'success', text1: 'Venta Creada', text2: 'Stock descontado.', position: 'bottom', visibilityTime: 2000 });
-                // --- FIN LÓGICA MODIFICADA ---
             }
 
-            // --- Lógica de Compartir (sin cambios) ---
+            // --- Lógica de Compartir ---
             const completeSaleDataForPdf: BaseSale = {
                 ...(originalSale as BaseSale || {} as BaseSale),
                 ...saleDataToSave,
@@ -555,10 +579,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 // @ts-ignore
                 fecha: new Date(),
                 items: itemsConDescuentosAplicados,
-                // --- INICIO DE CAMBIOS: Forzar tipo correcto ---
                 estado: saleDataToSave.estado as BaseSale['estado'],
-                tipo: saleDataToSave.tipo as BaseSale['tipo'],
-                // --- FIN DE CAMBIOS: Forzar tipo correcto ---
+                tipo: saleDataToSave.tipo as BaseSale['tipo'], 
             };
 
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
@@ -568,14 +590,14 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 "¿Desea generar y compartir el comprobante ahora?",
                 [
                     { text: "No, Volver", onPress: () => {
-                        setIsSubmitting(false); // Resetear aquí también
+                        setIsSubmitting(false); 
                         navigation.goBack();
                     }, style: "cancel" },
                     { text: "Sí, Compartir", onPress: async () => {
                         try {
                             await handleShare(completeSaleDataForPdf, client, vendorName);
                         } finally {
-                            setIsSubmitting(false); // Resetear después de compartir
+                            setIsSubmitting(false); 
                             navigation.goBack();
                         }
                     } }
@@ -584,55 +606,60 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             );
 
         } catch (error: any) {
-            // --- INICIO DE CAMBIOS: Log de Error Mejorado ---
-            console.error("Error capturado en confirmarVenta:", error); // Log más detallado
+            console.error("Error capturado en confirmarVenta:", error); 
             const errorMessage = error.message.includes("Stock insuficiente")
-                ? error.message // Mostramos el error de stock específico
+                ? error.message 
                 : (error.message || 'No se pudo completar la operación.');
-            // --- FIN DE CAMBIOS: Log de Error Mejorado ---
-
+            
             Toast.show({ type: 'error', text1: 'Error al Guardar', text2: errorMessage, position: 'bottom' });
-            setIsSubmitting(false); // Importante: desbloquear el botón
+            setIsSubmitting(false); 
         }
-        // Quitamos el finally para resetear isSubmitting en los callbacks del Alert o en el catch
     }, [
         isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision,
         totalDescuentoPromociones,
         itemsConDescuentosAplicados,
-        editMode, originalSale, handleShare, refreshAllData, navigation, clientId,
-        crearVentaConStock // <-- AÑADIR DEPENDENCIA
+        editMode, originalSale, handleShare, refreshAllData, navigation,
+        crearVentaConStock
     ]);
-    // --- FIN DE CAMBIOS: confirmarVenta ---
+    // --- FIN DE confirmarVenta ---
 
     // --- INICIO DE CAMBIOS: Nueva Función "Tenedor" ---
     /**
      * Esta función decide qué hacer cuando se presiona el botón principal:
-     * 1. Si es Reposición -> Navega a ReviewSale
+     * 1. Si es Reposición O Devolución -> Navega a ReviewSale
      * 2. Si es Venta -> Llama a confirmarVenta
      */
     const handleConfirmPress = () => {
         if (isSubmitting) return;
 
-        // Validaciones básicas antes de decidir
+        // Validaciones básicas
         if (!client) { Alert.alert("Error", "No se ha seleccionado un cliente."); return; }
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
 
 
-        if (isReposicion) {
-            // Es Reposición: Navegamos a ReviewSale
+        // --- CAMBIO: Añadido 'isDevolucion' ---
+        if (isReposicion || isDevolucion) {
+            // Es Reposición O Devolución: Navegamos a ReviewSale
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            navigation.navigate('ReviewSale', { // Asumimos que ReviewSale existe y acepta esto
-                cliente: client!,
-                cart: itemsConDescuentosAplicados, // Usamos los items con descuentos calculados
-                isReposicion: true,
-                totalVenta: 0,
+
+            // --- ¡¡¡CORRECCIÓN CLAVE!!! ---
+            // Tu AppNavigator.tsx espera 'clientId: string'
+            // Y TAMBIÉN 'cliente: Client'
+            // Le pasamos ambos para máxima compatibilidad.
+            navigation.navigate('ReviewSale', { 
+                cliente: client,
+                clientId: client!.id, // <-- Pasamos el CLIENTID STRING (para que coincida con tu AppNav)
+                cart: itemsConDescuentosAplicados, 
+                isReposicion: isReposicion,
+                isDevolucion: isDevolucion, // <-- AÑADIDO
+                totalVenta: 0, // Se fuerza a 0
                 totalCosto: totalCosto,
-                totalComision: 0, // Reposición no da comisión
-                totalDescuento: totalDescuentoPromociones, // Pasamos el descuento por si acaso
+                totalComision: 0, // Cero comisión
+                totalDescuento: totalDescuentoPromociones,
             });
         } else {
             // Es Venta: Confirmamos
-            confirmarVenta(); // Llamamos a la función renombrada
+            confirmarVenta(); 
         }
     };
     // --- FIN DE CAMBIOS: Nueva Función "Tenedor" ---
@@ -642,10 +669,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             item={item}
             cart={cart}
             promotions={promotions}
-            clientId={clientId}
+            clientId={client?.id} // <-- Usar client.id (string)
             handleAddProduct={handleAddProduct}
         />
-    ), [cart, promotions, clientId, handleAddProduct]);
+    ), [cart, promotions, client?.id, handleAddProduct]);
 
     // --- RENDERIZADO PRINCIPAL ---
     if (isDataLoading && !client) {
@@ -670,6 +697,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         );
     }
 
+    // --- CAMBIO: Color de fondo dinámico ---
+    const headerTitle = editMode ? 'Editar Venta' : (isReposicion ? 'Nueva Reposición' : (isDevolucion ? 'Nueva Devolución' : 'Nueva Venta'));
+    const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary); // <-- Usar secondary para devolución
+    // --- FIN CAMBIO ---
+
     return (
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
@@ -679,7 +711,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
                     {/* --- INICIO CAMBIO: Título Dinámico --- */}
-                    <Text style={styles.title}>{editMode ? 'Editar Venta' : (isReposicion ? 'Nueva Reposición' : 'Nueva Venta')}</Text>
+                    <Text style={styles.title}>{headerTitle}</Text>
                     {/* --- FIN CAMBIO: Título Dinámico --- */}
                     <Text style={styles.clientName}>{client?.nombre}</Text>
                 </View>
@@ -692,7 +724,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     <TextInput style={styles.input} placeholder="Buscar producto..." placeholderTextColor={COLORS.textSecondary} value={searchQuery} onChangeText={setSearchQuery} clearButtonMode="while-editing" autoCapitalize="none" autoCorrect={false}/>
                      {searchQuery.length > 0 && Platform.OS === 'android' && ( <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}><Feather name="x" size={18} color={COLORS.textSecondary} /></TouchableOpacity> )}
                 </View>
-                {/* REEMPLAZO DEL PICKER: Botón y Modal */}
                 <View style={styles.pickerContainer}>
                     <Feather name="tag" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TouchableOpacity
@@ -743,8 +774,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 <TouchableOpacity
                     style={[
                         styles.checkoutButton,
+                        { backgroundColor: dynamicButtonColor }, // Color dinámico
                         isSubmitting && styles.checkoutButtonDisabled,
-                        isReposicion && { backgroundColor: COLORS.warning } // Color Naranja si es Reposición
                     ]}
                     onPress={handleConfirmPress} // <-- Llama a la nueva función "Tenedor"
                     disabled={isSubmitting}
@@ -753,7 +784,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     <Text style={styles.checkoutButtonText}>
                         {isSubmitting
                             ? (editMode ? 'Actualizando...' : 'Guardando...')
-                            : (isReposicion ? 'Revisar Reposición' : (editMode ? 'Actualizar Venta' : 'Confirmar Venta'))
+                            : (isReposicion ? 'Revisar Reposición' : (isDevolucion ? 'Revisar Devolución' : (editMode ? 'Actualizar Venta' : 'Confirmar Venta')))
                         }
                     </Text>
                 </TouchableOpacity>
@@ -774,7 +805,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 </View>
             </Modal>
 
-            {/* NUEVO MODAL DE SELECCIÓN DE CATEGORÍA */}
             <CategorySelectorModal
                 visible={isCategoryModalVisible}
                 onClose={() => setIsCategoryModalVisible(false)}
@@ -786,7 +816,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     );
 };
 
-// --- ESTILOS --- (Añadidos estilos de Stock)
+// --- ESTILOS ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -805,44 +835,32 @@ const styles = StyleSheet.create({
     input: { flex: 1, color: COLORS.textPrimary, fontSize: 16, height: '100%' },
     clearButton: { padding: 5 },
     pickerContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 12, borderWidth: 1, borderColor: COLORS.glassBorder, paddingLeft: 12, justifyContent: 'center', paddingVertical: 5, height: 48 },
-
-    // NUEVOS ESTILOS PARA EL SELECTOR BASADO EN TOUCHABLE
-    pickerButton: {
-        flex: 1,
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingRight: 12,
-        height: '100%',
-    },
-    pickerButtonText: {
-        fontSize: 16,
-    },
-
+    pickerButton: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 12, height: '100%' },
+    pickerButtonText: { fontSize: 16, },
     listContentContainer: { paddingHorizontal: 15, paddingBottom: 10, flexGrow: 1 },
     emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30, gap: 15, minHeight: 200 },
     emptyText: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center' },
     card: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, paddingVertical: 12, paddingLeft: 15, paddingRight: 10, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: COLORS.glassBorder },
     cardSelected: { backgroundColor: 'rgba(241, 245, 188, 0.2)', borderColor: COLORS.primary },
+    cardDisabled: { // <-- AÑADIDO (PULIDO ANTERIOR)
+        opacity: 0.5,
+        backgroundColor: COLORS.disabled, 
+    },
     cardInfo: { flex: 1, marginRight: 8 },
     cardTitle: { fontSize: 16, fontWeight: '500', color: COLORS.textPrimary, marginBottom: 2 },
     priceContainer: {flexDirection: 'row', alignItems: 'baseline', gap: 5},
     cardPrice: { fontSize: 15, color: COLORS.primary, fontWeight: '600' },
     cardOriginalPrice: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '400', textDecorationLine: 'line-through' },
-
-    // --- ESTILOS MEJORA VISUAL ---
-    stockText: {
-        fontSize: 13,
-        color: COLORS.textSecondary,
-        marginTop: 4,
-        fontWeight: '500',
-    },
-    stockTextLow: {
-        color: COLORS.danger, // Asumiendo que COLORS.danger es tu rojo
+    stockText: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4, fontWeight: '500' },
+    stockTextLow: { // <-- AÑADIDO (PULIDO ANTERIOR)
+        color: COLORS.danger, 
         fontWeight: 'bold',
     },
-    // --- FIN ESTILOS MEJORA ---
-
+    stockTextNoStock: { // <-- AÑADIDO (PULIDO ANTERIOR)
+        color: COLORS.danger,
+        fontWeight: '900',
+        fontSize: 14,
+    },
     inCartControls: { flexDirection: 'row', alignItems: 'center' },
     quantityBadge: { backgroundColor: COLORS.primary, borderRadius: 12, minWidth: 24, height: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
     quantityBadgeText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 14 },
@@ -856,11 +874,9 @@ const styles = StyleSheet.create({
     finalTotalRow: { borderTopWidth: 1, borderColor: COLORS.glassBorder, paddingTop: 10, marginTop: 5 },
     finalTotalLabel: { color: COLORS.textPrimary, fontSize: 18, fontWeight: 'bold' },
     finalTotalValue: { color: COLORS.primary, fontSize: 20, fontWeight: 'bold' },
-    checkoutButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: 15, gap: 10, marginTop: 10 },
+    checkoutButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 14, borderRadius: 15, gap: 10, marginTop: 10 },
     checkoutButtonDisabled: { backgroundColor: COLORS.disabled },
     checkoutButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 18 },
-
-    // ESTILOS DE MODAL (comunes para cantidad y categoría)
     modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)' },
     modalContent: { width: '80%', backgroundColor: COLORS.backgroundEnd, borderRadius: 15, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: COLORS.glassBorder },
     modalHeader: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.glassBorder, marginBottom: 10, alignItems: 'center', width: '100%'},
@@ -872,7 +888,6 @@ const styles = StyleSheet.create({
     modalButtonCancel: { backgroundColor: COLORS.glass, borderWidth: 1, borderColor: COLORS.danger },
     modalButtonConfirm: { backgroundColor: COLORS.primary },
     modalButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 16 },
-    // Específicos de FlatList Modal
     modalItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15 },
     modalItemText: { fontSize: 16, color: COLORS.textPrimary },
     separatorModal: { height: 1, backgroundColor: COLORS.glassBorder },

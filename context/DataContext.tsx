@@ -93,7 +93,7 @@ export interface Sale {
     
     // --- INICIO DE CAMBIOS: Interfaces ---
     estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada'; // <-- CAMBIO DE NOMBRE
-    tipo: 'venta' | 'reposicion'; // <-- CAMPO NUEVO
+    tipo: 'venta' | 'reposicion' | "devolucion";  // <-- CAMPO NUEVO
     // --- FIN DE CAMBIOS: Interfaces ---
 
     fecha: { seconds: number } | Date; // <-- Nombre correcto

@@ -244,14 +244,14 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                     renderItem={({ item }) => (
                         <TouchableOpacity 
                             style={styles.recentSaleCard}
-                            onPress={() => navigation.navigate('SaleDetail', { saleId: item.id })}
+                            onPress={() => navigation.navigate('SaleDetail', { saleId: item.id , clientName : item.clientName })}
                         >
                             <View style={styles.recentSaleHeader}>
                                 <Text style={styles.recentSaleDate}>{formatDate(item.fecha)}</Text>
                                 <Text 
                                     style={[
                                         styles.recentSaleStatus, 
-                                        { color: item.estado === 'Pendiente de Pago' ? COLORS.warning : (item.estado === 'Pagada' ? COLORS.success : COLORS.textSecondary) }
+                                        { color: item.estado === 'Pendiente de Entrega' ? COLORS.warning : (item.estado === 'Pagada' ? COLORS.success : COLORS.textSecondary) }
                                     ]}>
                                     {item.estado}
                                 </Text>

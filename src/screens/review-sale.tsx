@@ -82,7 +82,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
 
     // --- INICIO DE CAMBIOS: Obtener Parámetros ---
     // Obtenemos 'cliente' (objeto) y 'cart' (array) directamente
-    const { cliente, cart, isReposicion, totalVenta, totalCosto, totalComision, totalDescuento } = route.params;
+    const { cliente, cart, isReposicion, isDevolucion,  totalVenta, totalCosto, totalComision, totalDescuento } = route.params;
     // Ya no necesitamos parsear 'cartJsonString'
     // --- FIN DE CAMBIOS: Obtener Parámetros ---
 

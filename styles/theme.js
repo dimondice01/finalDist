@@ -9,7 +9,7 @@ export const COLORS = {
   
   // --- COLOR PRINCIPAL (Azul Índigo Profundo para Profesionalismo) ---
   primary: '#770707ff',       // Índigo Profundo (Tailwind 'indigo-600') - Base de Marca
-    
+  secondary:  "#120777ff",
   // Contraste Primario: Amarillo Neón para texto/íconos sobre el color primario.
   primaryDark: '#facbd1ff',   // Amarillo/Verde Neón (Tailwind 'yellow-200') - Máximo Contraste
   
