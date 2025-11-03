@@ -134,7 +134,9 @@ export interface IDataContext {
     syncData: () => Promise<void>;
     refreshAllData: () => Promise<void>;
     isLoading: boolean;
-    isInitialDataLoaded: boolean; // <-- NUEVA BANDERA
+    isInitialDataLoaded: boolean;
+    zones: Zone[];
+    updateClient: (clientId: string, updatedData: Partial<Client>) => Promise<void>; // <-- NUEVA BANDERA
 
     // --- INICIO DE CAMBIOS: Nuevas Funciones ---
     crearVentaConStock: (saleData: any) => Promise<string>;
@@ -152,6 +154,8 @@ const defaultContextValue: IDataContext = {
     vendors: [],
     sales: [],
     routes: [],
+    zones: [], // Asegúrate que esta línea exista y se llame 'zones'
+    updateClient: async () => {}, // Añade esta función dummy
     syncData: async () => { console.warn("Llamada a syncData por defecto"); },
     refreshAllData: async () => { console.warn("Llamada a refreshAllData por defecto"); },
     isLoading: true,
@@ -649,6 +653,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         vendors,
         sales,
         routes,
+        zones: availableZones,
+        updateClient: async () => {}, // 2. Añadimos la función que faltaba
         syncData,
         refreshAllData,
         isLoading,

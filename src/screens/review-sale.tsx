@@ -146,10 +146,10 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
             totalCosto: totalCosto, // Pasado por params
             totalComision: totalComision, // Pasado por params
             estado: 'Pendiente de Entrega',
-            saldoPendiente: isReposicion ? 0 : totalFinalCalculado, // Saldo 0 si es reposición
+            saldoPendiente: (isReposicion || isDevolucion) ? 0 : totalFinalCalculado, // Saldo 0 si es reposición
             totalDescuentoPromociones: totalDescuentoCalculado,
             observaciones: '', // Puedes añadir un campo si lo necesitas
-            tipo: isReposicion ? 'reposicion' : 'venta', // Establecemos el tipo
+            tipo: isReposicion ? (isReposicion || isDevolucion) : 'venta', // Establecemos el tipo
             // 'fecha' será añadida por crearVentaConStock
         };
 
@@ -157,7 +157,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
             // --- LLAMAMOS A LA FUNCIÓN DEL DATACONTEXT ---
             const savedSaleId = await crearVentaConStock(saleDataToSave);
 
-            Toast.show({ type: 'success', text1: isReposicion ? 'Reposición Creada' : 'Venta Creada', text2: 'Stock descontado.', position: 'bottom' });
+            Toast.show({ type: 'success', text1: isReposicion ? 'Reposición Creada' : (isDevolucion ? 'Devolución Creada' : 'Venta Creada'), text2: 'Stock descontado.', position: 'bottom' });
 
             // --- Lógica de Compartir (sin cambios) ---
             const completeSaleDataForPdf: BaseSale = {
@@ -172,7 +172,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
 
             Alert.alert(
-                isReposicion ? "Reposición Guardada" : "Venta Guardada",
+                isReposicion ? "Reposición Guardada" : (isDevolucion ? "Devolución Guardada" : "Venta Guardada"),
                 "¿Desea generar y compartir el comprobante ahora?",
                 [
                     { text: "No, Volver", onPress: () => { navigation.popToTop(); }, style: "cancel" }, // Volver al inicio
@@ -213,7 +213,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>{isReposicion ? 'Revisar Reposición' : 'Revisar Venta'}</Text>
+                <Text style={styles.title}>{isReposicion ? 'Revisar Reposición' : (isDevolucion ? 'Revisar Devolución' : 'Revisar Venta')}</Text>
                 <View style={styles.headerButton} /> {/* Placeholder for balance */}
             </View>
 
@@ -244,7 +244,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
                  <View style={[styles.totalRow, { borderTopWidth: 1, borderColor: COLORS.glassBorder, paddingTop: 10, marginTop: 5 }]}>
                     <Text style={styles.totalText}>Total Final</Text>
                     {/* --- INICIO CAMBIO: Total para Reposición --- */}
-                    <Text style={styles.totalAmount}>${isReposicion ? '0.00' : totalFinalCalculado.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text>
+                    <Text style={styles.totalAmount}>${(isReposicion || isDevolucion) ? '0.00' : totalFinalCalculado.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text>
                     {/* --- FIN CAMBIO: Total para Reposición --- */}
                 </View>
 
@@ -259,7 +259,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
                         <Feather name="check-circle" size={22} color={COLORS.primaryDark} />
                     )}
                     <Text style={styles.confirmButtonText}>
-                        {isSubmitting ? 'Procesando...' : (isReposicion ? 'Confirmar Reposición' : 'Confirmar Venta')}
+                        {isSubmitting ? 'Procesando...' : (isReposicion ? 'Confirmar Reposición' : (isDevolucion ? 'Confirmar Devolución' : 'Confirmar Venta'))}
                     </Text>
                 </TouchableOpacity>
             </View>

@@ -276,7 +276,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     }, [navigation, client]);
     
     // --- NUEVO: Handler para Reposición ---
-    const navigateToNewReposicion = useCallback(() => {
+  /*  const navigateToNewReposicion = useCallback(() => {
         if (!client) return; 
         navigation.navigate('CreateSale', { 
             cliente: client, 
@@ -284,7 +284,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
             isReposicion: true, 
             isDevolucion: false 
         });
-    }, [navigation, client]);
+    }, [navigation, client])*/
 
     // --- NUEVO: Handler para Devolución ---
     const navigateToNewDevolucion = useCallback(() => {
@@ -426,13 +426,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             
                             {/* Fila secundaria con 2 botones (Reposición y Devolución) */}
                             <View style={styles.secondaryActionsRow}>
-                                <TouchableOpacity
-                                    style={[styles.secondaryActionButton, { flex: 1, backgroundColor: `${COLORS.warning}30` }]}
-                                    onPress={navigateToNewReposicion}
-                                >
-                                    <Feather name="truck" size={20} color={COLORS.warning} />
-                                    <Text style={[styles.secondaryActionButtonText, { color: COLORS.warning }]}>Reposición</Text>
-                                </TouchableOpacity>
+                               
                                 <TouchableOpacity
                                     style={[styles.secondaryActionButton, { flex: 1, backgroundColor: `${COLORS.warning}30` }]}
                                     onPress={navigateToNewDevolucion}

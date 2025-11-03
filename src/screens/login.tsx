@@ -2,106 +2,192 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 // Quitamos la importación de router/expo-router
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth'; // Añadimos signOut por si acaso
+import { signInWithEmailAndPassword } from 'firebase/auth'; // Añadimos signOut por si acaso
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// 🔥 CAMBIO: Añadimos 'Image'
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // --- Contexto y DB ---
 // import { useData } from '../../context/DataContext'; // Ya no necesitamos syncData aquí
 import { auth } from '../../db/firebase-service'; // Ajusta la ruta
 
-// --- Navegación ---
+// --- Navegación ---\
 // Importamos el tipo de props que definimos en AuthNavigator
-import { LoginScreenProps } from '../navigation/AuthNavigator'; // <--- Usamos el tipo del AuthNavigator
+// 🔥 CORRECCIÓN: Usamos el tipo del AppNavigator ya que Login está allí
+import { LoginScreenProps } from '../navigation/AppNavigator';
 
 // --- Estilos ---
 import { COLORS } from '../../styles/theme'; // Ajusta la ruta
 
 // Usamos el tipo importado para las props
-const LoginScreen = ({ navigation }: LoginScreenProps) => {
-    // const { syncData } = useData(); // Ya no se necesita aquí
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [loading, setLoading] = useState(false); // Solo para el proceso de login manual
-    const [loadingMessage, setLoadingMessage] = useState(''); // Mensaje específico del login
+const LoginScreen = ({ navigation }: LoginScreenProps) => { // <-- Corregido a LoginScreenProps de AppNav
+    // const { syncData } = useData(); // Ya no se necesita aquí
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false); // Solo para el proceso de login manual
+    const [loadingMessage, setLoadingMessage] = useState(''); // Mensaje
 
-    const handleLogin = async () => {
-        if (!email || !password) {
-            Alert.alert('Error', 'Por favor, ingrese email y contraseña.');
-            return;
-        }
-        setLoading(true);
-        setLoadingMessage('Autenticando...'); // Mensaje mientras se autentica
+    const handleLogin = async () => {
+        if (!email || !password) {
+            Alert.alert("Campos incompletos", "Por favor, ingrese su email y contraseña.");
+            return;
+        }
 
-        try {
-            // 1. INICIAMOS SESIÓN
-            await signInWithEmailAndPassword(auth, email.trim(), password);
+        setLoading(true);
+        setLoadingMessage('Iniciando sesión...');
+
+        try {
+            await signInWithEmailAndPassword(auth, email.trim(), password);
+            // La navegación ahora la maneja el observer en AppNavigator
+            // No necesitamos llamar a syncData() aquí, se hace post-login en AppNavigator
             
-            // --- PASO CRUCIAL ELIMINADO ---
-            // Eliminamos la llamada a navigation.reset().
-            // Al ser exitoso, onAuthStateChanged en RootNavigator se disparará
-            // y RootNavigator será el que haga la navegación a 'Home' o 'Driver'.
-            // No necesitamos hacer nada más aquí.
+            // Damos un breve momento para que el observer de AppNavigator reaccione
+            setTimeout(() => {
+                setLoading(false);
+            }, 1000); 
 
-        } catch (error: any) {
-            console.error("Login Failed:", error.message, error.code);
-            let message = 'Credenciales incorrectas o problema de red.';
-            if (error.code === 'auth/network-request-failed') {
-                message = 'Error de red. Revisa tu conexión.';
-            } else if (error.message && error.message.includes("Datos de usuario no encontrados.")) {
-                message = "No se encontraron los datos asociados a este usuario.";
-                signOut(auth); // Forzamos el cierre si no hay datos de vendedor.
-            }
-            Alert.alert('Error de Inicio de Sesión', message);
-            setLoading(false); // Solo reseteamos el loading si hay error
-            setLoadingMessage('');
-        }
-    };
+        } catch (error: any) {
+            setLoading(false);
+            console.error("Error en handleLogin:", error.code, error.message);
+            
+            let friendlyMessage = "Ocurrió un error inesperado.";
+            if (error.code === 'auth/user-not-found' || 
+                error.code === 'auth/wrong-password' || 
+                error.code === 'auth/invalid-credential') {
+                friendlyMessage = "Email o contraseña incorrectos.";
+            } else if (error.code === 'auth/invalid-email') {
+                friendlyMessage = "El formato del email no es válido.";
+            } else if (error.code === 'auth/network-request-failed') {
+                friendlyMessage = "Error de red. Revisa tu conexión a internet.";
+            }
+            
+            Alert.alert("Error de autenticación", friendlyMessage);
+        }
+    };
 
-    // El resto del componente de presentación (return) no cambia...
-    return (
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
-            <StatusBar barStyle="light-content" />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-            <Feather name="key" size={60} color={COLORS.primary} />
-            <Text style={styles.title}>La Llave</Text>
-            <Text style={styles.subtitle}>Acceso de Personal</Text>
+    return (
+        <KeyboardAvoidingView 
+            style={styles.container} 
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={Platform.OS === "ios" ? 0 : -100} // Ajuste fino
+        >
+            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundEnd} />
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
 
-            <View style={styles.formContainer}>
-                <View style={styles.inputContainer}>
-                    <Feather name="at-sign" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Email" placeholderTextColor={COLORS.textSecondary} keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} editable={!loading} />
-                </View>
-                <View style={styles.inputContainer}>
-                    <Feather name="lock" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Contraseña" placeholderTextColor={COLORS.textSecondary} secureTextEntry value={password} onChangeText={setPassword} editable={!loading} />
-                </View>
+            {/* ======== 🔥 INICIO: LOGO AÑADIDO ======== */}
+            <Image
+                source={require('../../assets/images/icon_login.png')}
+                style={styles.logo}
+            />
+            {/* ======== 🔥 FIN: LOGO AÑADIDO ======== */}
 
-                <TouchableOpacity style={[styles.button, loading && styles.buttonDisabled]} onPress={handleLogin} disabled={loading}>
-                    {loading ? (
-                        <><ActivityIndicator color={COLORS.primaryDark} /><Text style={styles.loadingText}>{loadingMessage}</Text></>
-                    ) : (
-                        <Text style={styles.buttonText}>Iniciar Sesión</Text>
-                    )}
-                </TouchableOpacity>
-            </View>
-        </KeyboardAvoidingView>
-    );
+            <Text style={styles.title}>Bienvenido</Text>
+            <Text style={styles.subtitle}>Inicia sesión para continuar</Text>
+
+            <View style={styles.formContainer}>
+                {/* Email Input */}
+                <View style={styles.inputContainer}>
+                    <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Email"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={email}
+                        onChangeText={setEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        returnKeyType="next"
+                        // onSubmitEditing={() => passwordInputRef.current?.focus()} // Necesitaríamos un ref
+                    />
+                </View>
+
+                {/* Password Input */}
+                <View style={styles.inputContainer}>
+                    <Feather name="lock" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        // ref={passwordInputRef} // Necesitaríamos un ref
+                        style={styles.input}
+                        placeholder="Contraseña"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={password}
+                        onChangeText={setPassword}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        returnKeyType="go"
+                        onSubmitEditing={handleLogin}
+                    />
+                </View>
+
+                {/* Login Button */}
+                <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
+                    {loading ? (
+                        <><ActivityIndicator size="small" color={COLORS.primaryDark} /><Text style={styles.buttonTextLoading}>{loadingMessage}</Text></>
+                    ) : (
+                        <Text style={styles.buttonText}>Iniciar Sesión</Text>
+                    )}
+                </TouchableOpacity>
+            </View>
+        </KeyboardAvoidingView>
+    );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundEnd, padding: 20 },
-    background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
-    title: { fontSize: 48, fontWeight: 'bold', color: COLORS.textPrimary, marginTop: 10 },
-    subtitle: { fontSize: 18, color: COLORS.textSecondary, marginBottom: 40 },
-    formContainer: { width: '100%' },
-    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 15, borderWidth: 1, borderColor: COLORS.glassBorder, paddingHorizontal: 15, marginBottom: 15, height: 58 },
-    inputIcon: { marginRight: 10 },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: 16 },
-    button: { marginTop: 10, backgroundColor: COLORS.primary, padding: 18, borderRadius: 15, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 10 },
-    buttonDisabled: { backgroundColor: COLORS.disabled },
-    buttonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 18 },
-    loadingText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 16 }, // Para el spinner del botón
+    container: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.white, padding: 20 },
+    background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
+    
+    // ======== 🔥 INICIO: ESTILO DEL LOGO ========
+    logo: {
+        width: 220, // Ancho del logo
+        height: 100, // Alto del logo
+        resizeMode: 'contain', // Asegura que se vea bien sin deformarse
+        marginBottom: 15, // Espacio antes del título
+    },
+    // ======== 🔥 FIN: ESTILO DEL LOGO ========
+
+    title: { fontSize: 48, fontWeight: 'bold', color: COLORS.textPrimary, marginTop: 10 },
+    subtitle: { fontSize: 18, color: COLORS.textSecondary, marginBottom: 40 },
+    formContainer: { width: '100%' },
+    inputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.glass, // Fondo semi-transparente
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: COLORS.glassBorder,
+        marginBottom: 15,
+        paddingHorizontal: 15,
+        height: 55, // Altura fija
+    },
+    inputIcon: { marginRight: 10 },
+    input: {
+        flex: 1,
+        color: COLORS.textPrimary,
+        fontSize: 16,
+        height: '100%', // Ocupa la altura del contenedor
+    },
+    button: {
+        flexDirection: 'row', // Para alinear spinner y texto
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: COLORS.primary,
+        padding: 15,
+        borderRadius: 12,
+        marginTop: 10,
+        height: 55, // Altura fija
+    },
+    buttonText: {
+        color: COLORS.primaryDark,
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    buttonTextLoading: { // Estilo para el texto cuando está cargando
+        color: COLORS.primaryDark,
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginLeft: 10, // Espacio entre spinner y texto
+    },
 });
 
 export default LoginScreen;

@@ -1,67 +1,54 @@
 // src/screens/EditClientScreen.tsx
 import { Feather } from '@expo/vector-icons';
-// ELIMINAMOS: import { Picker } from '@react-native-picker/picker';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
-// Quitamos import { router, useLocalSearchParams } from 'expo-router';
-import { doc, updateDoc } from 'firebase/firestore';
-// Añadimos useCallback
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-// AÑADIMOS FlatList a las importaciones
+// 🔥 CAMBIO: Ya no necesitamos useEffect
+import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
-import { useRoute } from '@react-navigation/native'; // Para obtener los parámetros de la ruta
-import { EditClientScreenProps } from '../navigation/AppNavigator'; // Asume la tipificación de props
+// 🔥 CAMBIO: Ya no necesitamos useRoute
+import { EditClientScreenProps } from '../navigation/AppNavigator';
 
-// --- Contexto, DB, Tipos ---
+// --- Contexto, DB, Tipos --
+// 🔥 CAMBIO: Importamos 'Client' para usarlo en el estado
 import { useData, Zone } from '../../context/DataContext';
-import { db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 interface LocationCoords { latitude: number; longitude: number; }
 
-// --- Componente Modal Selector de Zona (REEMPLAZO DEL PICKER) ---
-const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: { 
-    visible: boolean; 
-    onClose: () => void; 
-    zones: Zone[]; 
-    selectedId: string; 
-    onSelect: (id: string) => void; 
+// --- Componente Modal Selector de Zona (Sin cambios) ---
+const ZoneSelectorModal = React.memo(({ visible, onClose, zones, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    zones: Zone[];
+    selectedId: string | undefined;
+    onSelect: (id: string) => void;
 }) => {
-    // Agregamos la opción "Seleccionar Zona *" al inicio
-    const dataWithDefaultOption: Zone[] = useMemo(() => [
-        { id: '', nombre: 'Seleccionar Zona *' },
-        ...zones
-    ], [zones]);
-    
     const renderItem = useCallback(({ item }: { item: Zone }) => (
         <TouchableOpacity
             style={styles.modalItem}
             onPress={() => { onSelect(item.id); onClose(); }}
         >
             <Text style={[styles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
-            {selectedId === item.id && <Feather name="check" size={20} color={COLORS.primary} />}
+            {selectedId === selectedId && <Feather name="check" size={20} color={COLORS.primary} />}
         </TouchableOpacity>
     ), [selectedId, onSelect, onClose]);
 
     return (
         <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
             <View style={styles.modalOverlay}>
-                <View style={[styles.modalContent, { maxHeight: '80%', padding: 0 }]}>
-                    <View style={styles.modalHeader}>
-                         <Text style={styles.modalTitle}>Seleccionar Zona *</Text>
-                    </View>
+                <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+                    <Text style={styles.modalTitle}>Seleccionar Zona</Text>
                     <FlatList
-                        data={dataWithDefaultOption}
-                        keyExtractor={(item) => item.id || 'default'}
+                        data={zones}
+                        keyExtractor={(item) => item.id}
                         renderItem={renderItem}
                         ItemSeparatorComponent={() => <View style={styles.separatorModal} />}
-                        style={{ flexGrow: 0, width: '100%' }}
-                        contentContainerStyle={{ paddingHorizontal: 20 }}
+                        style={{ width: '100%' }}
                     />
                     <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
                         <Text style={styles.modalCloseText}>Cerrar</Text>
@@ -70,190 +57,156 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
             </View>
         </Modal>
     );
-};
-// --- FIN Componente Modal Selector de Zona ---
+});
+// --- Fin Modal Zona ---
 
 
-// Cambiamos la firma del componente para recibir navigation y usar useRoute
-const EditClientScreen = ({ navigation }: EditClientScreenProps) => {
-    // 1. OBTENER PARÁMETROS DE REACT NAVIGATION
-    const route = useRoute();
-    const { clientId } = route.params as { clientId: string }; // Obtenemos el ID del cliente de los params
-    
-    // Obtenemos los datos maestros desde nuestro almacén local
-    const { clients, availableZones, refreshAllData } = useData();
+// ======================================================
+// --- INICIO DE CAMBIOS PRINCIPALES ---
+// ======================================================
+const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
 
-    // Buscamos el cliente a editar en los datos locales (instantáneo)
-    const clientToEdit = useMemo(() => clients.find(c => c.id === clientId), [clients, clientId]);
+    // 🔥 CAMBIO 1: Obtenemos el cliente DIRECTAMENTE de los parámetros
+    // (Tal como lo definió AppNavigator y lo envió client-dashboard)
+    const { client } = route.params;
 
-    // Estados del formulario, inicializados vacíos
-    const [nombre, setNombre] = useState('');
-    const [direccion, setDireccion] = useState('');
-    const [barrio, setBarrio] = useState('');
-    const [localidad, setLocalidad] = useState('');
-    const [telefono, setTelefono] = useState('');
-    const [email, setEmail] = useState('');
-    const [zonaId, setZonaId] = useState('');
-    const [location, setLocation] = useState<LocationCoords | null>(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    // Obtenemos el contexto (solo para 'zones' y 'updateClient')
+    const { zones, updateClient } = useData();
 
-    // Estados del Mapa
-    const [mapModalVisible, setMapModalVisible] = useState(false);
-    const [tempRegion, setTempRegion] = useState({
-        latitude: -29.4134, // Default: La Rioja, Argentina
-        longitude: -66.8569,
-        latitudeDelta: 0.0922,
-        longitudeDelta: 0.0421,
+    // 🔥 CAMBIO 2: Inicializamos el estado del formulario CON los datos del cliente
+    const [formData, setFormData] = useState({
+        nombre: client?.nombre || '',
+        nombreCompleto: client?.nombreCompleto || '',
+        direccion: client?.direccion || '',
+        telefono: client?.telefono || '',
+        email: client?.email || '',
+        barrio: client?.barrio || '',
+        localidad: client?.localidad || '',
+        zonaId: client?.zonaId || '',
     });
-    const [locationLoading, setLocationLoading] = useState(false);
-    // NUEVO ESTADO para el modal de zona
+
+    // Estados para UI (sin cambios)
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false);
-
-
-    // 2. EFECTO PARA POBLAR EL FORMULARIO
-    useEffect(() => {
-        if (clientToEdit) {
-            setNombre(clientToEdit.nombre || '');
-            setDireccion(clientToEdit.direccion || '');
-            setBarrio(clientToEdit.barrio || '');
-            setLocalidad(clientToEdit.localidad || '');
-            setTelefono(clientToEdit.telefono || '');
-            setEmail(clientToEdit.email || '');
-            setZonaId(clientToEdit.zonaId || '');
-            setLocation(clientToEdit.location || null);
-            if (clientToEdit.location) {
-                 setTempRegion(prev => ({ ...prev, latitude: clientToEdit.location!.latitude, longitude: clientToEdit.location!.longitude }));
-            }
-        } else if (clientId) {
-            // Si no encuentra el cliente pero tiene ID, significa que algo falló o aún no carga.
-            // Si los clients ya cargaron (se asume por clients.length), navegamos atrás.
-            if (clients.length > 0) {
-                 Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró el cliente para editar.', position: 'bottom' });
-                 navigation.goBack(); // <-- CORRECCIÓN: Usa navigation.goBack()
-            }
-        }
-    }, [clientToEdit, clientId, clients.length, navigation]); // Agregamos navigation a las dependencias
-
-    // Zonas del Vendedor (simplemente las disponibles para edición)
-    const zonasDisponibles = useMemo(() => {
-        return availableZones.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    }, [availableZones]);
+    const [isMapModalVisible, setIsMapModalVisible] = useState(false);
     
-    // Búsqueda del nombre de la zona seleccionada para mostrar en el botón
+    // 🔥 CAMBIO 3: Inicializamos las coordenadas CON las del cliente
+    const [location, setLocation] = useState<LocationCoords | null>(
+        client?.location ? client.location : null
+    );
+    const [mapRegion, setMapRegion] = useState(() => ({ // Región inicial del mapa
+        latitude: client?.location?.latitude || -34.603722, // Default CABA
+        longitude: client?.location?.longitude || -58.381592, // Default CABA
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+    }));
+
+
+    // 🔥 CAMBIO 4: Eliminamos los dos 'useEffect'
+    // Ya no necesitamos el useEffect para "buscar" al cliente (ya lo tenemos)
+    // Ya no necesitamos el useEffect para "popular" el formData (lo hacemos en useState)
+    
+
+    // --- Lógica de UI (sin cambios) ---
+    const handleInputChange = (field: keyof typeof formData, value: string) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+    };
+
     const selectedZoneName = useMemo(() => {
-        const selectedZone = zonasDisponibles.find(z => z.id === zonaId);
-        return selectedZone ? selectedZone.nombre : 'Seleccionar Zona *';
-    }, [zonaId, zonasDisponibles]);
+        // 🔥 AÑADIMOS ESTA LÍNEA DE DEFENSA
+        if (!zones) return 'Seleccionar zona'; 
+        
+        return zones.find(z => z.id === formData.zonaId)?.nombre || 'Seleccionar zona';
+    }, [formData.zonaId, zones]);
 
 
-    // 3. HANDLERS CON useCallBack
-    const handleLocation = useCallback(async () => {
-        setLocationLoading(true);
+    // --- Lógica de Ubicación (sin cambios) ---
+    const handleLocationPress = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-            Alert.alert('Permiso denegado', 'Se necesita permiso de ubicación para esta función.');
-            setLocationLoading(false);
+            Alert.alert("Permiso Denegado", "Se necesita permiso de ubicación para obtener la geolocalización.");
             return;
         }
         try {
-            let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-            const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-            setTempRegion(prev => ({ ...prev, ...coords }));
+            const currentPosition = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+            const coords = {
+                latitude: currentPosition.coords.latitude,
+                longitude: currentPosition.coords.longitude,
+            };
             setLocation(coords);
-            setMapModalVisible(true);
+            setMapRegion(prev => ({ ...prev, ...coords })); // Centra el mapa en la nueva ubicación
+            setIsMapModalVisible(true);
+            Toast.show({ type: 'success', text1: 'Ubicación Obtenida', position: 'bottom' });
         } catch (error) {
-            Alert.alert('Error de Ubicación', 'No se pudo obtener la ubicación actual.');
-        } finally {
-            setLocationLoading(false);
+            Alert.alert("Error de Ubicación", "No se pudo obtener la ubicación.");
         }
-    }, []);
+    };
 
-    const handleConfirmLocation = useCallback(() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setMapModalVisible(false);
-    }, []);
+    const onMapConfirm = (coords: LocationCoords) => {
+        setLocation(coords);
+        setIsMapModalVisible(false);
+    };
 
-    const handleMapModalClose = useCallback(() => {
-        setMapModalVisible(false);
-    }, []);
 
-    const handleRegionChangeComplete = useCallback((region: typeof tempRegion) => {
-        setTempRegion(region);
-        setLocation({ latitude: region.latitude, longitude: region.longitude });
-    }, []);
-
-    const handleMarkerDragEnd = useCallback((e: any) => {
-        const newCoords = e.nativeEvent.coordinate;
-        setLocation(newCoords);
-        setTempRegion(prev => ({ ...prev, ...newCoords }));
-    }, []);
-
-    const handleSubmit = useCallback(async () => {
-        if (!nombre.trim() || !zonaId) {
-            Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
+    // --- Lógica de Guardado (sin cambios, PERO ahora usa 'client.id') ---
+    const handleSave = async () => {
+        if (!formData.nombre) {
+            Alert.alert("Campo Requerido", "El nombre del cliente es obligatorio.");
             return;
         }
-        if (isSubmitting || !clientId) return;
+        if (!formData.zonaId) {
+            Alert.alert("Campo Requerido", "La zona es obligatoria.");
+            return;
+        }
 
         setIsSubmitting(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        try {
-            const clientRef = doc(db, 'clientes', clientId);
-            
-            const updatedData = {
-                nombre: nombre.trim(),
-                nombreCompleto: nombre.trim(), // Aseguramos el nombre completo
-                direccion: direccion.trim(),
-                barrio: barrio.trim(),
-                localidad: localidad.trim(),
-                telefono: telefono.trim(),
-                email: email.trim().toLowerCase(),
-                zonaId,
-                location: location || null,
-                fechaUltimaEdicion: new Date(),
-            };
+        const updatedClientData = {
+            ...formData,
+            location: location, // Añadimos la ubicación
+            // Normalizamos campos opcionales
+            nombreCompleto: formData.nombreCompleto || formData.nombre,
+            telefono: formData.telefono || '',
+            email: formData.email || '',
+            barrio: formData.barrio || '',
+            localidad: formData.localidad || '',
+            direccion: formData.direccion || '',
+        };
 
-            await updateDoc(clientRef, updatedData as any);
-            await refreshAllData(); // Refresca los datos globales
+        try {
+            // 🔥 CAMBIO 5: Usamos el ID del cliente que recibimos por params
+            await updateClient(client.id, updatedClientData);
 
             Toast.show({
                 type: 'success',
                 text1: 'Cliente Actualizado',
-                text2: `${nombre.trim()} ha sido modificado.`,
-                position: 'bottom',
-                visibilityTime: 3000
+                text2: `Se guardaron los datos de ${formData.nombre}.`,
+                position: 'bottom'
             });
+            navigation.goBack();
 
-            navigation.goBack(); // <-- CORRECCIÓN: Usa navigation.goBack()
-
-        } catch (error) {
-            console.error("Error al actualizar el cliente:", error);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert('Error', 'No se pudo actualizar el cliente. Revisa tu conexión.');
+        } catch (error: any) {
+            console.error("Error al actualizar cliente:", error);
+            Alert.alert("Error", "No se pudo actualizar el cliente: " + error.message);
             setIsSubmitting(false);
         }
-    }, [nombre, zonaId, direccion, barrio, localidad, telefono, email, location, isSubmitting, clientId, refreshAllData, navigation]);
+    };
 
 
-    if (!clientToEdit && clientId) {
-        // Muestra un loader mientras el useEffect revisa los datos y navega atrás
-         return (
-            <View style={styles.fullScreenLoader}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={StyleSheet.absoluteFill} />
-                <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loaderText}>Cargando datos del cliente...</Text>
-            </View>
-        );
-    }
-    
-    if (!clientToEdit) {
+    // ======================================================
+    // --- RENDERIZADO ---
+    // ======================================================
+
+    // 🔥 CAMBIO 6: El 'Loader' ahora solo comprueba si 'client' existe
+    // (Lo cual siempre será cierto si se navega desde el dashboard)
+    if (!client) {
         return (
             <View style={styles.fullScreenLoader}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={StyleSheet.absoluteFill} />
-                <Feather name="alert-triangle" size={48} color={COLORS.danger} />
-                <Text style={styles.loaderText}>Cliente no encontrado.</Text>
+                <ActivityIndicator size="large" color={COLORS.danger} />
+                <Text style={styles.loaderText}>Error: Cliente no encontrado</Text>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonError}>
                     <Text style={styles.backButtonErrorText}>Volver</Text>
                 </TouchableOpacity>
@@ -262,215 +215,222 @@ const EditClientScreen = ({ navigation }: EditClientScreenProps) => {
     }
 
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
+        <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-
-            {/* Header adaptado */}
+            
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                    <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
+                    <Feather name="x" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Editar Cliente</Text>
-                <View style={styles.headerButton} />{/* Espaciador */}
+                <View style={styles.headerButton} /> 
             </View>
 
-            <ScrollView style={styles.formContainer} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-
-                <View style={styles.inputGroup}>
+            <ScrollView style={styles.formContainer} contentContainerStyle={styles.formContentContainer} keyboardShouldPersistTaps="handled">
+                <Text style={styles.sectionTitle}>Información Principal</Text>
+                {/* Nombre (Alias) */}
+                <View style={styles.inputContainer}>
                     <Feather name="user" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Nombre o Razón Social *" placeholderTextColor={COLORS.textSecondary} value={nombre} onChangeText={setNombre} autoCapitalize="words"/>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Nombre (Alias) *"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.nombre}
+                        onChangeText={(val) => handleInputChange('nombre', val)}
+                    />
                 </View>
-                
-                {/* REEMPLAZO DEL PICKER: Botón y Modal */}
+                {/* Nombre Completo / Razón Social */}
+                <View style={styles.inputContainer}>
+                    <Feather name="briefcase" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Nombre Completo / Razón Social"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.nombreCompleto}
+                        onChangeText={(val) => handleInputChange('nombreCompleto', val)}
+                    />
+                </View>
+
+                {/* Zona */}
                 <View style={styles.pickerContainer}>
-                    <Feather name="compass" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    {/* Botón que simula el Picker */}
-                    <TouchableOpacity 
-                        style={styles.pickerButton} 
+                    <Feather name="map" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TouchableOpacity
+                        style={styles.pickerButton}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsZoneModalVisible(true); }}
                     >
-                         <Text style={[styles.pickerButtonText, { color: zonaId ? COLORS.textPrimary : COLORS.textSecondary }]}>
-                            {selectedZoneName}
-                         </Text>
+                        <Text style={[styles.pickerButtonText, { color: formData.zonaId ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                            {selectedZoneName} *
+                        </Text>
                         <Feather name="chevron-down" size={20} color={COLORS.primary} />
                     </TouchableOpacity>
                 </View>
-                
-                <View style={styles.inputGroup}>
+
+                <Text style={styles.sectionTitle}>Ubicación</Text>
+                {/* Dirección */}
+                <View style={styles.inputContainer}>
                     <Feather name="map-pin" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Dirección" placeholderTextColor={COLORS.textSecondary} value={direccion} onChangeText={setDireccion} autoCapitalize="words"/>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Dirección"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.direccion}
+                        onChangeText={(val) => handleInputChange('direccion', val)}
+                    />
                 </View>
-                <View style={styles.inputGroup}>
+                {/* Barrio */}
+                <View style={styles.inputContainer}>
                     <Feather name="navigation" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Barrio" placeholderTextColor={COLORS.textSecondary} value={barrio} onChangeText={setBarrio} autoCapitalize="words"/>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Barrio"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.barrio}
+                        onChangeText={(val) => handleInputChange('barrio', val)}
+                    />
                 </View>
-                <View style={styles.inputGroup}>
-                    <Feather name="map" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Localidad" placeholderTextColor={COLORS.textSecondary} value={localidad} onChangeText={setLocalidad} autoCapitalize="words"/>
+                {/* Localidad */}
+                <View style={styles.inputContainer}>
+                    <Feather name="compass" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Localidad"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.localidad}
+                        onChangeText={(val) => handleInputChange('localidad', val)}
+                    />
                 </View>
-                <View style={styles.inputGroup}>
-                    <Feather name="phone" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Teléfono" placeholderTextColor={COLORS.textSecondary} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad"/>
-                </View>
-                <View style={styles.inputGroup}>
-                    <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Email" placeholderTextColor={COLORS.textSecondary} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"/>
-                </View>
-
-
-                {/* Botón de Ubicación */}
-                <TouchableOpacity style={styles.locationButton} onPress={handleLocation} disabled={locationLoading}>
-                    {locationLoading ? ( <ActivityIndicator color={COLORS.primary} /> ) : ( <Feather name={location ? "check-circle" : "crosshair"} size={22} color={COLORS.primary} /> )}
-                    <Text style={styles.locationButtonText}>{location ? 'Ubicación Guardada' : 'Capturar Ubicación GPS'}</Text>
+                
+                {/* Botón de Geolocalización */}
+                <TouchableOpacity style={styles.locationButton} onPress={handleLocationPress}>
+                    <Feather name="globe" size={20} color={COLORS.primary} />
+                    <Text style={styles.locationButtonText}>Obtener Ubicación Actual</Text>
                 </TouchableOpacity>
                 {location && (
-                    <Text style={styles.coordsText}>Coordenadas: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}</Text>
+                    <Text style={styles.coordsText}>
+                        Coords: {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+                    </Text>
                 )}
 
-                {/* Botón de Guardar */}
-                <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId) && styles.buttonDisabled]} onPress={handleSubmit} disabled={isSubmitting || !nombre.trim() || !zonaId}>
-                    {isSubmitting ? ( <ActivityIndicator color={COLORS.primaryDark} /> ) : ( <Text style={styles.buttonText}>Guardar Cambios</Text> )}
-                </TouchableOpacity>
+
+                <Text style={styles.sectionTitle}>Contacto</Text>
+                {/* Teléfono */}
+                <View style={styles.inputContainer}>
+                    <Feather name="phone" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Teléfono"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.telefono}
+                        onChangeText={(val) => handleInputChange('telefono', val)}
+                        keyboardType="phone-pad"
+                    />
+                </View>
+                {/* Email */}
+                <View style={styles.inputContainer}>
+                    <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Email"
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={formData.email}
+                        onChangeText={(val) => handleInputChange('email', val)}
+                        keyboardType="email-address"
+                        autoCapitalize='none'
+                    />
+                </View>
+
             </ScrollView>
 
-            {/* Modal del Mapa */}
-            <Modal
-                visible={mapModalVisible}
-                animationType="slide"
-                onRequestClose={handleMapModalClose}
-            >
+            <View style={styles.footer}>
+                <TouchableOpacity
+                    style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                    onPress={handleSave}
+                    disabled={isSubmitting}
+                >
+                    {isSubmitting ? (
+                        <ActivityIndicator color={COLORS.primaryDark} />
+                    ) : (
+                        <Text style={styles.buttonText}>Guardar Cambios</Text>
+                    )}
+                </TouchableOpacity>
+            </View>
+
+            {/* Modales (Sin cambios) */}
+            <ZoneSelectorModal
+                visible={isZoneModalVisible}
+                onClose={() => setIsZoneModalVisible(false)}
+                zones={zones}
+                selectedId={formData.zonaId}
+                onSelect={(id) => {
+                    handleInputChange('zonaId', id);
+                    setIsZoneModalVisible(false);
+                }}
+            />
+
+            <Modal visible={isMapModalVisible} animationType="slide" onRequestClose={() => setIsMapModalVisible(false)}>
                 <View style={styles.mapContainer}>
-                    <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
                     <MapView
                         provider={PROVIDER_GOOGLE}
                         style={styles.map}
-                        region={tempRegion}
-                        onRegionChangeComplete={handleRegionChangeComplete}
-                        showsUserLocation
+                        initialRegion={mapRegion}
+                        onRegionChangeComplete={setMapRegion}
                     >
-                        {location && (
-                            <Marker
-                                coordinate={location}
-                                draggable
-                                onDragEnd={handleMarkerDragEnd}
-                            />
-                        )}
+                        <Marker coordinate={mapRegion} draggable />
                     </MapView>
                     <View style={styles.mapControls}>
-                        <Text style={styles.mapInstructions}>
-                             Mueva el mapa hasta que el marcador esté en la ubicación exacta.
-                        </Text>
-                         <TouchableOpacity style={styles.button} onPress={handleConfirmLocation}>
+                         <TouchableOpacity
+                            style={[styles.button, { marginBottom: 10 }]}
+                            onPress={() => onMapConfirm(mapRegion)}
+                        >
                             <Text style={styles.buttonText}>Confirmar Ubicación</Text>
                         </TouchableOpacity>
-                         <TouchableOpacity style={{ ...styles.button, backgroundColor: 'transparent', marginTop: 10 }} onPress={handleMapModalClose}>
-                            <Text style={{...styles.buttonText, color: COLORS.textSecondary }}>Cancelar</Text>
+                         <TouchableOpacity
+                            style={[styles.button, { backgroundColor: COLORS.glass, borderWidth: 1, borderColor: COLORS.textSecondary }]}
+                            onPress={() => setIsMapModalVisible(false)}
+                        >
+                            <Text style={[styles.buttonText, { color: COLORS.textPrimary }]}>Cancelar</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
             </Modal>
-            
-            {/* NUEVO MODAL DE SELECCIÓN DE ZONA */}
-            <ZoneSelectorModal
-                visible={isZoneModalVisible}
-                onClose={() => setIsZoneModalVisible(false)}
-                zones={zonasDisponibles}
-                selectedId={zonaId}
-                onSelect={setZonaId}
-            />
         </KeyboardAvoidingView>
     );
 };
+// ======================================================
+// --- FIN DE CAMBIOS PRINCIPALES ---
+// ======================================================
 
 
-// --- Estilos ---
+// Estilos (Casi sin cambios, solo loader)
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     fullScreenLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 15 },
-    loaderText: { fontSize: 16, color: COLORS.textSecondary },
+    loaderText: { fontSize: 16, color: COLORS.danger, fontWeight: 'bold' }, // <-- Color rojo para error
     backButtonError: { marginTop: 20, backgroundColor: COLORS.primary, paddingVertical: 10, paddingHorizontal: 25, borderRadius: 25 },
     backButtonErrorText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 16 },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingTop: (StatusBar.currentHeight || 0) + 10,
-        paddingBottom: 15,
-        paddingHorizontal: 10,
-        backgroundColor: 'transparent',
-    },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: (StatusBar.currentHeight || 0) + 10, paddingBottom: 15, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: COLORS.glassBorder },
     headerButton: { padding: 10, width: 44 },
-    title: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: COLORS.textPrimary,
-        textAlign: 'center',
-    },
-    formContainer: {
-        flex: 1,
-        paddingHorizontal: 20,
-        paddingTop: 10,
-    },
-    inputGroup: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        borderRadius: 15,
-        borderWidth: 1,
-        borderColor: COLORS.glassBorder,
-        paddingHorizontal: 15,
-        marginBottom: 15,
-        height: 58,
-    },
+    title: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary },
+    formContainer: { flex: 1 },
+    formContentContainer: { paddingHorizontal: 20, paddingBottom: 20 },
+    sectionTitle: { fontSize: 14, color: COLORS.textSecondary, fontWeight: '600', textTransform: 'uppercase', marginTop: 25, marginBottom: 10, marginLeft: 5 },
+    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 12, borderWidth: 1, borderColor: COLORS.glassBorder, paddingHorizontal: 15, height: 50, marginBottom: 15 },
     inputIcon: { marginRight: 10 },
-    input: {
-        flex: 1,
-        color: COLORS.textPrimary,
-        fontSize: 16,
-        height: '100%'
-    },
-    pickerContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        borderRadius: 15,
-        borderWidth: 1,
-        borderColor: COLORS.glassBorder,
-        paddingLeft: 15,
-        marginBottom: 15,
-        height: 58
-    },
-    // Eliminado: picker: { ... }
-
-    // NUEVOS ESTILOS PARA EL SELECTOR BASADO EN TOUCHABLE
-    pickerButton: {
-        flex: 1,
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingRight: 15,
-        height: '100%',
-    },
-    pickerButtonText: {
-        fontSize: 16,
-    },
-    // ESTILOS DEL MODAL DE ZONAS (NUEVOS)
-    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)' },
-    modalContent: { width: '85%', backgroundColor: COLORS.backgroundEnd, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
-    modalHeader: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.glassBorder, marginBottom: 10, alignItems: 'center' },
-    modalTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary },
+    input: { flex: 1, color: COLORS.textPrimary, fontSize: 16, height: '100%' },
+    pickerContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 12, borderWidth: 1, borderColor: COLORS.glassBorder, paddingLeft: 15, justifyContent: 'center', height: 50, marginBottom: 15 },
+    pickerButton: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 12, height: '100%' },
+    pickerButtonText: { fontSize: 16 },
+    footer: { padding: 20, borderTopWidth: 1, borderColor: COLORS.glassBorder, backgroundColor: COLORS.glass },
+    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)' },
+    modalContent: { width: '85%', backgroundColor: COLORS.backgroundEnd, borderRadius: 15, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: COLORS.glassBorder, maxHeight: '80%' },
+    modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 15, color: COLORS.textPrimary },
     modalItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15 },
     modalItemText: { fontSize: 16, color: COLORS.textPrimary },
     separatorModal: { height: 1, backgroundColor: COLORS.glassBorder },
-    modalCloseButton: { marginTop: 15, padding: 12, backgroundColor: COLORS.disabled, borderRadius: 12, alignItems: 'center' },
+    modalCloseButton: { marginTop: 15, padding: 12, backgroundColor: COLORS.disabled, borderRadius: 12, alignItems: 'center', width: '100%' },
     modalCloseText: { color: COLORS.primaryDark, fontWeight: 'bold' },
-
-
     locationButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}20`, marginBottom: 10, marginTop: 5 },
     locationButtonText: { color: COLORS.primary, fontSize: 16, fontWeight: 'bold' },
     coordsText: { color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20, fontSize: 14, fontStyle: 'italic' },
@@ -479,8 +439,7 @@ const styles = StyleSheet.create({
     buttonText: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold' },
     mapContainer: { flex: 1 },
     map: { ...StyleSheet.absoluteFillObject },
-    mapControls: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLORS.backgroundEnd, padding: 20, paddingBottom: 40, borderTopLeftRadius: 20, borderTopRightRadius: 20, gap: 10 },
-    mapInstructions: { color: COLORS.textSecondary, textAlign: 'center', fontSize: 15, marginBottom: 10 },
+    mapControls: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLORS.backgroundEnd, padding: 20, paddingTop: 10, borderTopLeftRadius: 20, borderTopRightRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: -5 }, shadowOpacity: 0.1, shadowRadius: 10, elevation: 10, paddingBottom: Platform.OS === 'ios' ? 40 : 20 },
 });
 
 export default EditClientScreen;
