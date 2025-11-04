@@ -163,7 +163,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                 }
 
                 transaction.update(ventaRef, {
-                    estado: finalStatus === 'Pagada' ? 'Pagada' : 'Pendiente de Pago',
+                    estado: finalStatus,
                     items: finalItemsToDeliver,
                     totalVenta: newTotalVenta,
                     pagoEfectivo: efectivo,
