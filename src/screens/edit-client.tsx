@@ -14,13 +14,13 @@ import Toast from 'react-native-toast-message';
 import { EditClientScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Tipos --
-// 🔥 CAMBIO: Importamos 'Client' para usarlo en el estado
-import { useData, Zone } from '../../context/DataContext';
+// 🔥 CAMBIO: Importamos 'Client' y también 'Rubro'
+import { Rubro, useData, Zone } from '../../context/DataContext';
 import { COLORS } from '../../styles/theme';
 
 interface LocationCoords { latitude: number; longitude: number; }
 
-// --- Componente Modal Selector de Zona (Sin cambios) ---
+// --- Componente Modal Selector de Zona (Con corrección de bug) ---
 const ZoneSelectorModal = React.memo(({ visible, onClose, zones, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
@@ -28,13 +28,21 @@ const ZoneSelectorModal = React.memo(({ visible, onClose, zones, selectedId, onS
     selectedId: string | undefined;
     onSelect: (id: string) => void;
 }) => {
+    
+    // --- ¡NUEVO! Añadimos la opción por defecto para que coincida con add-client ---
+    const dataWithDefaultOption: Zone[] = useMemo(() => [
+        { id: '', nombre: 'Seleccionar Zona *' },
+        ...zones
+    ], [zones]);
+
     const renderItem = useCallback(({ item }: { item: Zone }) => (
         <TouchableOpacity
             style={styles.modalItem}
             onPress={() => { onSelect(item.id); onClose(); }}
         >
             <Text style={[styles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
-            {selectedId === selectedId && <Feather name="check" size={20} color={COLORS.primary} />}
+            {/* --- ¡CORRECCIÓN! Era selectedId === selectedId, ahora es item.id === selectedId --- */}
+            {item.id === selectedId && <Feather name="check" size={20} color={COLORS.primary} />}
         </TouchableOpacity>
     ), [selectedId, onSelect, onClose]);
 
@@ -44,8 +52,8 @@ const ZoneSelectorModal = React.memo(({ visible, onClose, zones, selectedId, onS
                 <View style={[styles.modalContent, { maxHeight: '80%' }]}>
                     <Text style={styles.modalTitle}>Seleccionar Zona</Text>
                     <FlatList
-                        data={zones}
-                        keyExtractor={(item) => item.id}
+                        data={dataWithDefaultOption} // Usamos la data con la opción por defecto
+                        keyExtractor={(item) => item.id || 'default'}
                         renderItem={renderItem}
                         ItemSeparatorComponent={() => <View style={styles.separatorModal} />}
                         style={{ width: '100%' }}
@@ -61,17 +69,64 @@ const ZoneSelectorModal = React.memo(({ visible, onClose, zones, selectedId, onS
 // --- Fin Modal Zona ---
 
 
+// --- ¡NUEVO! Componente Modal Selector de Rubro ---
+const RubroSelectorModal = React.memo(({ visible, onClose, rubros, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    rubros: Rubro[]; // <-- Tipo Rubro
+    selectedId: string | undefined;
+    onSelect: (id: string) => void;
+}) => {
+    
+    const dataWithDefaultOption: Rubro[] = useMemo(() => [
+        { id: '', nombre: 'Seleccionar Rubro (Opcional)', metaSemanal: 0 },
+        ...rubros
+    ], [rubros]);
+
+    const renderItem = useCallback(({ item }: { item: Rubro }) => (
+        <TouchableOpacity
+            style={styles.modalItem}
+            onPress={() => { onSelect(item.id); onClose(); }}
+        >
+            <Text style={[styles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
+            {/* --- ¡CORRECCIÓN! Aplicada aquí también --- */}
+            {item.id === selectedId && <Feather name="check" size={20} color={COLORS.primary} />}
+        </TouchableOpacity>
+    ), [selectedId, onSelect, onClose]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+            <View style={styles.modalOverlay}>
+                <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+                    <Text style={styles.modalTitle}>Seleccionar Rubro</Text>
+                    <FlatList
+                        data={dataWithDefaultOption}
+                        keyExtractor={(item) => item.id || 'default'}
+                        renderItem={renderItem}
+                        ItemSeparatorComponent={() => <View style={styles.separatorModal} />}
+                        style={{ width: '100%' }}
+                    />
+                    <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
+                        <Text style={styles.modalCloseText}>Cerrar</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+});
+// --- Fin Modal Rubro ---
+
+
 // ======================================================
 // --- INICIO DE CAMBIOS PRINCIPALES ---
 // ======================================================
 const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
 
     // 🔥 CAMBIO 1: Obtenemos el cliente DIRECTAMENTE de los parámetros
-    // (Tal como lo definió AppNavigator y lo envió client-dashboard)
     const { client } = route.params;
 
-    // Obtenemos el contexto (solo para 'zones' y 'updateClient')
-    const { zones, updateClient } = useData();
+    // 🔥 CAMBIO: Obtenemos 'rubros' del contexto
+    const { zones, rubros, updateClient } = useData();
 
     // 🔥 CAMBIO 2: Inicializamos el estado del formulario CON los datos del cliente
     const [formData, setFormData] = useState({
@@ -83,12 +138,16 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
         barrio: client?.barrio || '',
         localidad: client?.localidad || '',
         zonaId: client?.zonaId || '',
+        // --- ¡NUEVO! ---
+        rubroId: client?.rubroId || '', // Añadimos rubroId al estado
     });
 
-    // Estados para UI (sin cambios)
+    // Estados para UI
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false);
     const [isMapModalVisible, setIsMapModalVisible] = useState(false);
+    // --- ¡NUEVO! ---
+    const [isRubroModalVisible, setIsRubroModalVisible] = useState(false); // Estado para el modal de rubro
     
     // 🔥 CAMBIO 3: Inicializamos las coordenadas CON las del cliente
     const [location, setLocation] = useState<LocationCoords | null>(
@@ -102,11 +161,8 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     }));
 
 
-    // 🔥 CAMBIO 4: Eliminamos los dos 'useEffect'
-    // Ya no necesitamos el useEffect para "buscar" al cliente (ya lo tenemos)
-    // Ya no necesitamos el useEffect para "popular" el formData (lo hacemos en useState)
+    // 🔥 CAMBIO 4: Eliminamos los dos 'useEffect' (ya no son necesarios)
     
-
     // --- Lógica de UI (sin cambios) ---
     const handleInputChange = (field: keyof typeof formData, value: string) => {
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -114,10 +170,23 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
 
     const selectedZoneName = useMemo(() => {
         // 🔥 AÑADIMOS ESTA LÍNEA DE DEFENSA
-        if (!zones) return 'Seleccionar zona'; 
+        if (!zones) return 'Seleccionar zona *';
         
-        return zones.find(z => z.id === formData.zonaId)?.nombre || 'Seleccionar zona';
+        return zones.find(z => z.id === formData.zonaId)?.nombre || 'Seleccionar zona *';
     }, [formData.zonaId, zones]);
+
+    // --- ¡NUEVO! Lógica para Rubros ---
+    const rubrosOrdenados = useMemo(() => {
+        const safeRubros = Array.isArray(rubros) ? rubros : [];
+        return [...safeRubros].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    }, [rubros]);
+
+    const selectedRubroName = useMemo(() => {
+        const safeRubros = Array.isArray(rubros) ? rubros : [];
+        const selectedRubro = safeRubros.find(r => r.id === formData.rubroId);
+        return selectedRubro ? selectedRubro.nombre : 'Seleccionar Rubro (Opcional)';
+    }, [formData.rubroId, rubros]);
+    // --- FIN NUEVA LÓGICA ---
 
 
     // --- Lógica de Ubicación (sin cambios) ---
@@ -149,7 +218,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     };
 
 
-    // --- Lógica de Guardado (sin cambios, PERO ahora usa 'client.id') ---
+    // --- Lógica de Guardado ---
     const handleSave = async () => {
         if (!formData.nombre) {
             Alert.alert("Campo Requerido", "El nombre del cliente es obligatorio.");
@@ -164,7 +233,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         const updatedClientData = {
-            ...formData,
+            ...formData, // Esto ya incluye nombre, zonaId, rubroId, etc.
             location: location, // Añadimos la ubicación
             // Normalizamos campos opcionales
             nombreCompleto: formData.nombreCompleto || formData.nombre,
@@ -173,6 +242,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
             barrio: formData.barrio || '',
             localidad: formData.localidad || '',
             direccion: formData.direccion || '',
+            rubroId: formData.rubroId || '', // Aseguramos que rubroId esté
         };
 
         try {
@@ -200,7 +270,6 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     // ======================================================
 
     // 🔥 CAMBIO 6: El 'Loader' ahora solo comprueba si 'client' existe
-    // (Lo cual siempre será cierto si se navega desde el dashboard)
     if (!client) {
         return (
             <View style={styles.fullScreenLoader}>
@@ -224,7 +293,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                     <Feather name="x" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Editar Cliente</Text>
-                <View style={styles.headerButton} /> 
+                <View style={styles.headerButton} />
             </View>
 
             <ScrollView style={styles.formContainer} contentContainerStyle={styles.formContentContainer} keyboardShouldPersistTaps="handled">
@@ -260,11 +329,26 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsZoneModalVisible(true); }}
                     >
                         <Text style={[styles.pickerButtonText, { color: formData.zonaId ? COLORS.textPrimary : COLORS.textSecondary }]}>
-                            {selectedZoneName} *
+                            {selectedZoneName}
                         </Text>
                         <Feather name="chevron-down" size={20} color={COLORS.primary} />
                     </TouchableOpacity>
                 </View>
+                
+                {/* --- ¡NUEVO! Rubro --- */}
+                <View style={styles.pickerContainer}>
+                    <Feather name="briefcase" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TouchableOpacity
+                        style={styles.pickerButton}
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsRubroModalVisible(true); }}
+                    >
+                        <Text style={[styles.pickerButtonText, { color: formData.rubroId ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                            {selectedRubroName}
+                        </Text>
+                        <Feather name="chevron-down" size={20} color={COLORS.primary} />
+                    </TouchableOpacity>
+                </View>
+                {/* --- FIN NUEVO RUBRO --- */}
 
                 <Text style={styles.sectionTitle}>Ubicación</Text>
                 {/* Dirección */}
@@ -300,11 +384,13 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                         onChangeText={(val) => handleInputChange('localidad', val)}
                     />
                 </View>
-                
+
                 {/* Botón de Geolocalización */}
                 <TouchableOpacity style={styles.locationButton} onPress={handleLocationPress}>
                     <Feather name="globe" size={20} color={COLORS.primary} />
-                    <Text style={styles.locationButtonText}>Obtener Ubicación Actual</Text>
+                    <Text style={styles.locationButtonText}>
+                        {location ? "Actualizar Ubicación" : "Obtener Ubicación Actual"}
+                    </Text>
                 </TouchableOpacity>
                 {location && (
                     <Text style={styles.coordsText}>
@@ -356,7 +442,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                 </TouchableOpacity>
             </View>
 
-            {/* Modales (Sin cambios) */}
+            {/* Modales */}
             <ZoneSelectorModal
                 visible={isZoneModalVisible}
                 onClose={() => setIsZoneModalVisible(false)}
@@ -367,6 +453,19 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                     setIsZoneModalVisible(false);
                 }}
             />
+            
+            {/* --- ¡NUEVO! Modal de Rubro --- */}
+            <RubroSelectorModal
+                visible={isRubroModalVisible}
+                onClose={() => setIsRubroModalVisible(false)}
+                rubros={rubrosOrdenados}
+                selectedId={formData.rubroId}
+                onSelect={(id) => {
+                    handleInputChange('rubroId', id);
+                    setIsRubroModalVisible(false);
+                }}
+            />
+            {/* --- FIN NUEVO MODAL --- */}
 
             <Modal visible={isMapModalVisible} animationType="slide" onRequestClose={() => setIsMapModalVisible(false)}>
                 <View style={styles.mapContainer}>
@@ -379,13 +478,13 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                         <Marker coordinate={mapRegion} draggable />
                     </MapView>
                     <View style={styles.mapControls}>
-                         <TouchableOpacity
+                        <TouchableOpacity
                             style={[styles.button, { marginBottom: 10 }]}
                             onPress={() => onMapConfirm(mapRegion)}
                         >
                             <Text style={styles.buttonText}>Confirmar Ubicación</Text>
                         </TouchableOpacity>
-                         <TouchableOpacity
+                        <TouchableOpacity
                             style={[styles.button, { backgroundColor: COLORS.glass, borderWidth: 1, borderColor: COLORS.textSecondary }]}
                             onPress={() => setIsMapModalVisible(false)}
                         >
@@ -402,7 +501,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
 // ======================================================
 
 
-// Estilos (Casi sin cambios, solo loader)
+// Estilos
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },

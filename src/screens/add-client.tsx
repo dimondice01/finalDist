@@ -13,6 +13,7 @@ import {
     Alert,
     FlatList // AÑADIDO: FlatList
     ,
+
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -32,26 +33,27 @@ import { AddClientScreenProps } from '../navigation/AppNavigator'; // Ajusta la 
 
 // --- Contexto, DB, Tipos ---
 // Asegúrate que las rutas sean correctas
-import { Zone, useData } from '../../context/DataContext';
+// --- ¡ACTUALIZADO! Importamos Rubro ---
+import { Rubro, useData, Zone } from '../../context/DataContext';
 import { auth, db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 interface LocationCoords { latitude: number; longitude: number; }
 
 // --- Componente Modal Selector de Zona (REEMPLAZO DEL PICKER) ---
-const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: { 
-    visible: boolean; 
-    onClose: () => void; 
-    zones: Zone[]; 
-    selectedId: string; 
-    onSelect: (id: string) => void; 
+const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    zones: Zone[];
+    selectedId: string;
+    onSelect: (id: string) => void;
 }) => {
     // Agregamos la opción por defecto (Seleccionar Zona *)
     const dataWithDefaultOption: Zone[] = useMemo(() => [
         { id: '', nombre: 'Seleccionar Zona *' },
         ...zones
     ], [zones]);
-    
+
     const renderItem = useCallback(({ item }: { item: Zone }) => (
         <TouchableOpacity
             style={styles.modalItem}
@@ -67,7 +69,7 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
             <View style={styles.modalOverlay}>
                 <View style={[styles.modalContent, { maxHeight: '80%', padding: 0 }]}>
                     <View style={styles.modalHeader}>
-                         <Text style={styles.modalTitle}>Seleccionar Zona *</Text>
+                        <Text style={styles.modalTitle}>Seleccionar Zona *</Text>
                     </View>
                     <FlatList
                         data={dataWithDefaultOption}
@@ -87,6 +89,58 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
 };
 // --- FIN Componente Modal Selector de Zona ---
 
+
+// --- ¡NUEVO! Componente Modal Selector de Rubro ---
+// (Copiado y adaptado desde ZoneSelectorModal)
+const RubroSelectorModal = ({ visible, onClose, rubros, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    rubros: Rubro[]; // <-- Tipo Rubro
+    selectedId: string;
+    onSelect: (id: string) => void;
+}) => {
+    // Opción por defecto (Opcional, no requerido)
+    const dataWithDefaultOption: Rubro[] = useMemo(() => [
+        { id: '', nombre: 'Seleccionar Rubro (Opcional)', metaSemanal: 0 }, // <-- Tipo Rubro
+        ...rubros
+    ], [rubros]);
+
+    const renderItem = useCallback(({ item }: { item: Rubro }) => ( // <-- Tipo Rubro
+        <TouchableOpacity
+            style={styles.modalItem}
+            onPress={() => { onSelect(item.id); onClose(); }}
+        >
+            <Text style={[styles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
+            {selectedId === item.id && <Feather name="check" size={20} color={COLORS.primary} />}
+        </TouchableOpacity>
+    ), [selectedId, onSelect, onClose]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+            <View style={styles.modalOverlay}>
+                <View style={[styles.modalContent, { maxHeight: '80%', padding: 0 }]}>
+                    <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>Seleccionar Rubro</Text>
+                    </View>
+                    <FlatList
+                        data={dataWithDefaultOption}
+                        keyExtractor={(item) => item.id || 'default'}
+                        renderItem={renderItem}
+                        ItemSeparatorComponent={() => <View style={styles.separatorModal} />}
+                        style={{ flexGrow: 0, width: '100%' }}
+                        contentContainerStyle={{ paddingHorizontal: 20 }}
+                    />
+                    <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
+                        <Text style={styles.modalCloseText}>Cerrar</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+};
+// --- FIN Componente Modal Selector de Rubro ---
+
+
 // Usamos el tipo importado para las props
 const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [nombre, setNombre] = useState('');
@@ -96,10 +150,14 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [telefono, setTelefono] = useState('');
     const [email, setEmail] = useState('');
     const [zonaId, setZonaId] = useState('');
+    // --- ¡NUEVO! Estado para Rubro ---
+    const [rubroId, setRubroId] = useState('');
+
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const { availableZones, vendors, refreshAllData } = useData();
+    // --- ¡ACTUALIZADO! Obtenemos rubros ---
+    const { availableZones, vendors, refreshAllData, rubros } = useData();
     const currentUser = auth.currentUser;
 
     const [mapModalVisible, setMapModalVisible] = useState(false);
@@ -111,6 +169,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     });
     const [locationLoading, setLocationLoading] = useState(false);
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); // NUEVO ESTADO para el modal de zona
+    // --- ¡NUEVO! Estado para modal de Rubro ---
+    const [isRubroModalVisible, setIsRubroModalVisible] = useState(false);
 
     // Lógica para obtener vendedor y zonas (sin cambios)
     const currentVendedor = useMemo(() => {
@@ -126,12 +186,27 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             .filter(z => z && z.id && zonaIds.includes(z.id)) // Añadido chequeo z && z.id
             .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     }, [currentVendedor, availableZones]);
-    
+
+    // --- ¡NUEVO! Lógica para Rubros ---
+    // Simplemente ordenamos los rubros por nombre
+    const rubrosOrdenados = useMemo(() => {
+        // Aseguramos que 'rubros' sea un array antes de hacer spread
+        const safeRubros = Array.isArray(rubros) ? rubros : [];
+        return [...safeRubros].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    }, [rubros]);
+
     // Búsqueda del nombre de la zona seleccionada para mostrar en el botón
     const selectedZoneName = useMemo(() => {
         const selectedZone = zonasDelVendedor.find(z => z.id === zonaId);
         return selectedZone ? selectedZone.nombre : 'Seleccionar Zona *';
     }, [zonaId, zonasDelVendedor]);
+
+    // --- ¡NUEVO! Búsqueda del nombre del rubro seleccionado ---
+    const selectedRubroName = useMemo(() => {
+        const safeRubros = Array.isArray(rubros) ? rubros : [];
+        const selectedRubro = safeRubros.find(r => r.id === rubroId);
+        return selectedRubro ? selectedRubro.nombre : 'Seleccionar Rubro (Opcional)';
+    }, [rubroId, rubros]);
 
 
     // handleLocation con useCallback
@@ -165,6 +240,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     }, []);
 
     // handleSubmit con useCallback y navigation.goBack()
+    // --- ¡ACTUALIZADO! handleSubmit ---
     const handleSubmit = useCallback(async () => {
         if (!nombre.trim() || !zonaId) {
             Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
@@ -185,6 +261,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 telefono: telefono.trim(),
                 email: email.trim().toLowerCase(),
                 zonaId,
+                // --- ¡NUEVO! Añadimos rubroId ---
+                rubroId: rubroId || '', // Guardamos el ID o un string vacío si es opcional
                 location: location || null,
                 vendedorAsignadoId: currentUser?.uid,
                 fechaCreacion: new Date(), // Firestore convertirá esto a Timestamp
@@ -210,7 +288,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             setIsSubmitting(false); // <-- Asegura resetear en caso de error
         }
         // No necesitamos finally aquí porque la navegación desmonta el componente
-    }, [nombre, zonaId, direccion, barrio, localidad, telefono, email, location, currentUser, isSubmitting, refreshAllData, navigation]);
+    // --- ¡ACTUALIZADO! Añadimos rubroId a las dependencias ---
+    }, [nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, location, currentUser, isSubmitting, refreshAllData, navigation]);
 
     // Función para manejar el cierre del modal del mapa
     const handleMapModalClose = useCallback(() => {
@@ -256,53 +335,67 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
 
                 <View style={styles.inputGroup}>
                     <Feather name="user" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Nombre o Razón Social *" placeholderTextColor={COLORS.textSecondary} value={nombre} onChangeText={setNombre} autoCapitalize="words"/>
+                    <TextInput style={styles.input} placeholder="Nombre o Razón Social *" placeholderTextColor={COLORS.textSecondary} value={nombre} onChangeText={setNombre} autoCapitalize="words" />
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="map-pin" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Dirección" placeholderTextColor={COLORS.textSecondary} value={direccion} onChangeText={setDireccion} autoCapitalize="words"/>
+                    <TextInput style={styles.input} placeholder="Dirección" placeholderTextColor={COLORS.textSecondary} value={direccion} onChangeText={setDireccion} autoCapitalize="words" />
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="navigation" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Barrio" placeholderTextColor={COLORS.textSecondary} value={barrio} onChangeText={setBarrio} autoCapitalize="words"/>
+                    <TextInput style={styles.input} placeholder="Barrio" placeholderTextColor={COLORS.textSecondary} value={barrio} onChangeText={setBarrio} autoCapitalize="words" />
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="map" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Localidad" placeholderTextColor={COLORS.textSecondary} value={localidad} onChangeText={setLocalidad} autoCapitalize="words"/>
+                    <TextInput style={styles.input} placeholder="Localidad" placeholderTextColor={COLORS.textSecondary} value={localidad} onChangeText={setLocalidad} autoCapitalize="words" />
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="phone" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Teléfono" placeholderTextColor={COLORS.textSecondary} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad"/>
+                    <TextInput style={styles.input} placeholder="Teléfono" placeholderTextColor={COLORS.textSecondary} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" />
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Email" placeholderTextColor={COLORS.textSecondary} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"/>
+                    <TextInput style={styles.input} placeholder="Email" placeholderTextColor={COLORS.textSecondary} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
                 </View>
 
                 {/* REEMPLAZO DEL PICKER: Botón y Modal */}
                 <View style={styles.pickerContainer}>
                     <Feather name="compass" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
                     {/* Botón que simula el Picker */}
-                    <TouchableOpacity 
-                        style={styles.pickerButton} 
+                    <TouchableOpacity
+                        style={styles.pickerButton}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsZoneModalVisible(true); }}
                     >
-                         <Text style={[styles.pickerButtonText, { color: zonaId ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                        <Text style={[styles.pickerButtonText, { color: zonaId ? COLORS.textPrimary : COLORS.textSecondary }]}>
                             {selectedZoneName}
-                         </Text>
+                        </Text>
+                        <Feather name="chevron-down" size={20} color={COLORS.primary} />
+                    </TouchableOpacity>
+                </View>
+
+                {/* --- ¡NUEVO! Selector de Rubro --- */}
+                <View style={styles.pickerContainer}>
+                    <Feather name="briefcase" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TouchableOpacity
+                        style={styles.pickerButton}
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsRubroModalVisible(true); }}
+                    >
+                        <Text style={[styles.pickerButtonText, { color: rubroId ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                            {selectedRubroName}
+                        </Text>
                         <Feather name="chevron-down" size={20} color={COLORS.primary} />
                     </TouchableOpacity>
                 </View>
 
                 {/* Botón de Ubicación */}
                 <TouchableOpacity style={styles.locationButton} onPress={handleLocation} disabled={locationLoading}>
-                    {locationLoading ? ( <ActivityIndicator color={COLORS.primary} /> ) : ( <Feather name={location ? "check-circle" : "crosshair"} size={22} color={COLORS.primary} /> )}
+                    {locationLoading ? (<ActivityIndicator color={COLORS.primary} />) : (<Feather name={location ? "check-circle" : "crosshair"} size={22} color={COLORS.primary} />)}
                     <Text style={styles.locationButtonText}>{location ? 'Ubicación Guardada' : 'Capturar Ubicación GPS'}</Text>
                 </TouchableOpacity>
 
                 {/* Botón de Guardar */}
                 <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId) && styles.buttonDisabled]} onPress={handleSubmit} disabled={isSubmitting || !nombre.trim() || !zonaId}>
-                    {isSubmitting ? ( <ActivityIndicator color={COLORS.primaryDark} /> ) : ( <Text style={styles.buttonText}>Guardar Cliente</Text> )}
+                    {isSubmitting ? (<ActivityIndicator color={COLORS.primaryDark} />) : (<Text style={styles.buttonText}>Guardar Cliente</Text>)}
                 </TouchableOpacity>
             </ScrollView>
 
@@ -322,7 +415,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                         // Actualizar region y location al mover el mapa
                         onRegionChangeComplete={handleRegionChangeComplete}
                         showsUserLocation
-                        // followsUserLocation // Podría ser conflictivo con el drag
+                    // followsUserLocation // Podría ser conflictivo con el drag
                     >
                         {/* Usar location para la posición del marcador */}
                         {location && (
@@ -340,25 +433,34 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     <View style={styles.mapControls}>
                         <Text style={styles.mapInstructions}>
                             {/* Ajusta instrucciones si usas marcador central */}
-                             Mueva el mapa hasta que el marcador esté en la ubicación exacta.
+                            Mueva el mapa hasta que el marcador esté en la ubicación exacta.
                         </Text>
-                         <TouchableOpacity style={styles.button} onPress={handleConfirmLocation}>
+                        <TouchableOpacity style={styles.button} onPress={handleConfirmLocation}>
                             <Text style={styles.buttonText}>Confirmar Ubicación</Text>
                         </TouchableOpacity>
-                         <TouchableOpacity style={{ ...styles.button, backgroundColor: 'transparent', marginTop: 10 }} onPress={handleMapModalClose}>
-                            <Text style={{...styles.buttonText, color: COLORS.textSecondary }}>Cancelar</Text>
+                        <TouchableOpacity style={{ ...styles.button, backgroundColor: 'transparent', marginTop: 10 }} onPress={handleMapModalClose}>
+                            <Text style={{ ...styles.buttonText, color: COLORS.textSecondary }}>Cancelar</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
             </Modal>
 
-            {/* NUEVO MODAL DE SELECCIÓN DE ZONA */}
+            {/* MODAL DE SELECCIÓN DE ZONA */}
             <ZoneSelectorModal
                 visible={isZoneModalVisible}
                 onClose={() => setIsZoneModalVisible(false)}
                 zones={zonasDelVendedor}
                 selectedId={zonaId}
                 onSelect={setZonaId}
+            />
+
+            {/* --- ¡NUEVO! Modal de Selección de Rubro --- */}
+            <RubroSelectorModal
+                visible={isRubroModalVisible}
+                onClose={() => setIsRubroModalVisible(false)}
+                rubros={rubrosOrdenados}
+                selectedId={rubroId}
+                onSelect={setRubroId}
             />
         </KeyboardAvoidingView>
     );
@@ -383,7 +485,7 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: COLORS.textPrimary,
         textAlign: 'center',
-         // Quitamos flex: 1 para que el space-between funcione mejor con los botones de ancho fijo
+        // Quitamos flex: 1 para que el space-between funcione mejor con los botones de ancho fijo
     },
     formContainer: {
         flex: 1,

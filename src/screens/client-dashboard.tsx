@@ -1,6 +1,6 @@
 // src/screens/ClientDashboardScreen.tsx
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from 'expo-linear-gradient'; // <-- ¡AÑADIDO!
 // Quitamos import { router, useLocalSearchParams } from 'expo-router';
 import { deleteDoc, doc } from 'firebase/firestore';
 import React, { memo, useCallback, useMemo, useState } from 'react';
@@ -25,7 +25,8 @@ import Toast from 'react-native-toast-message';
 import { ClientDashboardScreenProps } from '../navigation/AppNavigator'; // <-- Importamos los tipos
 
 // --- Contexto, DB, Tipos, Estilos ---
-import { Client, Sale, useData } from '../../context/DataContext'; // Asegura la ruta
+// --- ¡CAMBIO! Importamos 'Rubro' ---
+import { Client, Rubro, Sale, useData } from '../../context/DataContext'; // Asegura la ruta
 import { db } from '../../db/firebase-service'; // Asegura la ruta
 import { COLORS } from '../../styles/theme'; // Asegura la ruta
 
@@ -34,6 +35,17 @@ const formatCurrency = (value?: number): string => {
     const numericValue = typeof value === 'number' && !isNaN(value) ? value : 0;
     return `$${numericValue.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
+
+// --- ¡NUEVO! Función helper para obtener el Lunes de esta semana ---
+const getMonday = (date: Date): Date => {
+    const d = new Date(date);
+    const day = d.getDay(); // Domingo = 0, Lunes = 1, ...
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Ajusta para Lunes
+    const monday = new Date(d.setDate(diff));
+    monday.setHours(0, 0, 0, 0); // Setea a medianoche
+    return monday;
+};
+// --- FIN NUEVO HELPER ---
 
 const getStatusColor = (estado?: Sale['estado']): string => {
     switch (estado) {
@@ -81,6 +93,43 @@ const formatDate = (dateInput: Sale['fecha'] | undefined): string => {
         return "Error fecha";
     }
 };
+
+// --- ¡NUEVO! Widget de Meta Semanal ---
+const WeeklyGoalWidget = memo(({ goalInfo }: {
+    goalInfo: {
+        rubro: Rubro | undefined;
+        totalSold: number;
+        percentage: number;
+    }
+}) => {
+    const { rubro, totalSold, percentage } = goalInfo;
+
+    // Si el cliente no tiene rubro, o la meta es 0, no mostramos nada.
+    if (!rubro || !rubro.metaSemanal || rubro.metaSemanal <= 0) {
+        return null;
+    }
+
+    return (
+        <View style={styles.goalCard}>
+            <Text style={styles.goalTitle}>Meta Semanal ({rubro.nombre})</Text>
+            
+            <View style={styles.goalAmountContainer}>
+                <Text style={styles.goalAmountSold}>{formatCurrency(totalSold)}</Text>
+                <Text style={styles.goalAmountTarget}>/ {formatCurrency(rubro.metaSemanal)}</Text>
+            </View>
+
+            <View style={styles.progressBarBackground}>
+                <LinearGradient
+                    colors={[COLORS.primary, COLORS.secondary || COLORS.primary]} // Agregamos fallback por si accent no existe
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={[styles.progressBarFill, { width: `${percentage}%` }]}
+                />
+            </View>
+        </View>
+    );
+});
+// --- FIN NUEVO WIDGET ---
 
 // --- Componente Memoizado para SaleCard (CORREGIDO) ---
 const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
@@ -180,7 +229,8 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     // --- Obtener parámetros de route.params ---
     const { clientId } = route.params; 
     
-    const { clients, sales, isLoading: isDataLoading, refreshAllData } = useData();
+    // --- ¡CAMBIO! Obtenemos 'rubros' ---
+    const { clients, sales, rubros, isLoading: isDataLoading, refreshAllData } = useData();
     const [isDeleting, setIsDeleting] = useState(false);
 
     // Variable 'client' (con 't') es la correcta en este archivo
@@ -211,6 +261,55 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
             .filter(s => s && s.id && s.clienteId === clientId && getTimestamp(s) > 0)
             .sort((a, b) => getTimestamp(b) - getTimestamp(a));
     }, [sales, clientId]);
+
+    // --- ¡NUEVA LÓGICA! Cálculo de la Meta Semanal ---
+    const weeklyGoalInfo = useMemo(() => {
+        // 1. Encontrar el rubro del cliente
+        const clientRubro = (Array.isArray(rubros) ? rubros : []).find(r => r.id === client?.rubroId); // Usamos client?.rubroId
+        
+        if (!clientRubro) {
+            return { rubro: undefined, totalSold: 0, percentage: 0 };
+        }
+
+        // 2. Obtener la meta
+        const metaSemanal = clientRubro.metaSemanal || 0;
+
+        // 3. Calcular las ventas de esta semana (desde el lunes a las 00:00)
+        const lastMonday = getMonday(new Date());
+        
+        const salesThisWeek = clientSales.filter(sale => {
+            // No contar ventas anuladas
+            if (sale.estado === 'Anulada') return false;
+            
+            // Convertir la fecha de la venta (Date o Timestamp) a Date
+            let saleDate: Date;
+            if (sale.fecha instanceof Date) {
+                saleDate = sale.fecha;
+            } else if (sale.fecha && typeof (sale.fecha as { seconds: number }).seconds === 'number') {
+                saleDate = new Date((sale.fecha as { seconds: number }).seconds * 1000);
+            } else {
+                return false; // Si no tiene fecha válida, no la contamos
+            }
+            
+            // Comparar
+            return saleDate >= lastMonday;
+        });
+
+        // 4. Sumar el total vendido
+        const totalSoldThisWeek = salesThisWeek.reduce((sum, sale) => sum + sale.totalVenta, 0);
+
+        // 5. Calcular porcentaje
+        const percentage = (metaSemanal > 0) ? (totalSoldThisWeek / metaSemanal) * 100 : 0;
+        
+        return {
+            rubro: clientRubro,
+            totalSold: totalSoldThisWeek,
+            // Aseguramos que el porcentaje no pase de 100 (para la barra)
+            percentage: Math.min(100, Math.max(0, percentage)), 
+        };
+
+    }, [client?.rubroId, rubros, clientSales]); // Usamos client?.rubroId
+    // --- FIN NUEVA LÓGICA ---
 
 
     const handleDeleteSale = useCallback(async (saleId: string) => {
@@ -275,17 +374,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         });
     }, [navigation, client]);
     
-    // --- NUEVO: Handler para Reposición ---
-  /*  const navigateToNewReposicion = useCallback(() => {
-        if (!client) return; 
-        navigation.navigate('CreateSale', { 
-            cliente: client, 
-            clientId: client.id,
-            isReposicion: true, 
-            isDevolucion: false 
-        });
-    }, [navigation, client])*/
-
     // --- NUEVO: Handler para Devolución ---
     const navigateToNewDevolucion = useCallback(() => {
         if (!client) return; 
@@ -414,6 +502,10 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             )}
                         </View>
 
+                        {/* --- ¡AQUÍ ESTÁ EL WIDGET! --- */}
+                        <WeeklyGoalWidget goalInfo={weeklyGoalInfo} />
+                        {/* --- FIN WIDGET --- */}
+
                         {/* --- CONTENEDOR DE ACCIONES MODIFICADO --- */}
                         <View style={styles.actionsContainer}>
                             <TouchableOpacity
@@ -426,7 +518,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             
                             {/* Fila secundaria con 2 botones (Reposición y Devolución) */}
                             <View style={styles.secondaryActionsRow}>
-                               
+                                
                                 <TouchableOpacity
                                     style={[styles.secondaryActionButton, { flex: 1, backgroundColor: `${COLORS.warning}30` }]}
                                     onPress={navigateToNewDevolucion}
@@ -513,6 +605,50 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
 
+    // --- ¡NUEVOS ESTILOS! ---
+    goalCard: {
+        backgroundColor: COLORS.glass,
+        marginHorizontal: 20,
+        borderRadius: 15,
+        borderWidth: 1,
+        borderColor: COLORS.glassBorder,
+        padding: 15,
+        marginBottom: 25, // Separación
+    },
+    goalTitle: {
+        color: COLORS.textSecondary,
+        fontSize: 14,
+        fontWeight: '500',
+        marginBottom: 8,
+    },
+    goalAmountContainer: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        marginBottom: 10,
+    },
+    goalAmountSold: {
+        color: COLORS.textPrimary,
+        fontSize: 22,
+        fontWeight: 'bold',
+    },
+    goalAmountTarget: {
+        color: COLORS.textSecondary,
+        fontSize: 16,
+        fontWeight: '500',
+        marginLeft: 5,
+        marginBottom: 2, // Alinear con la base del monto vendido
+    },
+    progressBarBackground: {
+        height: 10,
+        backgroundColor: 'rgba(255,255,255,0.1)', // Fondo más claro
+        borderRadius: 5,
+        overflow: 'hidden', 
+    },
+    progressBarFill: {
+        height: '100%',
+        borderRadius: 5,
+    },
+    // --- FIN NUEVOS ESTILOS ---
 
     actionsContainer: { paddingHorizontal: 20, marginBottom: 30, gap: 15 },
     secondaryActionsRow: { flexDirection: 'row', gap: 15 },

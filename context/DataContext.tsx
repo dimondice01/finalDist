@@ -26,6 +26,15 @@ export interface CartItem extends Product {
     // 🔥 CAMBIO CRÍTICO: Eliminamos descuentoAplicado del item, ahora va en Sale.itemDiscounts
 }
 
+// --- ¡NUEVA INTERFAZ! ---
+// Añadimos la interfaz para los Rubros
+export interface Rubro {
+    id: string;
+    nombre: string;
+    metaSemanal: number;
+}
+// --- FIN NUEVA INTERFAZ ---
+
 export interface Client {
     id: string;
     nombre: string;
@@ -36,6 +45,9 @@ export interface Client {
     telefono?: string;
     email?: string;
     zonaId?: string;
+    // --- ¡NUEVO CAMPO! ---
+    rubroId?: string; // Añadimos el campo para el ID del rubro
+    // --- FIN NUEVO CAMPO ---
     vendedorAsignadoId?: string;
     location?: { latitude: number; longitude: number; } | null;
     fechaCreacion?: any; // Puede ser Date o Timestamp
@@ -131,6 +143,9 @@ export interface IDataContext {
     vendors: Vendor[];
     sales: Sale[];
     routes: Route[];
+    // --- ¡NUEVO CAMPO! ---
+    rubros: Rubro[]; // Añadimos el array de rubros
+    // --- FIN NUEVO CAMPO ---
     syncData: () => Promise<void>;
     refreshAllData: () => Promise<void>;
     isLoading: boolean;
@@ -154,6 +169,9 @@ const defaultContextValue: IDataContext = {
     vendors: [],
     sales: [],
     routes: [],
+    // --- ¡NUEVO CAMPO! ---
+    rubros: [], // Añadimos el valor por defecto
+    // --- FIN NUEVO CAMPO ---
     zones: [], // Asegúrate que esta línea exista y se llame 'zones'
     updateClient: async () => {}, // Añade esta función dummy
     syncData: async () => { console.warn("Llamada a syncData por defecto"); },
@@ -179,6 +197,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [sales, setSales] = useState<Sale[]>([]);
     const [routes, setRoutes] = useState<Route[]>([]);
+    // --- ¡NUEVO ESTADO! ---
+    const [rubros, setRubros] = useState<Rubro[]>([]);
+    // --- FIN NUEVO ESTADO ---
     
     // --- BANDERAS DE CARGA ---
     const [isLoading, setIsLoading] = useState(true); // Indica si una sync está ACTIVA (true/false)
@@ -214,7 +235,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             // setIsLoading(true); // Ya está en true por defecto
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
-                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes'];
+                // --- ¡NUEVO! Añadimos 'rubros' al array de keys ---
+                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros'];
                 const storedData = await AsyncStorage.multiGet(keys);
                 const dataMap = new Map(storedData);
 
@@ -255,6 +277,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setDataState('vendors', setVendors);
                 setDataState('sales', setSales, true); // Asegura manejo de precioOriginal
                 setDataState('routes', setRoutes, true);
+                // --- ¡NUEVO! Cargamos rubros desde el storage ---
+                setDataState('rubros', setRubros);
 
                 console.log("Datos locales cargados.");
             } catch (e) {
@@ -310,6 +334,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             const categoriesQuery = getDocs(query(collection(db, 'categorias')));
             const promosQuery = getDocs(query(collection(db, 'promociones'), where('estado', '==', 'activa')));
             const allVendorsQuery = getDocs(query(collection(db, 'vendedores'))); // Todos los vendedores
+            // --- ¡NUEVA QUERY! ---
+            const rubrosQuery = getDocs(query(collection(db, 'rubros'))); // Traemos todos los rubros
 
             let finalData: IDataContext = { ...defaultContextValue, isLoading: true };
 
@@ -362,8 +388,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
              };
 
             // Ejecuta queries base
-            const [productsSnap, categoriesSnap, promosSnap, vendorsSnap] = await Promise.all([
-                productsQuery, categoriesQuery, promosQuery, allVendorsQuery
+            // --- ¡NUEVO! Añadimos rubrosQuery y rubrosSnap ---
+            const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap] = await Promise.all([
+                productsQuery, categoriesQuery, promosQuery, allVendorsQuery, rubrosQuery
             ]);
             finalData.products = productsSnap.docs.map(processFirebaseDoc) as Product[];
             finalData.categories = categoriesSnap.docs.map(processFirebaseDoc) as Category[];
@@ -378,6 +405,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             // --- FIN FIX DE PROMOCIONES ---
 
             finalData.vendors = vendorsSnap.docs.map(processFirebaseDoc) as Vendor[];
+            // --- ¡NUEVO! Procesamos los rubros ---
+            finalData.rubros = rubrosSnap.docs.map(processFirebaseDoc) as Rubro[];
 
             // Queries condicionales
             if (userRole === 'Reparto') {
@@ -421,6 +450,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 // La serialización de Sale ahora incluye el mapa itemDiscounts
                 AsyncStorage.setItem('sales', JSON.stringify(finalData.sales)), 
                 AsyncStorage.setItem('routes', JSON.stringify(finalData.routes)),
+                // --- ¡NUEVO! Guardamos rubros en el storage ---
+                AsyncStorage.setItem('rubros', JSON.stringify(finalData.rubros)),
             ]);
 
             // Actualizar estado de React
@@ -432,6 +463,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             setAvailableZones(finalData.availableZones);
             setSales(finalData.sales);
             setRoutes(finalData.routes);
+            // --- ¡NUEVO! Actualizamos el estado de rubros ---
+            setRubros(finalData.rubros);
 
             if (showToast) {
                 Toast.show({ type: 'success', text1: 'Datos Sincronizados', text2: 'La información ha sido actualizada. 👋', position: 'bottom', visibilityTime: 3000 });
@@ -463,6 +496,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         let productListener: () => void = () => {}; 
         let categoryListener: () => void = () => {}; 
         let promotionListener: () => void = () => {}; 
+        // --- ¡NUEVO! ---
+        let rubroListener: () => void = () => {}; // Listener para rubros
 
         // Solo subscribimos si es vendedor, ya que ellos necesitan el tiempo real de estos datos
         if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded) {
@@ -500,6 +535,14 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setPromotions(updatedPromotions.filter(p => p.id));
             });
 
+            // --- ¡NUEVO! Listener para Rubros ---
+            const rubrosQuery = query(collection(db, 'rubros'));
+            rubroListener = onSnapshot(rubrosQuery, (snapshot) => {
+                const updatedRubros = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Rubro[];
+                setRubros(updatedRubros.filter(r => r.id));
+            });
+            // --- FIN NUEVO LISTENER ---
+
             // Timeout para forzar un sync total (mantenemos el cleanup)
             timeoutId = setTimeout(() => {
                 console.log('Timeout alcanzado. Forzando una verificación de datos.');
@@ -512,6 +555,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             productListener(); 
             categoryListener();
             promotionListener();
+            // --- ¡NUEVO! ---
+            rubroListener(); // Limpiamos el listener de rubros
             if (timeoutId) {
                 clearTimeout(timeoutId);
             }
@@ -643,6 +688,37 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     // --- FIN DE CAMBIOS: Nuevas Funciones ---
 
 
+    // --- ¡AQUÍ ESTÁ LA NUEVA FUNCIÓN CORREGIDA! ---
+    /**
+     * Actualiza un cliente en Firestore y refresca los datos locales.
+     */
+    const updateClient = useCallback(async (clientId: string, updatedData: Partial<Client>) => {
+        console.log(`Actualizando cliente ${clientId}...`);
+        try {
+            const clientRef = doc(db, 'clientes', clientId);
+            // El 'updatedData' ya contiene el rubroId (o un string vacío)
+            await updateDoc(clientRef, updatedData);
+            
+            // Refresca los datos locales en silencio (sin Toast)
+            // para que la UI se actualice al volver atrás.
+            await fetchDataAndStore(false); 
+
+            console.log(`Cliente ${clientId} actualizado con éxito.`);
+        } catch (error) {
+            console.error("Error en updateClient:", error);
+            Toast.show({
+                type: 'error',
+                text1: 'Error al actualizar',
+                text2: 'No se pudieron guardar los cambios.'
+            });
+            // Re-lanzamos el error para que la pantalla que llama (edit-client)
+            // sepa que algo salió mal (y no resetee el 'isSubmitting')
+            throw error;
+        }
+    }, [fetchDataAndStore]); // Depende de fetchDataAndStore
+    // --- FIN DE LA CORRECCIÓN ---
+
+
     // Valor que se provee a los componentes hijos
     const value: IDataContext = {
         products,
@@ -653,8 +729,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         vendors,
         sales,
         routes,
+        // --- ¡NUEVO! Exportamos rubros ---
+        rubros, 
         zones: availableZones,
-        updateClient: async () => {}, // 2. Añadimos la función que faltaba
+        // --- ¡CAMBIO! Ahora pasamos la función real ---
+        updateClient: updateClient, 
         syncData,
         refreshAllData,
         isLoading,
