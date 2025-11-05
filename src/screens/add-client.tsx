@@ -14,6 +14,7 @@ import {
     FlatList // AÑADIDO: FlatList
     ,
 
+
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -156,8 +157,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // --- ¡ACTUALIZADO! Obtenemos rubros ---
-    const { availableZones, vendors, refreshAllData, rubros } = useData();
+    // --- ¡ACTUALIZADO! Obtenemos rubros y ESTADO OFFLINE ---
+    const { availableZones, vendors, refreshAllData, rubros, isOffline } = useData();
     const currentUser = auth.currentUser;
 
     const [mapModalVisible, setMapModalVisible] = useState(false);
@@ -240,7 +241,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     }, []);
 
     // handleSubmit con useCallback y navigation.goBack()
-    // --- ¡ACTUALIZADO! handleSubmit ---
+    // --- ¡ACTUALIZADO! handleSubmit (Offline) ---
     const handleSubmit = useCallback(async () => {
         if (!nombre.trim() || !zonaId) {
             Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
@@ -268,13 +269,24 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 fechaCreacion: new Date(), // Firestore convertirá esto a Timestamp
             };
 
+            // Esta promesa se resolverá INMEDIATAMENTE si estamos offline,
+            // guardando en la cola local.
             await addDoc(collection(db, 'clientes'), newClientData);
-            await refreshAllData(); // Refresca los datos globales
+            
+            // Si estamos online, refrescamos. Si estamos offline,
+            // no es necesario refrescar (ya que la data de 'clientes' 
+            // no se actualizará hasta volver a conectar).
+            if (!isOffline) {
+                await refreshAllData(); // Refresca los datos globales
+            }
 
+            // --- ¡NUEVO! Mensaje de Toast dinámico ---
             Toast.show({
                 type: 'success',
-                text1: 'Cliente Creado',
-                text2: `${nombre.trim()} ha sido agregado.`,
+                text1: isOffline ? 'Cliente Guardado Localmente' : 'Cliente Creado',
+                text2: isOffline 
+                    ? `${nombre.trim()} se sincronizará al conectar.` 
+                    : `${nombre.trim()} ha sido agregado.`,
                 position: 'bottom',
                 visibilityTime: 3000
             });
@@ -284,12 +296,14 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         } catch (error) {
             console.error("Error al crear el cliente:", error);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert('Error', 'No se pudo crear el cliente. Revisa tu conexión.');
+            // --- ¡NUEVO! Mensaje de error genérico ---
+            // Ya no culpamos a la "conexión"
+            Alert.alert('Error', 'No se pudo crear el cliente. Inténtalo de nuevo.');
             setIsSubmitting(false); // <-- Asegura resetear en caso de error
         }
         // No necesitamos finally aquí porque la navegación desmonta el componente
-    // --- ¡ACTUALIZADO! Añadimos rubroId a las dependencias ---
-    }, [nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, location, currentUser, isSubmitting, refreshAllData, navigation]);
+    // --- ¡ACTUALIZADO! Añadimos isOffline y rubroId a las dependencias ---
+    }, [nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, location, currentUser, isSubmitting, refreshAllData, navigation, isOffline]);
 
     // Función para manejar el cierre del modal del mapa
     const handleMapModalClose = useCallback(() => {
@@ -395,7 +409,9 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
 
                 {/* Botón de Guardar */}
                 <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId) && styles.buttonDisabled]} onPress={handleSubmit} disabled={isSubmitting || !nombre.trim() || !zonaId}>
-                    {isSubmitting ? (<ActivityIndicator color={COLORS.primaryDark} />) : (<Text style={styles.buttonText}>Guardar Cliente</Text>)}
+                    {isSubmitting ? (<ActivityIndicator color={COLORS.primaryDark} />) 
+                    // --- ¡NUEVO! Texto de botón dinámico ---
+                    : (<Text style={styles.buttonText}>{isOffline ? 'Guardar (Offline)' : 'Guardar Cliente'}</Text>)}
                 </TouchableOpacity>
             </ScrollView>
 
@@ -428,7 +444,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     </MapView>
                     {/* Overlay del marcador central (si prefieres mover mapa en lugar de marcador) */}
                     {/* <View style={styles.mapOverlay}>
-                         <Feather name="plus" size={32} color={COLORS.danger} style={{ position: 'absolute' }} />
+                            <Feather name="plus" size={32} color={COLORS.danger} style={{ position: 'absolute' }} />
                     </View> */}
                     <View style={styles.mapControls}>
                         <Text style={styles.mapInstructions}>

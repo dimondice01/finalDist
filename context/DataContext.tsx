@@ -1,9 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// --- INICIO DE CAMBIOS: Importaciones (NetInfo) ---
+import { useNetInfo } from '@react-native-community/netinfo';
+// --- FIN DE CAMBIOS: Importaciones (NetInfo) ---
 // Se añade 'updateDoc' a la lista de importación
 // --- INICIO DE CAMBIOS: Importaciones ---
 import { collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, Timestamp, updateDoc, where } from 'firebase/firestore';
 // --- FIN DE CAMBIOS: Importaciones ---
-import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+// --- INICIO DE CAMBIOS: Importaciones (useRef) ---
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+// --- FIN DE CAMBIOS: Importaciones (useRef) ---
 import Toast from 'react-native-toast-message';
 import { auth, db } from '../db/firebase-service';
 
@@ -150,12 +155,17 @@ export interface IDataContext {
     refreshAllData: () => Promise<void>;
     isLoading: boolean;
     isInitialDataLoaded: boolean;
+    // --- ¡NUEVO CAMPO! (Offline) ---
+    isOffline: boolean;
+    // --- FIN NUEVO CAMPO ---
     zones: Zone[];
     updateClient: (clientId: string, updatedData: Partial<Client>) => Promise<void>; // <-- NUEVA BANDERA
 
     // --- INICIO DE CAMBIOS: Nuevas Funciones ---
     crearVentaConStock: (saleData: any) => Promise<string>;
     anularVentaConStock: (saleId: string, items: CartItem[]) => Promise<void>;
+    // --- ¡NUEVO! Función de Stock Optimista ---
+    descontarStockLocalmente: (items: CartItem[]) => void;
     // --- FIN DE CAMBIOS: Nuevas Funciones ---
 }
 
@@ -178,10 +188,15 @@ const defaultContextValue: IDataContext = {
     refreshAllData: async () => { console.warn("Llamada a refreshAllData por defecto"); },
     isLoading: true,
     isInitialDataLoaded: false, // <-- NUEVO VALOR POR DEFECTO
-    
+    // --- ¡NUEVO CAMPO! (Offline) ---
+    isOffline: false,
+    // --- FIN NUEVO CAMPO ---
+
     // --- INICIO DE CAMBIOS: Valores por defecto ---
     crearVentaConStock: async (saleData: any) => { console.warn("Llamada a crearVentaConStock por defecto"); return "error"; },
     anularVentaConStock: async (saleId: string, items: CartItem[]) => { console.warn("Llamada a anularVentaConStock por defecto"); },
+    // --- ¡NUEVO! Valor por defecto ---
+    descontarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a descontarStockLocalmente por defecto"); },
     // --- FIN DE CAMBIOS: Valores por defecto ---
 };
 
@@ -204,6 +219,12 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     // --- BANDERAS DE CARGA ---
     const [isLoading, setIsLoading] = useState(true); // Indica si una sync está ACTIVA (true/false)
     const [isInitialDataLoaded, setIsInitialDataLoaded] = useState(false); // Indica si el useEffect inicial terminó (true)
+
+    // --- ¡NUEVO! ESTADO DE CONEXIÓN ---
+    const [isOffline, setIsOffline] = useState(false);
+    const netInfo = useNetInfo();
+    const prevIsConnected = useRef<boolean | null>(null); // Usamos useRef para rastrear el estado anterior
+    // --- FIN NUEVO ESTADO DE CONEXIÓN ---
 
     const currentUser = auth.currentUser;
     // Usamos useMemo para obtener el vendor actual
@@ -293,6 +314,47 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         loadDataFromStorage();
     }, []);
 
+    // --- ¡NUEVO! EFECTO PARA MANEJAR EL ESTADO DE CONEXIÓN ---
+    useEffect(() => {
+        const isConnected = netInfo.isConnected;
+        
+        // Si isConnected es null, significa que netinfo aún no se ha determinado.
+        if (isConnected === null) {
+            return; 
+        }
+
+        const isNowOffline = isConnected === false;
+        setIsOffline(isNowOffline);
+
+        // Evitar mostrar Toast en la carga inicial, solo en cambios
+        if (prevIsConnected.current !== null && prevIsConnected.current !== isConnected) {
+            if (isNowOffline) {
+                Toast.show({
+                    type: 'error', // Usamos 'error' para que sea rojo/notorio
+                    text1: 'Modo Offline',
+                    text2: 'No tienes conexión. Tus cambios se guardarán localmente.',
+                    position: 'bottom',
+                    visibilityTime: 4000
+                });
+            } else {
+                Toast.show({
+                    type: 'success',
+                    text1: 'Estás Online',
+                    text2: 'Conexión recuperada. Sincronizando...',
+                    position: 'bottom',
+                    visibilityTime: 3000
+                });
+                // Opcional: podríamos disparar un syncData() aquí si quisiéramos
+                // pero Firebase lo hace automáticamente. El toast es suficiente.
+            }
+        }
+        
+        // Actualizar el valor anterior
+        prevIsConnected.current = isConnected;
+
+    }, [netInfo.isConnected]); // Se dispara cada vez que cambia el estado de conexión
+    // --- FIN NUEVO EFECTO DE CONEXIÓN ---
+
     // Función principal para obtener datos de Firestore y guardar localmente
     const fetchDataAndStore = useCallback(async (showToast = true) => {
         setIsLoading(true);
@@ -320,7 +382,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 await updateDoc(vendorRef, { firebaseAuthUid: currentUser.uid });
                 vendorDoc = vendorSnap; 
             } else {
-                 vendorDoc = vendorsQuerySnap.docs[0]; 
+                vendorDoc = vendorsQuerySnap.docs[0]; 
             }
             
             currentVendorData = { id: vendorDoc.id, ...vendorDoc.data() } as Vendor;
@@ -351,41 +413,41 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             };
 
             // Procesador específico para Sales (Ahora maneja el mapa de descuentos)
-             const processFirebaseSale = (docSnap: any): Sale => {
-                const rawData = processFirebaseDoc(docSnap); 
-                const items = (rawData.items || []).map((item: any) => ({
-                    ...item,
-                    precioOriginal: item.precioOriginal ?? item.precio,
-                }));
+                const processFirebaseSale = (docSnap: any): Sale => {
+                    const rawData = processFirebaseDoc(docSnap); 
+                    const items = (rawData.items || []).map((item: any) => ({
+                        ...item,
+                        precioOriginal: item.precioOriginal ?? item.precio,
+                    }));
 
-                return {
-                    id: rawData.id,
-                    clienteId: rawData.clienteId || rawData.clientId || '', 
-                    clientName: rawData.clientName || rawData.clienteNombre || 'Cliente anónimo',
-                    clienteNombre: rawData.clienteNombre || rawData.clientName, 
-                    vendedorId: rawData.vendedorId || rawData.vendorId || '', 
-                    vendedorName: rawData.vendedorName || rawData.vendedorNombre || 'Vendedor anónimo',
-                    vendedorNombre: rawData.vendedorNombre || rawData.vendedorName, 
-                    items: items,
-                    totalVenta: rawData.totalVenta ?? rawData.totalAmount ?? 0, 
-                    totalCosto: rawData.totalCosto ?? 0,
-                    totalComision: rawData.totalComision ?? 0,
-                    observaciones: rawData.observaciones || '',
-                    // --- INICIO CAMBIO DE ESTADO (Refactor) ---
-                    // Se mapea 'Pendiente de Pago' al nuevo estado
-                    estado: rawData.estado === 'Pendiente de Pago' ? 'Pendiente de Entrega' : (rawData.estado || rawData.status || 'Pendiente de Entrega'), 
-                    tipo: rawData.tipo || 'venta', // Asumimos 'venta' si no existe
-                    // --- FIN CAMBIO DE ESTADO ---
-                    fecha: rawData.fecha || rawData.saleDate || new Date(0), 
-                    saldoPendiente: rawData.saldoPendiente ?? 0,
-                    paymentMethod: rawData.paymentMethod,
-                    totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 
-                    pagoEfectivo: rawData.pagoEfectivo ?? 0,
-                    pagoTransferencia: rawData.pagoTransferencia ?? 0,
-                    // 🔥 Nuevo campo (Aseguramos que sea un objeto)
-                    itemDiscounts: rawData.itemDiscounts || {}, 
-                   } as Sale;
-             };
+                    return {
+                        id: rawData.id,
+                        clienteId: rawData.clienteId || rawData.clientId || '', 
+                        clientName: rawData.clientName || rawData.clienteNombre || 'Cliente anónimo',
+                        clienteNombre: rawData.clienteNombre || rawData.clientName, 
+                        vendedorId: rawData.vendedorId || rawData.vendorId || '', 
+                        vendedorName: rawData.vendedorName || rawData.vendedorNombre || 'Vendedor anónimo',
+                        vendedorNombre: rawData.vendedorNombre || rawData.vendedorName, 
+                        items: items,
+                        totalVenta: rawData.totalVenta ?? rawData.totalAmount ?? 0, 
+                        totalCosto: rawData.totalCosto ?? 0,
+                        totalComision: rawData.totalComision ?? 0,
+                        observaciones: rawData.observaciones || '',
+                        // --- INICIO CAMBIO DE ESTADO (Refactor) ---
+                        // Se mapea 'Pendiente de Pago' al nuevo estado
+                        estado: rawData.estado === 'Pendiente de Pago' ? 'Pendiente de Entrega' : (rawData.estado || rawData.status || 'Pendiente de Entrega'), 
+                        tipo: rawData.tipo || 'venta', // Asumimos 'venta' si no existe
+                        // --- FIN CAMBIO DE ESTADO ---
+                        fecha: rawData.fecha || rawData.saleDate || new Date(0), 
+                        saldoPendiente: rawData.saldoPendiente ?? 0,
+                        paymentMethod: rawData.paymentMethod,
+                        totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 
+                        pagoEfectivo: rawData.pagoEfectivo ?? 0,
+                        pagoTransferencia: rawData.pagoTransferencia ?? 0,
+                        // 🔥 Nuevo campo (Aseguramos que sea un objeto)
+                        itemDiscounts: rawData.itemDiscounts || {}, 
+                        } as Sale;
+                };
 
             // Ejecuta queries base
             // --- ¡NUEVO! Añadimos rubrosQuery y rubrosSnap ---
@@ -426,17 +488,17 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 finalData.sales = salesSnap.docs.map(processFirebaseSale); 
 
                 const zoneIds = currentVendorData.zonasAsignadas || [];
-                 if (zoneIds.length > 0) {
-                     if (zoneIds.length > 30) { 
-                         console.warn("Demasiadas zonas asignadas (>30). Cargando solo las primeras 30.");
-                         const limitedZoneIds = zoneIds.slice(0, 30);
-                         const zonesQuery = getDocs(query(collection(db, 'zonas'), where('__name__', 'in', limitedZoneIds)));
-                         finalData.availableZones = (await zonesQuery).docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
-                     } else {
-                         const zonesQuery = getDocs(query(collection(db, 'zonas'), where('__name__', 'in', zoneIds)));
-                         finalData.availableZones = (await zonesQuery).docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
-                     }
-                 } else { finalData.availableZones = []; }
+                    if (zoneIds.length > 0) {
+                        if (zoneIds.length > 30) { 
+                            console.warn("Demasiadas zonas asignadas (>30). Cargando solo las primeras 30.");
+                            const limitedZoneIds = zoneIds.slice(0, 30);
+                            const zonesQuery = getDocs(query(collection(db, 'zonas'), where('__name__', 'in', limitedZoneIds)));
+                            finalData.availableZones = (await zonesQuery).docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
+                        } else {
+                            const zonesQuery = getDocs(query(collection(db, 'zonas'), where('__name__', 'in', zoneIds)));
+                            finalData.availableZones = (await zonesQuery).docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
+                        }
+                    } else { finalData.availableZones = []; }
             }
 
             // Guardar en AsyncStorage
@@ -475,10 +537,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             console.error("Error durante la obtención de datos:", error);
             if (showToast) {
                 if (error.message.includes("Datos del vendedor actual no encontrados")) {
-                     Toast.show({ type: 'error', text1: 'Error Crítico', text2: 'Datos de usuario incompletos. Cerrando sesión.' });
-                     await auth.signOut(); 
+                        Toast.show({ type: 'error', text1: 'Error Crítico', text2: 'Datos de usuario incompletos. Cerrando sesión.' });
+                        await auth.signOut(); 
                 } else {
-                     Toast.show({ type: 'error', text1: 'Error de Sincronización', text2: error.message || 'No se pudieron obtener los datos.' });
+                        Toast.show({ type: 'error', text1: 'Error de Sincronización', text2: error.message || 'No se pudieron obtener los datos.' });
                 }
             }
             throw error;
@@ -580,6 +642,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     /**
      * Crea una venta y descuenta el stock, todo en una transacción.
      * Arroja un error si el stock es insuficiente.
+     * NOTA: Esta función fallará si se llama offline (debido a transaction.get).
+     * Solo debe usarse para operaciones ONLINE.
      */
     const crearVentaConStock = useCallback(async (saleData: any): Promise<string> => {
         
@@ -685,7 +749,46 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         });
 
     }, [db]);
-    // --- FIN DE CAMBIOS: Nuevas Funciones ---
+
+
+    // --- ¡NUEVO! Función de Stock Optimista ---
+    /**
+     * Actualiza el estado local de 'products' para reflejar el stock
+     * descontado inmediatamente después de una venta offline.
+     */
+    const descontarStockLocalmente = useCallback((items: CartItem[]) => {
+        console.log("Descontando stock del estado local (optimista)...");
+        
+        // Creamos un Map para buscar rápido
+        const itemsMap = new Map<string, number>();
+        items.forEach(item => {
+            itemsMap.set(item.id, item.quantity);
+        });
+
+        setProducts(prevProducts => {
+            // Iteramos sobre los productos y actualizamos solo los vendidos
+            return prevProducts.map(product => {
+                const cantidadVendida = itemsMap.get(product.id);
+                
+                if (cantidadVendida) {
+                    const stockActual = product.stock ?? 0;
+                    const nuevoStock = stockActual - cantidadVendida;
+                    
+                    // Devolvemos un *nuevo* objeto producto con el stock actualizado
+                    return {
+                        ...product,
+                        stock: nuevoStock
+                    };
+                }
+                
+                // Si no está en el Map, devolvemos el producto sin cambios
+                return product;
+            });
+        });
+
+        console.log("Estado local de productos actualizado.");
+    }, []); // No depende de nada, solo de 'setProducts'
+    // --- FIN NUEVA FUNCIÓN ---
 
 
     // --- ¡AQUÍ ESTÁ LA NUEVA FUNCIÓN CORREGIDA! ---
@@ -738,10 +841,14 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         refreshAllData,
         isLoading,
         isInitialDataLoaded,
+        // --- ¡NUEVO! Exportamos estado offline ---
+        isOffline,
         
         // --- INICIO DE CAMBIOS: Exportar Funciones ---
         crearVentaConStock,
         anularVentaConStock,
+        // --- ¡NUEVO! Exportamos la función de stock optimista ---
+        descontarStockLocalmente,
         // --- FIN DE CAMBIOS: Exportar Funciones ---
     };
 

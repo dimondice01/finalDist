@@ -5,9 +5,8 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Print from 'expo-print'; // Necesario para generar el archivo PDF local
 import * as Sharing from 'expo-sharing';
-// --- INICIO DE CAMBIOS: Importaciones ---
-// Quitamos addDoc y collection. Dejamos serverTimestamp y updateDoc para EDITAR
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+// --- INICIO DE CAMBIOS: Importaciones (addDoc y collection RE-AÑADIDOS) ---
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 // --- FIN DE CAMBIOS: Importaciones ---
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -96,7 +95,7 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
             <View style={styles.modalOverlay}>
                 <View style={[styles.modalContent, { maxHeight: '80%', padding: 0 }]}>
                     <View style={styles.modalHeader}>
-                         <Text style={styles.modalTitle}>Filtrar por Categoría</Text>
+                        <Text style={styles.modalTitle}>Filtrar por Categoría</Text>
                     </View>
                     <FlatList
                         data={dataWithAllOption}
@@ -234,7 +233,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         promotions,
         isLoading: isDataLoading,
         refreshAllData,
-        crearVentaConStock 
+        // --- INICIO CAMBIO: Importamos isOffline y descontarStockLocalmente ---
+        isOffline,
+        descontarStockLocalmente
+        // crearVentaConStock // Ya no lo usamos para ventas nuevas
+        // --- FIN CAMBIO ---
     } = useData();
 
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -340,7 +343,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return comisionPorItem * quantity;
     }, [currentVendedor, isReposicion, isDevolucion]); // <-- Añadidas dependencias
 
-     const handleAddProduct = useCallback((product: Product) => {
+    const handleAddProduct = useCallback((product: Product) => {
         const existingItem = cart.find(item => item.id === product.id);
         let precioFinal = product.precio;
         let precioOriginal = product.precio;
@@ -393,8 +396,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
     // --- BLOQUE USEMEMO ---
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
-         // --- INICIO CAMBIO: Total Cero para Repos/Devolución ---
-         if (isReposicion || isDevolucion) {
+        // --- INICIO CAMBIO: Total Cero para Repos/Devolución ---
+        if (isReposicion || isDevolucion) {
             const costo = cart.reduce((acc, item) => acc + (item.costo || 0) * item.quantity, 0);
             return {
                 subtotal: 0,
@@ -404,89 +407,89 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 totalDescuentoPromociones: 0,
                 itemsConDescuentosAplicados: cart.map(item => ({...item, precio: 0, precioOriginal: 0, comision: 0})),
             };
-         }
-         // --- FIN CAMBIO ---
+        }
+        // --- FIN CAMBIO ---
 
-         let sub: number = 0;
-         let comision: number = 0;
-         let costo: number = 0;
-         let descuentoPrecioEspecial: number = 0;
-         let descuentoPorCantidadTotal: number = 0;
-         const itemsModificados: (CartItem & { descuentoPorCantidadAplicado?: number })[] = [];
+        let sub: number = 0;
+        let comision: number = 0;
+        let costo: number = 0;
+        let descuentoPrecioEspecial: number = 0;
+        let descuentoPorCantidadTotal: number = 0;
+        const itemsModificados: (CartItem & { descuentoPorCantidadAplicado?: number })[] = [];
 
-         cart.forEach(item => {
-             const subtotalItemBase = item.precio * item.quantity;
-             sub += subtotalItemBase;
-             comision += item.comision;
-             costo += (item.costo || 0) * item.quantity;
+        cart.forEach(item => {
+            const subtotalItemBase = item.precio * item.quantity;
+            sub += subtotalItemBase;
+            comision += item.comision;
+            costo += (item.costo || 0) * item.quantity;
 
-             if (item.precioOriginal && item.precioOriginal > item.precio) {
-                 descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity;
-             }
+            if (item.precioOriginal && item.precioOriginal > item.precio) {
+                descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity;
+            }
 
-             const quantity = item.quantity;
-             const itemPrice = item.precio;
-             let descuentoPorCantidadItem: number = 0;
+            const quantity = item.quantity;
+            const itemPrice = item.precio;
+            let descuentoPorCantidadItem: number = 0;
 
-             const quantityPromosForProduct = promotions.filter(promo => {
-                 const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
-                 const isProductInPromo = promo.productoIds?.includes(item.id);
-                 const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)); // <-- Usar client.id
-                 const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
-                 return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
-             });
+            const quantityPromosForProduct = promotions.filter(promo => {
+                const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
+                const isProductInPromo = promo.productoIds?.includes(item.id);
+                const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)); // <-- Usar client.id
+                const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
+                return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
+            });
 
-             if (quantityPromosForProduct.length > 0) {
-                 const promo = quantityPromosForProduct[0];
+            if (quantityPromosForProduct.length > 0) {
+                const promo = quantityPromosForProduct[0];
 
-                 if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
-                     const X = promo.condicion.cantidadMinima;
-                     const Y = promo.beneficio.cantidadAPagar;
-                     const itemsGratisPorLote = X - Y;
+                if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
+                    const X = promo.condicion.cantidadMinima;
+                    const Y = promo.beneficio.cantidadAPagar;
+                    const itemsGratisPorLote = X - Y;
 
-                     if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
-                         const numLotes = Math.floor(quantity / X);
-                         const itemsGratisTotales = numLotes * itemsGratisPorLote;
-                         descuentoPorCantidadItem = itemsGratisTotales * itemPrice;
-                     }
-                 } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
-                     const porcentaje = promo.beneficio.porcentajeDescuento;
+                    if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
+                        const numLotes = Math.floor(quantity / X);
+                        const itemsGratisTotales = numLotes * itemsGratisPorLote;
+                        descuentoPorCantidadItem = itemsGratisTotales * itemPrice;
+                    }
+                } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
+                    const porcentaje = promo.beneficio.porcentajeDescuento;
 
-                     if (porcentaje > 0 && porcentaje <= 100) {
-                         const subtotalItem = itemPrice * quantity;
-                         const descuentoCalculado = subtotalItem * (porcentaje / 100);
-                         descuentoPorCantidadItem = descuentoCalculado;
-                     }
-                 }
-             }
+                    if (porcentaje > 0 && porcentaje <= 100) {
+                        const subtotalItem = itemPrice * quantity;
+                        const descuentoCalculado = subtotalItem * (porcentaje / 100);
+                        descuentoPorCantidadItem = descuentoCalculado;
+                    }
+                }
+            }
 
-             descuentoPorCantidadTotal += descuentoPorCantidadItem;
+            descuentoPorCantidadTotal += descuentoPorCantidadItem;
 
-             itemsModificados.push({
-                 ...item,
-                 precioOriginal: item.precioOriginal ?? item.precio,
-                 descuentoPorCantidadAplicado: descuentoPorCantidadItem
-             });
-         });
+            itemsModificados.push({
+                ...item,
+                precioOriginal: item.precioOriginal ?? item.precio,
+                descuentoPorCantidadAplicado: descuentoPorCantidadItem
+            });
+        });
 
-         const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidadTotal;
+        const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidadTotal;
 
-         return {
-             subtotal: sub,
-             totalComision: comision,
-             totalCosto: costo,
-             totalFinal: sub - descuentoPorCantidadTotal,
-             totalDescuentoPromociones: totalDescuentoTotal,
-             itemsConDescuentosAplicados: itemsModificados
-         };
+        return {
+            subtotal: sub,
+            totalComision: comision,
+            totalCosto: costo,
+            totalFinal: sub - descuentoPorCantidadTotal,
+            totalDescuentoPromociones: totalDescuentoTotal,
+            itemsConDescuentosAplicados: itemsModificados
+        };
     }, [cart, promotions, client, isReposicion, isDevolucion]); // <-- Añadidas dependencias
     // --- FIN DEL BLOQUE USEMEMO ---
 
     // --- handleShare (Modificado para pasar el tipo) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
         if (!clientData) {
-           Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
-           return;
+            Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
+            return;
         }
 
         try {
@@ -507,10 +510,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             });
 
         } catch (shareError: any) {
-           console.error("handleShare: Error con expo-sharing/print:", shareError);
-           if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
-              Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
-           }
+            console.error("handleShare: Error con expo-sharing/print:", shareError);
+            if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
+                Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
+            }
         }
     }, [refreshAllData]);
     // --- FIN DE handleShare ---
@@ -551,23 +554,54 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
-                // Lógica de EDICIÓN
+                // Lógica de EDICIÓN (updateDoc se encola offline)
                 const saleRef = doc(db, 'ventas', originalSale.id);
                 await updateDoc(saleRef, saleDataToSave as any);
-                Toast.show({ type: 'success', text1: 'Venta Actualizada', position: 'bottom', visibilityTime: 2000 });
+                
+                // --- INICIO CAMBIO: Toast Offline ---
+                Toast.show({
+                    type: 'success',
+                    text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Actualizada',
+                    text2: isOffline ? 'Se sincronizará al conectar.' : undefined,
+                    position: 'bottom',
+                    visibilityTime: 3000
+                });
+                // --- FIN CAMBIO ---
 
             } else {
-                // --- LÓGICA DE NUEVA VENTA ---
+                // --- INICIO CAMBIO: LÓGICA DE NUEVA VENTA (Modificada para Offline) ---
+                // Se usa addDoc en lugar de crearVentaConStock (que usa 'runTransaction')
+                // 'runTransaction' (con 'get') falla offline, mientras que 'addDoc' se encola.
+                //
+                // ¡¡¡IMPORTANTE!!!: El stock DEBE ser descontado por una Cloud Function
+                // en el backend que se dispare 'onCreate' de esta venta.
+                //
                 const finalSaleData = {
                     ...saleDataToSave,
-                    tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' // Asegurar tipo
+                    fecha: serverTimestamp(), // <-- Añadimos la fecha de creación
+                    tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' 
                 };
                 
-                console.log("Intentando descontar stock y crear venta...");
-                savedSaleId = await crearVentaConStock(finalSaleData);
-                console.log("Venta creada con ID:", savedSaleId);
+                console.log("Intentando guardar venta (offline-first)...");
+                // addDoc SÍ se encola offline
+                const docRef = await addDoc(collection(db, "ventas"), finalSaleData);
+                savedSaleId = docRef.id;
+                console.log("Venta guardada localmente con ID (temporal):", savedSaleId);
 
-                Toast.show({ type: 'success', text1: 'Venta Creada', text2: 'Stock descontado.', position: 'bottom', visibilityTime: 2000 });
+                // --- ¡NUEVO! Actualización de Stock Optimista ---
+                // Se llama a la función del contexto para actualizar la UI
+                // inmediatamente, antes de que el usuario vea el Toast.
+                descontarStockLocalmente(cart);
+                // --- FIN NUEVO ---
+
+                Toast.show({
+                    type: 'success',
+                    text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Creada',
+                    text2: isOffline ? 'Se sincronizará al conectar.' : 'Venta guardada con éxito.',
+                    position: 'bottom',
+                    visibilityTime: 3000
+                });
+                // --- FIN CAMBIO ---
             }
 
             // --- Lógica de Compartir ---
@@ -585,9 +619,12 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
 
+            // --- INICIO CAMBIO: Alert Offline ---
             Alert.alert(
-                "Venta Guardada",
-                "¿Desea generar y compartir el comprobante ahora?",
+                isOffline ? "Venta Guardada (Offline)" : "Venta Guardada",
+                isOffline
+                    ? `La venta se guardó localmente y se sincronizará. ¿Generar comprobante?`
+                    : "¿Desea generar y compartir el comprobante ahora?",
                 [
                     { text: "No, Volver", onPress: () => {
                         setIsSubmitting(false); 
@@ -602,13 +639,15 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                         }
                     } }
                 ],
-                 { cancelable: false }
+                { cancelable: false }
             );
+            // --- FIN CAMBIO ---
 
         } catch (error: any) {
             console.error("Error capturado en confirmarVenta:", error); 
+            // El error de "Stock insuficiente" ya NO se detectará aquí
             const errorMessage = error.message.includes("Stock insuficiente")
-                ? error.message 
+                ? "Error de stock (debe ser manejado en backend)" 
                 : (error.message || 'No se pudo completar la operación.');
             
             Toast.show({ type: 'error', text1: 'Error al Guardar', text2: errorMessage, position: 'bottom' });
@@ -619,7 +658,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         totalDescuentoPromociones,
         itemsConDescuentosAplicados,
         editMode, originalSale, handleShare, refreshAllData, navigation,
-        crearVentaConStock
+        // --- INICIO CAMBIO: Dependencias ---
+        isOffline, 
+        descontarStockLocalmente 
+        // Se quitó crearVentaConStock
+        // --- FIN CAMBIO ---
     ]);
     // --- FIN DE confirmarVenta ---
 
@@ -702,6 +745,25 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary); // <-- Usar secondary para devolución
     // --- FIN CAMBIO ---
 
+    // --- INICIO CAMBIO: Texto de Botón Dinámico ---
+    const buttonText = useMemo(() => {
+        if (isSubmitting) {
+            return editMode ? 'Actualizando...' : 'Guardando...';
+        }
+        if (isReposicion) {
+            return 'Revisar Reposición';
+        }
+        if (isDevolucion) {
+            return 'Revisar Devolución';
+        }
+        if (editMode) {
+            return isOffline ? 'Actualizar (Offline)' : 'Actualizar Venta';
+        }
+        // Default: Nueva Venta
+        return isOffline ? 'Confirmar (Offline)' : 'Confirmar Venta';
+    }, [isSubmitting, editMode, isReposicion, isDevolucion, isOffline]);
+    // --- FIN CAMBIO ---
+
     return (
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
@@ -722,7 +784,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 <View style={styles.inputContainer}>
                     <Feather name="search" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TextInput style={styles.input} placeholder="Buscar producto..." placeholderTextColor={COLORS.textSecondary} value={searchQuery} onChangeText={setSearchQuery} clearButtonMode="while-editing" autoCapitalize="none" autoCorrect={false}/>
-                     {searchQuery.length > 0 && Platform.OS === 'android' && ( <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}><Feather name="x" size={18} color={COLORS.textSecondary} /></TouchableOpacity> )}
+                    {searchQuery.length > 0 && Platform.OS === 'android' && ( <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}><Feather name="x" size={18} color={COLORS.textSecondary} /></TouchableOpacity> )}
                 </View>
                 <View style={styles.pickerContainer}>
                     <Feather name="tag" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
@@ -730,9 +792,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                         style={styles.pickerButton}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsCategoryModalVisible(true); }}
                     >
-                         <Text style={[styles.pickerButtonText, { color: categoryFilter ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                        <Text style={[styles.pickerButtonText, { color: categoryFilter ? COLORS.textPrimary : COLORS.textSecondary }]}>
                             {selectedCategoryName}
-                         </Text>
+                        </Text>
                         <Feather name="chevron-down" size={20} color={COLORS.primary} />
                     </TouchableOpacity>
                 </View>
@@ -744,12 +806,12 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.listContentContainer}
                 ListEmptyComponent={
-                 !isDataLoading ? (
-                     <View style={styles.emptyContainer}>
-                         <Feather name="package" size={48} color={COLORS.textSecondary} />
-                         <Text style={styles.emptyText}>No se encontraron productos</Text>
-                     </View>
-                 ) : null
+                    !isDataLoading ? (
+                        <View style={styles.emptyContainer}>
+                            <Feather name="package" size={48} color={COLORS.textSecondary} />
+                            <Text style={styles.emptyText}>No se encontraron productos</Text>
+                        </View>
+                    ) : null
                 }
                 initialNumToRender={15}
                 maxToRenderPerBatch={10}
@@ -781,12 +843,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     disabled={isSubmitting}
                 >
                     {isSubmitting ? ( <ActivityIndicator color={COLORS.primaryDark} /> ) : ( <Feather name={editMode ? "check-circle" : "arrow-right-circle"} size={22} color={COLORS.primaryDark} /> )}
+                    {/* --- INICIO CAMBIO: Texto de Botón Dinámico --- */}
                     <Text style={styles.checkoutButtonText}>
-                        {isSubmitting
-                            ? (editMode ? 'Actualizando...' : 'Guardando...')
-                            : (isReposicion ? 'Revisar Reposición' : (isDevolucion ? 'Revisar Devolución' : (editMode ? 'Actualizar Venta' : 'Confirmar Venta')))
-                        }
+                        {buttonText}
                     </Text>
+                    {/* --- FIN CAMBIO --- */}
                 </TouchableOpacity>
                 {/* --- FIN DE CAMBIOS: Botón Principal --- */}
             </View>
