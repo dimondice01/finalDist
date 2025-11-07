@@ -5,9 +5,13 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Print from 'expo-print'; // Necesario para generar el archivo PDF local
 import * as Sharing from 'expo-sharing';
-// --- INICIO DE CAMBIOS: Importaciones (addDoc y collection RE-AÑADIDOS) ---
-import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-// --- FIN DE CAMBIOS: Importaciones ---
+
+// --- INICIO DE CAMBIOS: Importaciones NATIVAS ---
+// ELIMINAMOS: import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+// AÑADIMOS: el SDK nativo de firestore
+import firestore from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: Importaciones NATIVAS ---
+
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -41,16 +45,17 @@ import {
     useData, // <-- ¡Importante!
     Vendor
 } from '../../context/DataContext'; // Ajusta la ruta si es necesario
-import { auth, db } from '../../db/firebase-service'; // Ajusta la ruta si es necesario
+// Esta importación ahora trae las INSTANCIAS NATIVAS
+import { auth, db } from '../../db/firebase-service';
 import { generatePdf } from '../../services/pdfGenerator'; // Asumimos que retorna el HTML string
 import { COLORS } from '../../styles/theme'; // Ajusta la ruta si es necesario
 
 
 // Interface para la venta que guardaremos (con campos de BD correctos)
+// (Sin cambios en la interfaz)
 interface SaleDataToSave {
     clienteId: string;
-    // --- CAMBIO: Estandarización de BD (de la charla anterior) ---
-    clienteNombre: string; // ANTES: clientName
+    clienteNombre: string;
     vendedorId: string;
     vendedorName: string;
     items: CartItem[];
@@ -63,10 +68,11 @@ interface SaleDataToSave {
     fechaUltimaEdicion?: any;
     totalDescuentoPromociones: number;
     observaciones: string; 
-    tipo: 'venta' | 'reposicion' | 'devolucion'; // <-- AÑADIDO 'devolucion'
+    tipo: 'venta' | 'reposicion' | 'devolucion';
 }
 
 // --- Componente Modal Selector de Categoría (REEMPLAZO DEL PICKER) ---
+// (Sin cambios)
 const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
@@ -74,7 +80,6 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
     selectedId: string;
     onSelect: (id: string) => void;
 }) => {
-    // Data incluye "Todas las Categorías"
     const dataWithAllOption: Category[] = useMemo(() => [
         { id: '', nombre: 'Todas las Categorías' } as Category,
         ...categories
@@ -117,6 +122,7 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
 
 
 // --- Componente Memoizado para el Item de Producto ---
+// (Sin cambios)
 const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }: {
     item: Product,
     cart: CartItem[],
@@ -148,7 +154,6 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
         handleAddProduct(item);
     }, [handleAddProduct, item]);
 
-    // --- MEJORA VISUAL (1/3): Determinar stock y color ---
     const stock = item.stock ?? 0;
     const lowStock = stock < 10;
     const noStock = stock <= 0; 
@@ -167,7 +172,6 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
             <View style={styles.cardInfo}>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre}</Text>
 
-                {/* Precios */}
                 {displayPrice !== originalPrice ? (
                     <View style={styles.priceContainer}>
                         <Text style={styles.cardPrice}>${displayPrice.toLocaleString('es-AR')}</Text>
@@ -177,7 +181,6 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                     <Text style={styles.cardPrice}>${item.precio.toLocaleString('es-AR')}</Text>
                 )}
 
-                {/* --- MEJORA VISUAL (2/3): Mostrar Stock --- */}
                 <Text style={[
                     styles.stockText, 
                     lowStock && !noStock && styles.stockTextLow,
@@ -185,8 +188,6 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                 ]}>
                     Stock: {stock}
                 </Text>
-                {/* --- FIN MEJORA VISUAL (2/3) --- */}
-
             </View>
 
             {quantityInCart > 0 ? (
@@ -210,20 +211,18 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
 const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     // --- Obtener parámetros de useRoute ---
     const route = useRoute();
-    // --- INICIO DE CAMBIOS: Parámetros de Ruta ---
-    // Añadimos 'isDevolucion'
     const { clientId, saleId, isEditing, isReposicion = false, isDevolucion = false, cliente: initialCliente } = route.params as {
-        clientId?: string, // <--- Este es el clientId (string) que viene de AppNavigator
+        clientId?: string,
         saleId?: string,
         isEditing?: string,
         isReposicion?: boolean,
-        isDevolucion?: boolean, // <-- AÑADIDO
-        cliente?: Client // <--- Este es el objeto Cliente que también puede venir
+        isDevolucion?: boolean,
+        cliente?: Client
     };
-    // --- FIN DE CAMBIOS: Parámetros de Ruta ---
 
     const editMode = isEditing === 'true';
 
+    // --- IMPORTANTE: Estas funciones ahora vienen del DataContext NATIVO ---
     const {
         products: allProducts,
         categories,
@@ -232,12 +231,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         sales,
         promotions,
         isLoading: isDataLoading,
-        refreshAllData,
-        // --- INICIO CAMBIO: Importamos isOffline y descontarStockLocalmente ---
+        refreshAllData, // refreshAllData sigue siendo útil
         isOffline,
-        descontarStockLocalmente
-        // crearVentaConStock // Ya no lo usamos para ventas nuevas
-        // --- FIN CAMBIO ---
+        descontarStockLocalmente,
+        crearVentaConStock, // ¡Ahora usamos la versión nativa de DataContext!
     } = useData();
 
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -260,20 +257,12 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid);
     }, [currentUser, vendors]);
 
-    // --- ¡¡¡CORRECCIÓN CLAVE!!! ---
-    // Aquí definimos 'client' (con 't') como un OBJETO Client, no un string.
     const client = useMemo(() => {
-        // Si nos pasaron el objeto 'cliente' (desde client-dashboard), lo usamos.
         if (initialCliente) return initialCliente;
-        
-        // Si solo nos pasaron 'clientId' (desde otra pantalla), lo buscamos.
         if (!clientId || !clients) return null;
         return clients.find((c: Client) => c.id === clientId);
-        
-    }, [clientId, clients, initialCliente]); // <-- Dependemos de initialCliente
-    // --- FIN CORRECCIÓN ---
+    }, [clientId, clients, initialCliente]);
 
-    // Obtener nombre de la categoría seleccionada para el botón
     const selectedCategoryName = useMemo(() => {
         if (!categoryFilter) return 'Todas las Categorías';
         const selectedCategory = categories.find(c => c.id === categoryFilter);
@@ -297,7 +286,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
     }, [editMode, saleId, sales, navigation]);
 
-    // --- useEffect de filtrado y orden (sin cambios) ---
     useEffect(() => {
         let products = allProducts;
         if (categoryFilter) {
@@ -307,27 +295,20 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             const lowerQuery = searchQuery.toLowerCase();
             products = products.filter(p => p.nombre.toLowerCase().includes(lowerQuery));
         }
-
         products.sort((a, b) => {
             if (editMode) {
                 const aInCart = cart.some(cartItem => cartItem.id === a.id);
                 const bInCart = cart.some(cartItem => cartItem.id === b.id);
-
                 if (aInCart && !bInCart) return -1; 
                 if (!aInCart && bInCart) return 1;  
             }
             return (a.nombre || '').localeCompare(b.nombre || '');
         });
-
         setFilteredProducts(products);
     }, [allProducts, categoryFilter, searchQuery, cart, editMode]);
-    // --- FIN useEffect de filtrado ---
 
     const getComision = useCallback((product: Product, quantity: number): number => {
-        // --- INICIO CAMBIO: Comisión Cero para Repos/Devolución ---
         if (isReposicion || isDevolucion) return 0;
-        // --- FIN CAMBIO ---
-
         const comisionGeneral = currentVendedor?.comisionGeneral || 0;
         const precio = product.precio || 0;
         const costo = product.costo || 0;
@@ -341,32 +322,28 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             comisionPorItem = precio * (comisionGeneral / 100);
         }
         return comisionPorItem * quantity;
-    }, [currentVendedor, isReposicion, isDevolucion]); // <-- Añadidas dependencias
+    }, [currentVendedor, isReposicion, isDevolucion]);
 
     const handleAddProduct = useCallback((product: Product) => {
         const existingItem = cart.find(item => item.id === product.id);
         let precioFinal = product.precio;
         let precioOriginal = product.precio;
-
-        // --- INICIO CAMBIO: Sin promos para Repos/Devolución ---
         if (!isReposicion && !isDevolucion) {
             const promoAplicable: Promotion | undefined = promotions.find(promo =>
                 promo.tipo === 'precio_especial' &&
                 promo.productoIds.includes(product.id) &&
-                (!promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id))) // <-- Usar client.id
+                (!promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)))
             );
             if (promoAplicable && promoAplicable.nuevoPrecio) {
                 precioFinal = promoAplicable.nuevoPrecio;
                 precioOriginal = product.precio;
             }
         }
-        // --- FIN CAMBIO ---
-
         const productToAdd = { ...product, precio: precioFinal, precioOriginal: precioOriginal };
         setSelectedProduct(productToAdd);
         setCurrentQuantity(existingItem ? existingItem.quantity.toString() : '1');
         setModalVisible(true);
-    }, [cart, promotions, client, isReposicion, isDevolucion]); // <-- Añadidas dependencias
+    }, [cart, promotions, client, isReposicion, isDevolucion]);
 
     const handleConfirmQuantity = useCallback(() => {
         const quantity = parseInt(currentQuantity, 10);
@@ -394,9 +371,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setCurrentQuantity('1');
     }, [selectedProduct]);
 
-    // --- BLOQUE USEMEMO ---
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
-        // --- INICIO CAMBIO: Total Cero para Repos/Devolución ---
         if (isReposicion || isDevolucion) {
             const costo = cart.reduce((acc, item) => acc + (item.costo || 0) * item.quantity, 0);
             return {
@@ -408,45 +383,36 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 itemsConDescuentosAplicados: cart.map(item => ({...item, precio: 0, precioOriginal: 0, comision: 0})),
             };
         }
-        // --- FIN CAMBIO ---
-
         let sub: number = 0;
         let comision: number = 0;
         let costo: number = 0;
         let descuentoPrecioEspecial: number = 0;
         let descuentoPorCantidadTotal: number = 0;
         const itemsModificados: (CartItem & { descuentoPorCantidadAplicado?: number })[] = [];
-
         cart.forEach(item => {
             const subtotalItemBase = item.precio * item.quantity;
             sub += subtotalItemBase;
             comision += item.comision;
             costo += (item.costo || 0) * item.quantity;
-
             if (item.precioOriginal && item.precioOriginal > item.precio) {
                 descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity;
             }
-
             const quantity = item.quantity;
             const itemPrice = item.precio;
             let descuentoPorCantidadItem: number = 0;
-
             const quantityPromosForProduct = promotions.filter(promo => {
                 const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
                 const isProductInPromo = promo.productoIds?.includes(item.id);
-                const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)); // <-- Usar client.id
+                const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id));
                 const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
                 return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
             });
-
             if (quantityPromosForProduct.length > 0) {
                 const promo = quantityPromosForProduct[0];
-
                 if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
                     const X = promo.condicion.cantidadMinima;
                     const Y = promo.beneficio.cantidadAPagar;
                     const itemsGratisPorLote = X - Y;
-
                     if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
                         const numLotes = Math.floor(quantity / X);
                         const itemsGratisTotales = numLotes * itemsGratisPorLote;
@@ -454,7 +420,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     }
                 } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
                     const porcentaje = promo.beneficio.porcentajeDescuento;
-
                     if (porcentaje > 0 && porcentaje <= 100) {
                         const subtotalItem = itemPrice * quantity;
                         const descuentoCalculado = subtotalItem * (porcentaje / 100);
@@ -462,18 +427,14 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     }
                 }
             }
-
             descuentoPorCantidadTotal += descuentoPorCantidadItem;
-
             itemsModificados.push({
                 ...item,
                 precioOriginal: item.precioOriginal ?? item.precio,
                 descuentoPorCantidadAplicado: descuentoPorCantidadItem
             });
         });
-
         const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidadTotal;
-
         return {
             subtotal: sub,
             totalComision: comision,
@@ -482,44 +443,35 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             totalDescuentoPromociones: totalDescuentoTotal,
             itemsConDescuentosAplicados: itemsModificados
         };
-    }, [cart, promotions, client, isReposicion, isDevolucion]); // <-- Añadidas dependencias
-    // --- FIN DEL BLOQUE USEMEMO ---
+    }, [cart, promotions, client, isReposicion, isDevolucion]);
 
-    // --- handleShare (Modificado para pasar el tipo) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
         if (!clientData) {
             Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
             return;
         }
-
         try {
-            // --- INICIO CAMBIO: Pasar tipo a PDF ---
             const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName,);
-            // --- FIN CAMBIO ---
             if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
-
             const { uri } = await Print.printToFileAsync({ html: htmlContent });
             if (!uri) { throw new Error("printToFileAsync no devolvió URI."); }
-
             const isAvailable = await Sharing.isAvailableAsync();
             if (!isAvailable) { throw new Error("La función de compartir no está disponible."); }
-
             await Sharing.shareAsync(uri, {
                 mimeType: 'application/pdf',
                 dialogTitle: `Compartir Comprobante ${saleDataForPdf.id}`,
             });
-
         } catch (shareError: any) {
             console.error("handleShare: Error con expo-sharing/print:", shareError);
             if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
                 Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
             }
         }
-    }, [refreshAllData]);
-    // --- FIN DE handleShare ---
+    // --- CORRECCIÓN DE DEPENDENCIA ---
+    }, []); // refreshAllData no es dependencia
 
 
-    // --- confirmarVenta (antes handleCheckout) ---
+    // --- confirmarVenta (¡ACTUALIZADO CON SINTAXIS NATIVA!) ---
     const confirmarVenta = useCallback(async () => {
         if (isSubmitting) return;
         if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos del cliente o vendedor."); return; }
@@ -529,9 +481,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         // Preparamos los datos
+        // --- INICIO DE CAMBIOS: SDK NATIVO ---
+        // Reemplazamos 'serverTimestamp()' por 'firestore.FieldValue.serverTimestamp()'
         const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { 
             clienteId: client.id,
-            clienteNombre: client.nombre, // <-- Corregido (de la charla anterior)
+            clienteNombre: client.nombre,
             vendedorId: currentVendedor.id,
             vendedorName: currentVendedor.nombreCompleto || currentVendedor.nombre,
             items: cart.map((item: CartItem) => {
@@ -545,20 +499,21 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             saldoPendiente: totalFinal,
             totalDescuentoPromociones: totalDescuentoPromociones,
             observaciones: originalSale?.observaciones || '',
-            // --- CAMBIO: 'tipo' es solo 'venta' aquí ---
             tipo: 'venta', 
-            ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {})
+            ...(editMode ? { fechaUltimaEdicion: firestore.FieldValue.serverTimestamp() } : {})
         };
+        // --- FIN DE CAMBIOS ---
 
         try {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
-                // Lógica de EDICIÓN (updateDoc se encola offline)
-                const saleRef = doc(db, 'ventas', originalSale.id);
-                await updateDoc(saleRef, saleDataToSave as any);
+                // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                // Nueva sintaxis para updateDoc
+                const saleRef = db.collection('ventas').doc(originalSale.id);
+                await saleRef.update(saleDataToSave as any);
+                // --- FIN DE CAMBIOS ---
                 
-                // --- INICIO CAMBIO: Toast Offline ---
                 Toast.show({
                     type: 'success',
                     text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Actualizada',
@@ -566,33 +521,41 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     position: 'bottom',
                     visibilityTime: 3000
                 });
-                // --- FIN CAMBIO ---
 
             } else {
-                // --- INICIO CAMBIO: LÓGICA DE NUEVA VENTA (Modificada para Offline) ---
-                // Se usa addDoc en lugar de crearVentaConStock (que usa 'runTransaction')
-                // 'runTransaction' (con 'get') falla offline, mientras que 'addDoc' se encola.
-                //
-                // ¡¡¡IMPORTANTE!!!: El stock DEBE ser descontado por una Cloud Function
-                // en el backend que se dispare 'onCreate' de esta venta.
-                //
+                // Lógica de NUEVA VENTA
+                
+                // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                // Reemplazamos 'serverTimestamp()' y 'addDoc(collection(...))'
                 const finalSaleData = {
                     ...saleDataToSave,
-                    fecha: serverTimestamp(), // <-- Añadimos la fecha de creación
+                    fecha: firestore.FieldValue.serverTimestamp(),
                     tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' 
                 };
                 
                 console.log("Intentando guardar venta (offline-first)...");
-                // addDoc SÍ se encola offline
-                const docRef = await addDoc(collection(db, "ventas"), finalSaleData);
-                savedSaleId = docRef.id;
-                console.log("Venta guardada localmente con ID (temporal):", savedSaleId);
+                
+                // --- INICIO DE CAMBIOS: LÓGICA DE STOCK ---
+                // Si estamos online, usamos la transacción segura que
+                // descuenta el stock (crearVentaConStock).
+                // Si estamos offline, solo añadimos la venta (addDoc),
+                // y la Cloud Function descontará el stock cuando se conecte.
+                if (isOffline) {
+                    // MODO OFFLINE: Solo guardar.
+                    // (El SDK Nativo SÍ pone 'add' en cola offline)
+                    const docRef = await db.collection("ventas").add(finalSaleData);
+                    savedSaleId = docRef.id;
+                } else {
+                    // MODO ONLINE: Usar la transacción segura de DataContext.
+                    // (Esta función fallará si se la llama offline)
+                    savedSaleId = await crearVentaConStock(finalSaleData);
+                }
+                // --- FIN DE CAMBIOS: LÓGICA DE STOCK ---
+                
+                console.log("Venta guardada localmente/online con ID:", savedSaleId);
 
-                // --- ¡NUEVO! Actualización de Stock Optimista ---
-                // Se llama a la función del contexto para actualizar la UI
-                // inmediatamente, antes de que el usuario vea el Toast.
+                // --- Actualización de Stock Optimista (Sin cambios) ---
                 descontarStockLocalmente(cart);
-                // --- FIN NUEVO ---
 
                 Toast.show({
                     type: 'success',
@@ -601,10 +564,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     position: 'bottom',
                     visibilityTime: 3000
                 });
-                // --- FIN CAMBIO ---
             }
 
-            // --- Lógica de Compartir ---
+            // --- Lógica de Compartir (Sin cambios) ---
             const completeSaleDataForPdf: BaseSale = {
                 ...(originalSale as BaseSale || {} as BaseSale),
                 ...saleDataToSave,
@@ -619,7 +581,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
             const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
 
-            // --- INICIO CAMBIO: Alert Offline ---
             Alert.alert(
                 isOffline ? "Venta Guardada (Offline)" : "Venta Guardada",
                 isOffline
@@ -641,14 +602,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 ],
                 { cancelable: false }
             );
-            // --- FIN CAMBIO ---
 
         } catch (error: any) {
             console.error("Error capturado en confirmarVenta:", error); 
-            // El error de "Stock insuficiente" ya NO se detectará aquí
-            const errorMessage = error.message.includes("Stock insuficiente")
-                ? "Error de stock (debe ser manejado en backend)" 
-                : (error.message || 'No se pudo completar la operación.');
+            // La Cloud Function ahora manejará los errores de stock
+            const errorMessage = (error.message || 'No se pudo completar la operación.');
             
             Toast.show({ type: 'error', text1: 'Error al Guardar', text2: errorMessage, position: 'bottom' });
             setIsSubmitting(false); 
@@ -657,62 +615,44 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision,
         totalDescuentoPromociones,
         itemsConDescuentosAplicados,
-        editMode, originalSale, handleShare, refreshAllData, navigation,
-        // --- INICIO CAMBIO: Dependencias ---
+        editMode, originalSale, handleShare, navigation, // Quitado refreshAllData
         isOffline, 
-        descontarStockLocalmente 
-        // Se quitó crearVentaConStock
-        // --- FIN CAMBIO ---
+        descontarStockLocalmente,
+        crearVentaConStock // Añadida la dependencia
     ]);
     // --- FIN DE confirmarVenta ---
 
-    // --- INICIO DE CAMBIOS: Nueva Función "Tenedor" ---
-    /**
-     * Esta función decide qué hacer cuando se presiona el botón principal:
-     * 1. Si es Reposición O Devolución -> Navega a ReviewSale
-     * 2. Si es Venta -> Llama a confirmarVenta
-     */
+    // --- handleConfirmPress (Sin cambios) ---
     const handleConfirmPress = () => {
         if (isSubmitting) return;
-
-        // Validaciones básicas
         if (!client) { Alert.alert("Error", "No se ha seleccionado un cliente."); return; }
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
 
-
-        // --- CAMBIO: Añadido 'isDevolucion' ---
         if (isReposicion || isDevolucion) {
-            // Es Reposición O Devolución: Navegamos a ReviewSale
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-
-            // --- ¡¡¡CORRECCIÓN CLAVE!!! ---
-            // Tu AppNavigator.tsx espera 'clientId: string'
-            // Y TAMBIÉN 'cliente: Client'
-            // Le pasamos ambos para máxima compatibilidad.
             navigation.navigate('ReviewSale', { 
                 cliente: client,
-                clientId: client!.id, // <-- Pasamos el CLIENTID STRING (para que coincida con tu AppNav)
+                clientId: client!.id,
                 cart: itemsConDescuentosAplicados, 
                 isReposicion: isReposicion,
-                isDevolucion: isDevolucion, // <-- AÑADIDO
-                totalVenta: 0, // Se fuerza a 0
+                isDevolucion: isDevolucion,
+                totalVenta: 0,
                 totalCosto: totalCosto,
-                totalComision: 0, // Cero comisión
+                totalComision: 0,
                 totalDescuento: totalDescuentoPromociones,
             });
         } else {
-            // Es Venta: Confirmamos
             confirmarVenta(); 
         }
     };
-    // --- FIN DE CAMBIOS: Nueva Función "Tenedor" ---
+    // --- FIN DE handleConfirmPress ---
 
     const renderProductItem = useCallback(({ item }: { item: Product }) => (
         <ProductCard
             item={item}
             cart={cart}
             promotions={promotions}
-            clientId={client?.id} // <-- Usar client.id (string)
+            clientId={client?.id}
             handleAddProduct={handleAddProduct}
         />
     ), [cart, promotions, client?.id, handleAddProduct]);
@@ -740,12 +680,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         );
     }
 
-    // --- CAMBIO: Color de fondo dinámico ---
     const headerTitle = editMode ? 'Editar Venta' : (isReposicion ? 'Nueva Reposición' : (isDevolucion ? 'Nueva Devolución' : 'Nueva Venta'));
-    const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary); // <-- Usar secondary para devolución
-    // --- FIN CAMBIO ---
+    const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary);
 
-    // --- INICIO CAMBIO: Texto de Botón Dinámico ---
+    // --- Texto de Botón Dinámico (Sin cambios) ---
     const buttonText = useMemo(() => {
         if (isSubmitting) {
             return editMode ? 'Actualizando...' : 'Guardando...';
@@ -759,10 +697,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         if (editMode) {
             return isOffline ? 'Actualizar (Offline)' : 'Actualizar Venta';
         }
-        // Default: Nueva Venta
         return isOffline ? 'Confirmar (Offline)' : 'Confirmar Venta';
     }, [isSubmitting, editMode, isReposicion, isDevolucion, isOffline]);
-    // --- FIN CAMBIO ---
 
     return (
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
@@ -772,9 +708,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
-                    {/* --- INICIO CAMBIO: Título Dinámico --- */}
                     <Text style={styles.title}>{headerTitle}</Text>
-                    {/* --- FIN CAMBIO: Título Dinámico --- */}
                     <Text style={styles.clientName}>{client?.nombre}</Text>
                 </View>
                 <View style={styles.headerButton} />
@@ -832,24 +766,20 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     <View style={[styles.totalRow, styles.finalTotalRow]}><Text style={styles.finalTotalLabel}>Total a Pagar</Text><Text style={styles.finalTotalValue}>${totalFinal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text></View>
                 </ScrollView>
 
-                {/* --- INICIO DE CAMBIOS: Botón Principal --- */}
                 <TouchableOpacity
                     style={[
                         styles.checkoutButton,
-                        { backgroundColor: dynamicButtonColor }, // Color dinámico
+                        { backgroundColor: dynamicButtonColor },
                         isSubmitting && styles.checkoutButtonDisabled,
                     ]}
-                    onPress={handleConfirmPress} // <-- Llama a la nueva función "Tenedor"
+                    onPress={handleConfirmPress}
                     disabled={isSubmitting}
                 >
                     {isSubmitting ? ( <ActivityIndicator color={COLORS.primaryDark} /> ) : ( <Feather name={editMode ? "check-circle" : "arrow-right-circle"} size={22} color={COLORS.primaryDark} /> )}
-                    {/* --- INICIO CAMBIO: Texto de Botón Dinámico --- */}
                     <Text style={styles.checkoutButtonText}>
                         {buttonText}
                     </Text>
-                    {/* --- FIN CAMBIO --- */}
                 </TouchableOpacity>
-                {/* --- FIN DE CAMBIOS: Botón Principal --- */}
             </View>
 
             <Modal transparent={true} visible={modalVisible} animationType="fade" onRequestClose={() => setModalVisible(false)}>
@@ -878,6 +808,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 };
 
 // --- ESTILOS ---
+// (Sin cambios en los estilos, van aquí...)
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -903,7 +834,7 @@ const styles = StyleSheet.create({
     emptyText: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center' },
     card: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, paddingVertical: 12, paddingLeft: 15, paddingRight: 10, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: COLORS.glassBorder },
     cardSelected: { backgroundColor: 'rgba(241, 245, 188, 0.2)', borderColor: COLORS.primary },
-    cardDisabled: { // <-- AÑADIDO (PULIDO ANTERIOR)
+    cardDisabled: { 
         opacity: 0.5,
         backgroundColor: COLORS.disabled, 
     },
@@ -913,11 +844,11 @@ const styles = StyleSheet.create({
     cardPrice: { fontSize: 15, color: COLORS.primary, fontWeight: '600' },
     cardOriginalPrice: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '400', textDecorationLine: 'line-through' },
     stockText: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4, fontWeight: '500' },
-    stockTextLow: { // <-- AÑADIDO (PULIDO ANTERIOR)
+    stockTextLow: { 
         color: COLORS.danger, 
         fontWeight: 'bold',
     },
-    stockTextNoStock: { // <-- AÑADIDO (PULIDO ANTERIOR)
+    stockTextNoStock: { 
         color: COLORS.danger,
         fontWeight: '900',
         fontSize: 14,

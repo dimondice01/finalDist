@@ -1,30 +1,30 @@
 // En: db/firebase-service.ts
-
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
-import { getApp, getApps, initializeApp } from "firebase/app";
-import { initializeAuth } from 'firebase/auth';
-// @ts-ignore - Le decimos a TypeScript que ignore el falso error en la siguiente línea
-import { getReactNativePersistence } from 'firebase/auth';
-import { getFirestore } from "firebase/firestore";
 
-// Tu configuración de Firebase
-const firebaseConfig = {
-    apiKey: "AIzaSyA5M0UOCZuDvuq_B4tYV5TcFv9eQVvk074", 
-    authDomain: "distribuidora-1de93.firebaseapp.com",
-    projectId: "distribuidora-1de93",
-    storageBucket: "distribuidora-1de93.appspot.com",
-    messagingSenderId: "491149648147",
-    appId: "1:491149648147:web:ddcbdc9955405641667ae6"
-};
+// --- INICIO DE CAMBIOS (SDK NATIVO) ---
+// Importamos firestore (este es simple)
+import firestore from '@react-native-firebase/firestore';
 
-// Inicialización segura de Firebase para evitar errores de recarga en desarrollo
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+// --- ¡NUEVA FORMA DE IMPORTAR AUTH! ---
+// Usamos 'require' para evitar el bug de TypeScript (ts(2339))
+// que causa el error 'setPersistence does not exist'.
+// Esto fuerza la carga del 'default' export (la función).
+const auth = require('@react-native-firebase/auth').default;
+// --- FIN DE CAMBIOS ---
 
-// Inicialización de Auth con persistencia.
-// Esta es la forma correcta y funcionará en la app.
-export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
-});
+// Obtenemos la instancia de Auth llamando a la función
+const authInstance = auth();
 
-// La inicialización de Firestore no cambia
-export const db = getFirestore(app);
+// Configuramos la persistencia en la instancia
+// AHORA SÍ debería encontrar la función .setPersistence()
+authInstance.setPersistence(ReactNativeAsyncStorage);
+
+// Obtenemos la instancia de Firestore
+// (La persistencia offline ya está habilitada por defecto)
+const db = firestore();
+
+// Exportamos las *instancias* para que la app las use
+// (Usamos 'auth' como nombre de exportación para que coincida
+// con lo que el resto de tu app espera)
+export { authInstance as auth, db };
+console.log("ULTIMA VVVVVVVVVVVVVVVVVVVVVVVVVVVVV");

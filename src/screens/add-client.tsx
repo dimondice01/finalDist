@@ -1,19 +1,20 @@
 // src/screens/AddClientScreen.tsx
 import { Feather } from '@expo/vector-icons';
-// ELIMINAMOS: import { Picker } from '@react-native-picker/picker';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
-// Quitamos import { router } from 'expo-router';
-import { addDoc, collection } from 'firebase/firestore';
-// Añadimos useCallback
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINAMOS: import { addDoc, collection } from 'firebase/firestore';
+// AÑADIMOS: el SDK nativo de firestore
+import firestore from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    FlatList // AÑADIDO: FlatList
-    ,
-
+    FlatList,
 
     KeyboardAvoidingView,
     Modal,
@@ -33,15 +34,14 @@ import Toast from 'react-native-toast-message';
 import { AddClientScreenProps } from '../navigation/AppNavigator'; // Ajusta la ruta
 
 // --- Contexto, DB, Tipos ---
-// Asegúrate que las rutas sean correctas
-// --- ¡ACTUALIZADO! Importamos Rubro ---
 import { Rubro, useData, Zone } from '../../context/DataContext';
+// Esta importación ahora trae las INSTANCIAS NATIVAS
 import { auth, db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 interface LocationCoords { latitude: number; longitude: number; }
 
-// --- Componente Modal Selector de Zona (REEMPLAZO DEL PICKER) ---
+// --- Componente Modal Selector de Zona (Sin cambios) ---
 const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
@@ -49,7 +49,6 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
     selectedId: string;
     onSelect: (id: string) => void;
 }) => {
-    // Agregamos la opción por defecto (Seleccionar Zona *)
     const dataWithDefaultOption: Zone[] = useMemo(() => [
         { id: '', nombre: 'Seleccionar Zona *' },
         ...zones
@@ -91,22 +90,20 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
 // --- FIN Componente Modal Selector de Zona ---
 
 
-// --- ¡NUEVO! Componente Modal Selector de Rubro ---
-// (Copiado y adaptado desde ZoneSelectorModal)
+// --- Componente Modal Selector de Rubro (Sin cambios) ---
 const RubroSelectorModal = ({ visible, onClose, rubros, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
-    rubros: Rubro[]; // <-- Tipo Rubro
+    rubros: Rubro[]; 
     selectedId: string;
     onSelect: (id: string) => void;
 }) => {
-    // Opción por defecto (Opcional, no requerido)
     const dataWithDefaultOption: Rubro[] = useMemo(() => [
-        { id: '', nombre: 'Seleccionar Rubro (Opcional)', metaSemanal: 0 }, // <-- Tipo Rubro
+        { id: '', nombre: 'Seleccionar Rubro (Opcional)', metaSemanal: 0 }, 
         ...rubros
     ], [rubros]);
 
-    const renderItem = useCallback(({ item }: { item: Rubro }) => ( // <-- Tipo Rubro
+    const renderItem = useCallback(({ item }: { item: Rubro }) => ( 
         <TouchableOpacity
             style={styles.modalItem}
             onPress={() => { onSelect(item.id); onClose(); }}
@@ -142,7 +139,6 @@ const RubroSelectorModal = ({ visible, onClose, rubros, selectedId, onSelect }: 
 // --- FIN Componente Modal Selector de Rubro ---
 
 
-// Usamos el tipo importado para las props
 const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [nombre, setNombre] = useState('');
     const [direccion, setDireccion] = useState('');
@@ -151,32 +147,27 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [telefono, setTelefono] = useState('');
     const [email, setEmail] = useState('');
     const [zonaId, setZonaId] = useState('');
-    // --- ¡NUEVO! Estado para Rubro ---
     const [rubroId, setRubroId] = useState('');
-
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // --- ¡ACTUALIZADO! Obtenemos rubros y ESTADO OFFLINE ---
     const { availableZones, vendors, refreshAllData, rubros, isOffline } = useData();
     const currentUser = auth.currentUser;
 
     const [mapModalVisible, setMapModalVisible] = useState(false);
     const [tempRegion, setTempRegion] = useState({
-        latitude: -29.4134, // La Rioja, Argentina (Ajustado)
+        latitude: -29.4134, 
         longitude: -66.8569,
         latitudeDelta: 0.0922,
         longitudeDelta: 0.0421,
     });
     const [locationLoading, setLocationLoading] = useState(false);
-    const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); // NUEVO ESTADO para el modal de zona
-    // --- ¡NUEVO! Estado para modal de Rubro ---
+    const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); 
     const [isRubroModalVisible, setIsRubroModalVisible] = useState(false);
 
-    // Lógica para obtener vendedor y zonas (sin cambios)
+    // Lógica de Vendedor y Zonas (Sin cambios)
     const currentVendedor = useMemo(() => {
         if (!currentUser || !vendors) return null;
-        // Buscamos por firebaseAuthUid
         return vendors.find((v: any) => v.firebaseAuthUid === currentUser.uid);
     }, [currentUser, vendors]);
 
@@ -184,25 +175,22 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         if (!currentVendedor || !currentVendedor.zonasAsignadas || !availableZones) return [];
         const zonaIds = currentVendedor.zonasAsignadas;
         return availableZones
-            .filter(z => z && z.id && zonaIds.includes(z.id)) // Añadido chequeo z && z.id
+            .filter(z => z && z.id && zonaIds.includes(z.id)) 
             .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     }, [currentVendedor, availableZones]);
 
-    // --- ¡NUEVO! Lógica para Rubros ---
-    // Simplemente ordenamos los rubros por nombre
+    // Lógica de Rubros (Sin cambios)
     const rubrosOrdenados = useMemo(() => {
-        // Aseguramos que 'rubros' sea un array antes de hacer spread
         const safeRubros = Array.isArray(rubros) ? rubros : [];
         return [...safeRubros].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     }, [rubros]);
 
-    // Búsqueda del nombre de la zona seleccionada para mostrar en el botón
+    // Nombres seleccionados (Sin cambios)
     const selectedZoneName = useMemo(() => {
         const selectedZone = zonasDelVendedor.find(z => z.id === zonaId);
         return selectedZone ? selectedZone.nombre : 'Seleccionar Zona *';
     }, [zonaId, zonasDelVendedor]);
 
-    // --- ¡NUEVO! Búsqueda del nombre del rubro seleccionado ---
     const selectedRubroName = useMemo(() => {
         const safeRubros = Array.isArray(rubros) ? rubros : [];
         const selectedRubro = safeRubros.find(r => r.id === rubroId);
@@ -210,7 +198,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     }, [rubroId, rubros]);
 
 
-    // handleLocation con useCallback
+    // handleLocation (Sin cambios)
     const handleLocation = useCallback(async () => {
         setLocationLoading(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -223,25 +211,24 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         try {
             let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
             const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-            setTempRegion(prev => ({ ...prev, ...coords })); // Actualiza región temporal
-            setLocation(coords); // Guarda la ubicación final
-            setMapModalVisible(true); // Abre el modal
+            setTempRegion(prev => ({ ...prev, ...coords })); 
+            setLocation(coords); 
+            setMapModalVisible(true); 
         } catch (error) {
-            console.error("Error obteniendo ubicación:", error); // Loguear el error
+            console.error("Error obteniendo ubicación:", error);
             Alert.alert('Error de Ubicación', 'No se pudo obtener la ubicación actual.');
         } finally {
             setLocationLoading(false);
         }
-    }, [tempRegion]); // tempRegion como dependencia por si se usa en el futuro
+    }, [tempRegion]); 
 
-    // handleConfirmLocation con useCallback
+    // handleConfirmLocation (Sin cambios)
     const handleConfirmLocation = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setMapModalVisible(false); // Simplemente cierra el modal
+        setMapModalVisible(false);
     }, []);
 
-    // handleSubmit con useCallback y navigation.goBack()
-    // --- ¡ACTUALIZADO! handleSubmit (Offline) ---
+    // --- handleSubmit (MODIFICADO CON SDK NATIVO) ---
     const handleSubmit = useCallback(async () => {
         if (!nombre.trim() || !zonaId) {
             Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
@@ -262,25 +249,25 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 telefono: telefono.trim(),
                 email: email.trim().toLowerCase(),
                 zonaId,
-                // --- ¡NUEVO! Añadimos rubroId ---
-                rubroId: rubroId || '', // Guardamos el ID o un string vacío si es opcional
+                rubroId: rubroId || '', 
                 location: location || null,
                 vendedorAsignadoId: currentUser?.uid,
-                fechaCreacion: new Date(), // Firestore convertirá esto a Timestamp
+                // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                // Reemplazamos 'new Date()' por 'firestore.FieldValue.serverTimestamp()'
+                fechaCreacion: firestore.FieldValue.serverTimestamp(),
+                // --- FIN DE CAMBIOS ---
             };
 
-            // Esta promesa se resolverá INMEDIATAMENTE si estamos offline,
-            // guardando en la cola local.
-            await addDoc(collection(db, 'clientes'), newClientData);
+            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+            // Reemplazamos 'addDoc(collection(db, ...))' por 'db.collection(...).add()'
+            // Esto funcionará offline automáticamente.
+            await db.collection('clientes').add(newClientData);
+            // --- FIN DE CAMBIOS ---
             
-            // Si estamos online, refrescamos. Si estamos offline,
-            // no es necesario refrescar (ya que la data de 'clientes' 
-            // no se actualizará hasta volver a conectar).
             if (!isOffline) {
-                await refreshAllData(); // Refresca los datos globales
+                await refreshAllData(); 
             }
 
-            // --- ¡NUEVO! Mensaje de Toast dinámico ---
             Toast.show({
                 type: 'success',
                 text1: isOffline ? 'Cliente Guardado Localmente' : 'Cliente Creado',
@@ -291,42 +278,36 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 visibilityTime: 3000
             });
 
-            navigation.goBack(); // <-- CORRECCIÓN: Usa navigation.goBack()
+            navigation.goBack(); 
 
         } catch (error) {
             console.error("Error al crear el cliente:", error);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            // --- ¡NUEVO! Mensaje de error genérico ---
-            // Ya no culpamos a la "conexión"
             Alert.alert('Error', 'No se pudo crear el cliente. Inténtalo de nuevo.');
-            setIsSubmitting(false); // <-- Asegura resetear en caso de error
+            setIsSubmitting(false); 
         }
-        // No necesitamos finally aquí porque la navegación desmonta el componente
-    // --- ¡ACTUALIZADO! Añadimos isOffline y rubroId a las dependencias ---
     }, [nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, location, currentUser, isSubmitting, refreshAllData, navigation, isOffline]);
+    // --- FIN de handleSubmit ---
 
-    // Función para manejar el cierre del modal del mapa
+
+    // Callbacks de Mapa (Sin cambios)
     const handleMapModalClose = useCallback(() => {
         setMapModalVisible(false);
     }, []);
 
-    // Función para actualizar la región del mapa y la ubicación temporal
     const handleRegionChangeComplete = useCallback((region: typeof tempRegion) => {
-        // Actualizamos la región visible del mapa
         setTempRegion(region);
-        // Actualizamos la ubicación del marcador (donde el usuario soltó)
         setLocation({ latitude: region.latitude, longitude: region.longitude });
     }, []);
 
-    // Función para cuando se termina de arrastrar el marcador
     const handleMarkerDragEnd = useCallback((e: any) => {
         const newCoords = e.nativeEvent.coordinate;
         setLocation(newCoords);
-        // Opcional: Centrar el mapa en la nueva coordenada del marcador
         setTempRegion(prev => ({ ...prev, ...newCoords }));
     }, []);
 
 
+    // --- RENDER (Sin cambios) ---
     return (
         <KeyboardAvoidingView
             style={styles.container}
@@ -335,16 +316,14 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
 
-            {/* Header adaptado */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Nuevo Cliente</Text>
-                <View style={styles.headerButton} />{/* Espaciador */}
+                <View style={styles.headerButton} />
             </View>
 
-            {/* ScrollView y Formulario */}
             <ScrollView style={styles.formContainer} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 
                 <View style={styles.inputGroup}>
@@ -372,10 +351,9 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     <TextInput style={styles.input} placeholder="Email" placeholderTextColor={COLORS.textSecondary} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
                 </View>
 
-                {/* REEMPLAZO DEL PICKER: Botón y Modal */}
+                {/* Selector de Zona */}
                 <View style={styles.pickerContainer}>
                     <Feather name="compass" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    {/* Botón que simula el Picker */}
                     <TouchableOpacity
                         style={styles.pickerButton}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsZoneModalVisible(true); }}
@@ -387,7 +365,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     </TouchableOpacity>
                 </View>
 
-                {/* --- ¡NUEVO! Selector de Rubro --- */}
+                {/* Selector de Rubro */}
                 <View style={styles.pickerContainer}>
                     <Feather name="briefcase" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TouchableOpacity
@@ -410,58 +388,48 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 {/* Botón de Guardar */}
                 <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId) && styles.buttonDisabled]} onPress={handleSubmit} disabled={isSubmitting || !nombre.trim() || !zonaId}>
                     {isSubmitting ? (<ActivityIndicator color={COLORS.primaryDark} />) 
-                    // --- ¡NUEVO! Texto de botón dinámico ---
                     : (<Text style={styles.buttonText}>{isOffline ? 'Guardar (Offline)' : 'Guardar Cliente'}</Text>)}
                 </TouchableOpacity>
             </ScrollView>
 
-            {/* Modal del Mapa (adaptado para usar callbacks) */}
+            {/* Modal del Mapa */}
             <Modal
                 visible={mapModalVisible}
                 animationType="slide"
-                onRequestClose={handleMapModalClose} // Usar callback
+                onRequestClose={handleMapModalClose} 
             >
                 <View style={styles.mapContainer}>
                     <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
                     <MapView
                         provider={PROVIDER_GOOGLE}
                         style={styles.map}
-                        // Usar region controlada por tempRegion
                         region={tempRegion}
-                        // Actualizar region y location al mover el mapa
                         onRegionChangeComplete={handleRegionChangeComplete}
                         showsUserLocation
-                    // followsUserLocation // Podría ser conflictivo con el drag
                     >
-                        {/* Usar location para la posición del marcador */}
                         {location && (
                             <Marker
                                 coordinate={location}
                                 draggable
-                                onDragEnd={handleMarkerDragEnd} // Usar callback
+                                onDragEnd={handleMarkerDragEnd} 
                             />
                         )}
                     </MapView>
-                    {/* Overlay del marcador central (si prefieres mover mapa en lugar de marcador) */}
-                    {/* <View style={styles.mapOverlay}>
-                            <Feather name="plus" size={32} color={COLORS.danger} style={{ position: 'absolute' }} />
-                    </View> */}
                     <View style={styles.mapControls}>
                         <Text style={styles.mapInstructions}>
-                            {/* Ajusta instrucciones si usas marcador central */}
-                            Mueva el mapa hasta que el marcador esté en la ubicación exacta.
+                             Mueva el mapa hasta que el marcador esté en la ubicación exacta.
                         </Text>
-                        <TouchableOpacity style={styles.button} onPress={handleConfirmLocation}>
+                         <TouchableOpacity style={styles.button} onPress={handleConfirmLocation}>
                             <Text style={styles.buttonText}>Confirmar Ubicación</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={{ ...styles.button, backgroundColor: 'transparent', marginTop: 10 }} onPress={handleMapModalClose}>
-                            <Text style={{ ...styles.buttonText, color: COLORS.textSecondary }}>Cancelar</Text>
+                         <TouchableOpacity style={{ ...styles.button, backgroundColor: 'transparent', marginTop: 10 }} onPress={handleMapModalClose}>
+                            <Text style={{...styles.buttonText, color: COLORS.textSecondary }}>Cancelar</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
             </Modal>
 
-            {/* MODAL DE SELECCIÓN DE ZONA */}
+            {/* Modal de Zona */}
             <ZoneSelectorModal
                 visible={isZoneModalVisible}
                 onClose={() => setIsZoneModalVisible(false)}
@@ -470,7 +438,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 onSelect={setZonaId}
             />
 
-            {/* --- ¡NUEVO! Modal de Selección de Rubro --- */}
+            {/* Modal de Rubro */}
             <RubroSelectorModal
                 visible={isRubroModalVisible}
                 onClose={() => setIsRubroModalVisible(false)}
@@ -482,7 +450,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     );
 };
 
-// --- Estilos (Ajustados para el nuevo selector y modal) ---
+// --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -501,7 +469,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: COLORS.textPrimary,
         textAlign: 'center',
-        // Quitamos flex: 1 para que el space-between funcione mejor con los botones de ancho fijo
     },
     formContainer: {
         flex: 1,
@@ -533,13 +500,10 @@ const styles = StyleSheet.create({
         borderRadius: 15,
         borderWidth: 1,
         borderColor: COLORS.glassBorder,
-        paddingLeft: 15, // Padding solo a la izquierda para el ícono
+        paddingLeft: 15, 
         marginBottom: 15,
         height: 58
     },
-    // Eliminado: picker y pickerItemAndroid
-
-    // NUEVOS ESTILOS PARA EL SELECTOR BASADO EN TOUCHABLE
     pickerButton: {
         flex: 1,
         flexDirection: 'row',
@@ -551,7 +515,6 @@ const styles = StyleSheet.create({
     pickerButtonText: {
         fontSize: 16,
     },
-    // ESTILOS DEL MODAL DE ZONAS (NUEVOS)
     modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)' },
     modalContent: { width: '85%', backgroundColor: COLORS.backgroundEnd, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
     modalHeader: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.glassBorder, marginBottom: 10, alignItems: 'center' },
@@ -561,16 +524,13 @@ const styles = StyleSheet.create({
     separatorModal: { height: 1, backgroundColor: COLORS.glassBorder },
     modalCloseButton: { marginTop: 15, padding: 12, backgroundColor: COLORS.disabled, borderRadius: 12, alignItems: 'center' },
     modalCloseText: { color: COLORS.primaryDark, fontWeight: 'bold' },
-
-
     locationButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}20`, marginBottom: 20, marginTop: 5 },
     locationButtonText: { color: COLORS.primary, fontSize: 16, fontWeight: 'bold' },
     button: { backgroundColor: COLORS.primary, padding: 18, borderRadius: 15, alignItems: 'center' },
-    buttonDisabled: { backgroundColor: COLORS.disabled }, // Usar color disabled
+    buttonDisabled: { backgroundColor: COLORS.disabled }, 
     buttonText: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold' },
     mapContainer: { flex: 1 },
     map: { ...StyleSheet.absoluteFillObject },
-    // mapOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', zIndex: 10, pointerEvents: 'none' }, // Para marcador central
     mapControls: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLORS.backgroundEnd, padding: 20, paddingBottom: 40, borderTopLeftRadius: 20, borderTopRightRadius: 20, gap: 10 },
     mapInstructions: { color: COLORS.textSecondary, textAlign: 'center', fontSize: 15, marginBottom: 10 },
 });

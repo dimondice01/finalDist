@@ -20,7 +20,6 @@
       "supportsTablet": true
     },
     "android": {
-     
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.dimondice.Distribuidora",
@@ -31,7 +30,7 @@
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#FFFFFF" 
+        "backgroundColor": "#FFFFFF"
       },
       "config": {
         "googleMaps": {
@@ -60,8 +59,10 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
-  
+      ],
+      
+      "@react-native-firebase/app"
+      
     ],
     "extra": {
       "eas": {
