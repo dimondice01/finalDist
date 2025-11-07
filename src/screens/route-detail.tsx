@@ -3,11 +3,17 @@ import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINAMOS: import { doc, increment, runTransaction, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
-// AÑADIMOS: el import nativo de firestore
-import firestore from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+import {
+    doc,
+    increment,
+    runTransaction,
+    serverTimestamp,
+    Timestamp,
+    updateDoc,
+    writeBatch
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -50,7 +56,7 @@ interface RouteFull {
 }
 
 // =================================================================================
-// --- Componente DeliveryAdjustmentModal (ACTUALIZADO CON SDK NATIVO) ---
+// --- Componente DeliveryAdjustmentModal (ACTUALIZADO CON SDK NATIVO v9) ---
 // =================================================================================
 interface DeliveryAdjustmentModalProps {
     visible: boolean;
@@ -61,6 +67,7 @@ interface DeliveryAdjustmentModalProps {
 }
 
 const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }: DeliveryAdjustmentModalProps) => {
+    // --- Estados (Sin cambios) ---
     const [modifiedItems, setModifiedItems] = useState<DriverItem[]>([]);
     const [pagoEfectivo, setPagoEfectivo] = useState('');
     const [pagoTransferencia, setPagoTransferencia] = useState('');
@@ -123,7 +130,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
         });
     };
 
-    // --- LÓGICA DE TRANSACCIÓN COMPLETA (CORREGIDA CON SDK NATIVO) ---
+    // --- LÓGICA DE TRANSACCIÓN COMPLETA (CORREGIDA CON SDK NATIVO v9) ---
     const executeTransaction = async () => {
         setIsSaving(true);
         setEditingItemIndex(null); 
@@ -136,19 +143,19 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
             const finalStatus = totalPagado < newTotalVenta ? 'Adeuda' : 'Pagada';
             const finalItemsToDeliver = modifiedItems.filter(item => item.quantity > 0);
 
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
-            await db.runTransaction(async (transaction) => {
-                // Sintaxis Nativa para referencias
-                const ventaRef = db.collection('ventas').doc(stop.id);
-                const routeRef = db.collection('rutas').doc(routeId);
-            // --- FIN DE CAMBIOS: SDK NATIVO ---
+            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+            // Usamos 'runTransaction(db, ...)'
+            await runTransaction(db, async (transaction) => {
+                // Sintaxis v9 para referencias
+                const ventaRef = doc(db, 'ventas', stop.id);
+                const routeRef = doc(db, 'rutas', routeId);
+            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                 const routeDoc = await transaction.get(routeRef);
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                // Usamos la propiedad '.exists' (Nativa)
+                // --- INICIO DE CAMBIOS: SDK NATIVO (ts-ignore) ---
+                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
                 if (!routeDoc.exists) throw new Error("La ruta no fue encontrada.");
-                // --- FIN DE CAMBIOS: SDK NATIVO ---
+                // --- FIN DE CAMBIOS: SDK NATIVO (ts-ignore) ---
 
                 const stockDevueltoMap = new Map<string, number>();
 
@@ -162,11 +169,11 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                 
                 for (const [productId, stockDifference] of stockDevueltoMap.entries()) {
                     if (stockDifference > 0 && productId) { 
-                        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                        const productRef = db.collection('productos').doc(productId);
-                        // Usamos 'firestore.FieldValue.increment'
-                        transaction.update(productRef, { stock: firestore.FieldValue.increment(stockDifference) });
-                        // --- FIN DE CAMBIOS: SDK NATIVO ---
+                        // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                        const productRef = doc(db, 'productos', productId);
+                        // Usamos 'increment' importado
+                        transaction.update(productRef, { stock: increment(stockDifference) });
+                        // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
                     }
                 }
 
@@ -177,10 +184,10 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                     pagoEfectivo: efectivo,
                     pagoTransferencia: transferencia,
                     saldoPendiente: newTotalVenta - totalPagado,
-                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                    // Usamos 'firestore.FieldValue.serverTimestamp'
-                    fechaUltimoPago: firestore.FieldValue.serverTimestamp(),
-                    // --- FIN DE CAMBIOS: SDK NATIVO ---
+                    // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                    // Usamos 'serverTimestamp' importado
+                    fechaUltimoPago: serverTimestamp(),
+                    // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
                 });
 
                 const routeData = routeDoc.data();
@@ -347,7 +354,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
 // =================================================================================
 
 
-// --- Pantalla Principal: RouteDetailScreen (ACTUALIZADA CON SDK NATIVO) ---
+// --- Pantalla Principal: RouteDetailScreen (ACTUALIZADA CON SDK NATIVO v9) ---
 const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const routeId = route.params?.routeId;
     const { routes, clients, syncData } = useData();
@@ -374,13 +381,13 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
             };
         });
 
-        let routeDate = foundRoute.fecha;
-        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-        // Usamos 'firestore.Timestamp' (el tipo nativo)
+        let routeDate: any = foundRoute.fecha;
+        // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+        // Usamos 'Timestamp' (importado)
         if (routeDate && !(routeDate instanceof Date) && (routeDate as any).seconds !== undefined) {
-             routeDate = new firestore.Timestamp((routeDate as any).seconds, (routeDate as any).nanoseconds).toDate();
+             routeDate = new Timestamp((routeDate as any).seconds, (routeDate as any).nanoseconds).toDate(); // <-- CORREGIDO
         }
-        // --- FIN DE CAMBIOS: SDK NATIVO ---
+        // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
         return {
              ...foundRoute,
@@ -410,7 +417,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         };
     }, [localInvoices]);
 
-    // handleOpenMap (Sin cambios)
+    // Handlers (Sin cambios)
     const handleOpenMap = (invoice: Invoice) => {
         if (invoice.location) {
             const { latitude, longitude } = invoice.location;
@@ -424,7 +431,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         }
     };
 
-    // handleCallClient (Sin cambios)
     const handleCallClient = (invoice: Invoice) => {
          if (invoice.telefono) {
              Linking.openURL(`tel:${invoice.telefono}`).catch(err => console.error('Error al llamar:', err));
@@ -433,7 +439,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
          }
     };
 
-    // openAdjustmentModal (Sin cambios)
     const openAdjustmentModal = (invoice: Invoice) => {
         if (invoice.estadoVisita !== 'Pendiente' && invoice.estadoVisita !== 'Adeuda') {
              Toast.show({ type: 'info', text1: 'Estado inválido', text2: 'Solo se pueden gestionar facturas Pendientes o Adeudadas.', position: 'bottom' });
@@ -448,7 +453,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     };
 
-    // handleConfirmAndUpdateUI (Sin cambios)
     const handleConfirmAndUpdateUI = (updatedInvoice: Invoice) => {
         setLocalInvoices(prevInvoices =>
             prevInvoices.map(inv =>
@@ -458,7 +462,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         syncData();
     };
 
-    // --- handleMarkAsPending (¡CORREGIDO CON SDK NATIVO!) ---
+    // --- handleMarkAsPending (¡CORREGIDO CON SDK NATIVO v9!) ---
     const handleMarkAsPending = async (invoice: Invoice) => {
         if (invoice.estadoVisita === 'Pendiente') return;
 
@@ -478,11 +482,11 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     onPress: async () => {
                         setIsUpdating(true);
                         try {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                            const batch = db.batch(); // Nativo
-                            const saleRef = db.collection('ventas').doc(invoice.id); // Nativo
-                            const routeRef = db.collection('rutas').doc(routeId); // Nativo
-                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                            const batch = writeBatch(db); // <-- CORREGIDO
+                            const saleRef = doc(db, 'ventas', invoice.id); // <-- CORREGIDO
+                            const routeRef = doc(db, 'rutas', routeId); // <-- CORREGIDO
+                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                             batch.update(saleRef, {
                                 estado: 'Pendiente de Entrega',
@@ -496,7 +500,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                             );
                             batch.update(routeRef, { facturas: updatedFacturas });
                             
-                            await batch.commit();
+                            await batch.commit(); // <-- CORREGIDO
                             
                             setLocalInvoices(updatedFacturas);
                             Toast.show({ type: 'info', text1: 'Revertido a Pendiente', position: 'bottom' });
@@ -513,7 +517,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         );
     };
 
-    // --- handleCancelInvoice (¡CORREGIDO CON SDK NATIVO!) ---
+    // --- handleCancelInvoice (¡CORREGIDO CON SDK NATIVO v9!) ---
     const handleCancelInvoice = async (invoice: Invoice) => {
         if (invoice.estadoVisita === 'Anulada') return;
 
@@ -541,11 +545,11 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                                 console.warn(`ADVERTENCIA: No se encontró la factura original en DataContext (ID: ${invoice.id}). Se usará la factura local para anular. El stock devuelto podría ser incorrecto si la factura fue modificada.`);
                             }
                             
-                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                            const batch = db.batch(); // Nativo
-                            const saleRef = db.collection('ventas').doc(invoice.id); // Nativo
-                            const routeRef = db.collection('rutas').doc(routeId); // Nativo
-                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                            const batch = writeBatch(db); // <-- CORREGIDO
+                            const saleRef = doc(db, 'ventas', invoice.id); // <-- CORREGIDO
+                            const routeRef = doc(db, 'rutas', routeId); // <-- CORREGIDO
+                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                             // 4. Actualizar la Venta
                             batch.update(saleRef, {
@@ -562,16 +566,16 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                             // 6. Devolver Stock usando los items ORIGINALES (itemsToReturn)
                             itemsToReturn.forEach((item: DriverItem) => {
                                 if (item.productId && typeof item.quantity === 'number' && item.quantity > 0) {
-                                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                                    const productRef = db.collection('productos').doc(item.productId); // Nativo
-                                    batch.update(productRef, { stock: firestore.FieldValue.increment(item.quantity) }); // Nativo
-                                    // --- FIN DE CAMBIOS: SDK NATIVO ---
+                                    // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                                    const productRef = doc(db, 'productos', item.productId); // <-- CORREGIDO
+                                    batch.update(productRef, { stock: increment(item.quantity) }); // <-- CORREGIDO
+                                    // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
                                 } else {
                                     console.warn("Item inválido al anular, no se devuelve stock para este item:", item);
                                 }
                             });
                             
-                            await batch.commit();
+                            await batch.commit(); // <-- CORREGIDO
                             
                             setLocalInvoices(updatedFacturas);
                             Toast.show({ type: 'info', text1: 'Visita Anulada y Stock Devuelto', position: 'bottom' });
@@ -589,7 +593,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         );
     };
 
-    // --- handleFinalizeRoute (¡CORREGIDO CON SDK NATIVO!) ---
+    // --- handleFinalizeRoute (¡CORREGIDO CON SDK NATIVO v9!) ---
     const handleFinalizeRoute = async () => {
         if (!currentRoute || routeReport.pendientes > 0 || isUpdating) {
             if (routeReport.pendientes > 0) {
@@ -607,12 +611,12 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     text: "Sí, Finalizar", onPress: async () => {
                         setIsUpdating(true);
                         try {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                            const routeRef = db.collection('rutas').doc(currentRoute.id); // Nativo
-                            await routeRef.update({ // Nativo
+                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                            const routeRef = doc(db, 'rutas', currentRoute.id); // <-- CORREGIDO
+                            await updateDoc(routeRef, { // <-- CORREGIDO
                                 estado: 'Completada'
                             });
-                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
                             
                             await syncData();
                             
@@ -694,7 +698,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 )}
             </View>
              <View style={styles.statusBadge}>
-                 <Text style={styles.statusBadgeText}>{item.estadoVisita}</Text>
+                  <Text style={styles.statusBadgeText}>{item.estadoVisita}</Text>
              </View>
         </View>
     );

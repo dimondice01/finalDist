@@ -2,9 +2,12 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINADAS: import { doc, runTransaction } from 'firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+import {
+    doc,
+    runTransaction
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -52,25 +55,24 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
         setIsSaving(true);
 
         try {
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Sintaxis Nativa para la referencia
-            const saleRef = db.collection('ventas').doc(saleId as string);
+            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+            // Sintaxis v9 para la referencia
+            const saleRef = doc(db, 'ventas', saleId as string); // <-- CORREGIDO
             
-            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
-            await db.runTransaction(async (transaction) => {
-            // --- FIN DE CAMBIOS: SDK NATIVO ---
+            // Sintaxis v9 para la transacción
+            await runTransaction(db, async (transaction) => { // <-- CORREGIDO
+            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                 const saleDoc = await transaction.get(saleRef);
                 
                 // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                // Usamos la propiedad '.exists' (Nativa) en lugar de '.exists()' (Web)
-                if (!saleDoc.exists) {
+                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
+                if (!saleDoc.exists) { // <-- CORREGIDO con ts-ignore
                 // --- FIN DE CAMBIOS: SDK NATIVO ---
                     throw "¡La venta no existe!";
                 }
 
                 const data = saleDoc.data();
-                // Si 'data' es undefined (nunca debería pasar si .exists es true), lanzamos error
                 if (!data) {
                     throw "No se pudieron leer los datos de la venta.";
                 }
@@ -104,22 +106,28 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
 
     return (
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
-            <StatusBar barStyle="light-content" />
+            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            
+            {/* --- HEADER MEJORADO --- */}
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Registrar Cobro</Text>
+                <View style={styles.headerButton} /> {/* Placeholder */}
             </View>
 
             <View style={styles.content}>
                 <Text style={styles.saleInfo}>{saleInfo}</Text>
+                
+                {/* --- TARJETA DE SALDO MEJORADA --- */}
                 <View style={styles.balanceCard}>
                     <Text style={styles.balanceLabel}>Saldo Pendiente</Text>
                     <Text style={styles.balanceAmount}>${(saldoPendiente || 0).toFixed(2)}</Text>
                 </View>
 
+                {/* --- INPUTS MEJORADOS --- */}
                 <View style={styles.inputContainer}>
                     <Feather name="dollar-sign" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TextInput
@@ -144,35 +152,134 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
                     />
                 </View>
 
+                {/* --- BOTÓN MEJORADO --- */}
                 <TouchableOpacity style={[styles.confirmButton, isSaving && styles.confirmButtonDisabled]} onPress={handleRegisterPayment} disabled={isSaving}>
-                    {isSaving ? <ActivityIndicator color={COLORS.primaryDark} /> : <Text style={styles.confirmButtonText}>Confirmar Pago</Text>}
+                    {isSaving ? (
+                        <ActivityIndicator color={COLORS.primaryDark} /> 
+                    ) : (
+                        <Text style={styles.confirmButtonText}>Confirmar Pago</Text>
+                    )}
                 </TouchableOpacity>
             </View>
         </KeyboardAvoidingView>
     );
 };
 
-// --- ESTILOS (Sin cambios) ---
+// --- ESTILOS MEJORADOS ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
-    background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingBottom: 20, paddingHorizontal: 20 },
-    backButton: { position: 'absolute', left: 20, top: 60, padding: 10 },
-    title: { fontSize: 28, fontWeight: '700', color: COLORS.textPrimary },
-    content: { padding: 20, flex: 1, justifyContent: 'center' },
-    saleInfo: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20 },
+    container: { 
+        flex: 1, 
+        backgroundColor: COLORS.backgroundEnd 
+    },
+    background: { 
+        position: 'absolute', 
+        top: 0, 
+        left: 0, 
+        right: 0, 
+        height: '100%' 
+    },
+    // --- HEADER ESTANDARIZADO ---
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingTop: (StatusBar.currentHeight || 0) + 20,
+        paddingBottom: 20, 
+        paddingHorizontal: 10
+    },
+    headerButton: { 
+        padding: 10,
+        width: 44,
+        alignItems: 'center',
+    },
+    title: { 
+        fontSize: 22, 
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary 
+    },
+    // --- FIN HEADER ---
+    content: { 
+        padding: 25, // Más padding
+        flex: 1, 
+        justifyContent: 'center' 
+    },
+    saleInfo: { 
+        fontSize: 16, 
+        color: COLORS.textSecondary, 
+        textAlign: 'center', 
+        marginBottom: 20,
+        lineHeight: 22, // Mejor espaciado
+    },
     
-    balanceCard: { backgroundColor: COLORS.glass, borderRadius: 20, padding: 25, alignItems: 'center', marginBottom: 40, borderWidth: 1, borderColor: COLORS.glassBorder },
-    balanceLabel: { color: COLORS.textSecondary, fontSize: 18 },
-    balanceAmount: { color: COLORS.primary, fontSize: 42, fontWeight: 'bold', marginTop: 5 },
+    balanceCard: { 
+        backgroundColor: COLORS.glass, 
+        borderRadius: 20, 
+        paddingVertical: 20, // Padding vertical y horizontal
+        paddingHorizontal: 25,
+        alignItems: 'center', 
+        marginBottom: 30, // Menos margen
+        borderWidth: 1, 
+        borderColor: COLORS.glassBorder 
+    },
+    balanceLabel: { 
+        color: COLORS.textSecondary, 
+        fontSize: 16, // Más legible
+        fontWeight: '500',
+    },
+    balanceAmount: { 
+        color: COLORS.primary, 
+        fontSize: 40, // Ligeramente más pequeño
+        fontWeight: 'bold', 
+        marginTop: 8, // Más espacio
+    },
 
-    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 15, borderWidth: 1, borderColor: COLORS.glassBorder, paddingHorizontal: 15, marginBottom: 20, height: 58 },
-    inputIcon: { marginRight: 10 },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: 18 },
+    // --- INPUTS ESTANDARIZADOS ---
+    inputContainer: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        backgroundColor: COLORS.glass, 
+        borderRadius: 15, // Más redondeado
+        borderWidth: 1, 
+        borderColor: COLORS.glassBorder, 
+        paddingHorizontal: 15, 
+        marginBottom: 15, // Menos espacio
+        height: 52, // Altura estándar
+    },
+    inputIcon: { 
+        marginRight: 10 
+    },
+    input: { 
+        flex: 1, 
+        color: COLORS.textPrimary, 
+        fontSize: 17, // Ligeramente más grande
+        height: '100%'
+    },
     
-    confirmButton: { backgroundColor: COLORS.primary, padding: 18, borderRadius: 15, alignItems: 'center', marginTop: 20 },
-    confirmButtonDisabled: { backgroundColor: COLORS.disabled },
-    confirmButtonText: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold' },
+    // --- BOTÓN ESTANDARIZADO ---
+    confirmButton: { 
+        backgroundColor: COLORS.primary, 
+        padding: 15, // Padding estándar
+        borderRadius: 15, // Más redondeado
+        alignItems: 'center', 
+        marginTop: 20, // Más espacio
+        height: 52, // Altura estándar
+        justifyContent: 'center', // Centra el spinner
+        shadowColor: COLORS.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 5,
+        elevation: 6,
+    },
+    confirmButtonDisabled: { 
+        backgroundColor: COLORS.disabled,
+        shadowOpacity: 0,
+        elevation: 0,
+    },
+    confirmButtonText: { 
+        color: COLORS.primaryDark, 
+        fontSize: 18, 
+        fontWeight: 'bold' 
+    },
 });
 
 export default RegisterPaymentScreen;

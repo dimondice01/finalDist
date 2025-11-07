@@ -1,9 +1,24 @@
+// context/DataContext.tsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNetInfo } from '@react-native-community/netinfo';
 
-// --- INICIO DE CAMBIOS: Importaciones NATIVAS ---
-import firestore, { FirebaseFirestoreTypes } from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: Importaciones NATIVAS ---
+// --- INICIO DE CAMBIOS: Importaciones NATIVAS (v9 Modular) ---
+import firestore, {
+    addDoc,
+    collection,
+    doc, // Mantenemos 'firestore' para FieldPath
+    FirebaseFirestoreTypes,
+    getDocs,
+    onSnapshot,
+    query,
+    runTransaction,
+    serverTimestamp,
+    Timestamp,
+    // FieldPath se usa a través del objeto 'firestore', no se importa por separado
+    updateDoc,
+    where
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS ---
 
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Toast from 'react-native-toast-message';
@@ -11,7 +26,7 @@ import Toast from 'react-native-toast-message';
 import { auth, db } from '../db/firebase-service';
 
 // --- Definición de Interfaces Estrictas ---
-// (Sin cambios en las interfaces)
+// (Sin cambios)
 export interface Product {
     id: string;
     nombre: string;
@@ -108,8 +123,7 @@ export interface Route {
 }
 
 
-// --- INTERFAZ IDataContext (MODIFICADA) ---
-// (Sin cambios en la interfaz)
+// --- INTERFAZ IDataContext (Sin cambios) ---
 export interface IDataContext {
     products: Product[];
     clients: Client[];
@@ -132,8 +146,7 @@ export interface IDataContext {
     descontarStockLocalmente: (items: CartItem[]) => void;
 }
 
-// Valor por defecto para el contexto
-// (Sin cambios en el valor por defecto)
+// --- Valor por defecto (Sin cambios) ---
 const defaultContextValue: IDataContext = {
     products: [],
     clients: [],
@@ -159,7 +172,7 @@ const defaultContextValue: IDataContext = {
 const DataContext = createContext<IDataContext>(defaultContextValue);
 
 export const DataProvider = ({ children }: { children: ReactNode }) => {
-    // --- ESTADOS CON TIPOS ESTRICTOS ---
+    // --- ESTADOS (Sin cambios) ---
     const [products, setProducts] = useState<Product[]>([]);
     const [clients, setClients] = useState<Client[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
@@ -170,15 +183,16 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [routes, setRoutes] = useState<Route[]>([]);
     const [rubros, setRubros] = useState<Rubro[]>([]);
     
-    // --- BANDERAS DE CARGA ---
+    // --- BANDERAS DE CARGA (Sin cambios) ---
     const [isLoading, setIsLoading] = useState(true);
     const [isInitialDataLoaded, setIsInitialDataLoaded] = useState(false);
 
-    // --- ESTADO DE CONEXIÓN ---
+    // --- ESTADO DE CONEXIÓN (Sin cambios) ---
     const [isOffline, setIsOffline] = useState(false);
     const netInfo = useNetInfo();
     const prevIsConnected = useRef<boolean | null>(null);
 
+    // --- ESTADOS DERIVADOS (Sin cambios) ---
     const currentUser = auth.currentUser; 
     const currentVendor = useMemo(() => {
         if (!currentUser || vendors.length === 0) return null;
@@ -186,8 +200,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentUser, vendors]);
     const userRole = currentVendor?.rango;
 
-    // Función auxiliar para parsear fechas al cargar desde AsyncStorage
-    // (Sin cambios)
+    // --- parseWithDates (Sin cambios) ---
     const parseWithDates = (jsonString: string | null): any[] => {
         if (!jsonString) return [];
         try {
@@ -203,10 +216,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    // Carga inicial desde el almacenamiento local
-    // (Sin cambios en la lógica)
+    // --- Carga inicial (Sin cambios) ---
     useEffect(() => {
         const loadDataFromStorage = async () => {
+            // (Sin cambios)
+            // ...
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
                 const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros'];
@@ -262,8 +276,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         loadDataFromStorage();
     }, []);
 
-    // EFECTO PARA MANEJAR EL ESTADO DE CONEXIÓN
-    // (Sin cambios)
+    // --- Efecto de Conexión (Sin cambios) ---
     useEffect(() => {
         const isConnected = netInfo.isConnected;
         if (isConnected === null) { return; }
@@ -292,7 +305,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         prevIsConnected.current = isConnected;
     }, [netInfo.isConnected]);
 
-    // Función principal para obtener datos de Firestore y guardar localmente
+    // --- fetchDataAndStore (CORREGIDO CON SINTAXIS v9 y TIPOS) ---
     const fetchDataAndStore = useCallback(async (showToast = true) => {
         setIsLoading(true);
         console.log("Iniciando obtención de datos desde Firestore...");
@@ -300,24 +313,23 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             const currentUser = auth.currentUser;
             if (!currentUser) throw new Error("No hay usuario autenticado para obtener datos.");
 
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Nueva sintaxis para queries
-            const vendorsQuerySnap = await db.collection('vendedores').where('firebaseAuthUid', '==', currentUser.uid).get();
+            const vendorsQuery = query(collection(db, 'vendedores'), where('firebaseAuthUid', '==', currentUser.uid));
+            const vendorsQuerySnap = await getDocs(vendorsQuery);
             let vendorDoc: FirebaseFirestoreTypes.DocumentSnapshot;
             let currentVendorData: Vendor | null = null; 
 
             if (vendorsQuerySnap.empty) {
                 console.warn("No se encontró vendedor por 'firebaseAuthUid', intentando por Doc ID (método antiguo)...");
-                const vendorRef = db.collection('vendedores').doc(currentUser.uid);
+                const vendorRef = doc(db, 'vendedores', currentUser.uid);
                 const vendorSnap = await vendorRef.get();
                 
-                // --- CORRECCIÓN DE SINTAXIS: .exists() es una función ---
-                if (!vendorSnap.exists()) {
+                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
+                if (!vendorSnap.exists) {
                     throw new Error("Datos del vendedor actual no encontrados en Firestore. Se cerrará la sesión.");
                 }
 
                 console.log("Vendedor encontrado por Doc ID. Actualizando documento con 'firebaseAuthUid'...");
-                await vendorRef.update({ firebaseAuthUid: currentUser.uid });
+                await updateDoc(vendorRef, { firebaseAuthUid: currentUser.uid });
                 vendorDoc = vendorSnap; 
             } else {
                 vendorDoc = vendorsQuerySnap.docs[0]; 
@@ -328,111 +340,105 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
             console.log(`Usuario identificado con rol: ${userRole} (ID: ${currentVendorData.id})`);
 
-            // Definimos las promesas de las queries
-            const productsPromise = db.collection('productos').get();
-            const categoriesPromise = db.collection('categorias').get();
-            const promosPromise = db.collection('promociones').where('estado', '==', 'activa').get();
-            const allVendorsPromise = db.collection('vendedores').get();
-            const rubrosPromise = db.collection('rubros').get();
-            // --- FIN DE CAMBIOS: SDK NATIVO ---
+            const productsPromise = getDocs(collection(db, 'productos'));
+            const categoriesPromise = getDocs(collection(db, 'categorias'));
+            const promosQuery = query(collection(db, 'promociones'), where('estado', '==', 'activa'));
+            const promosPromise = getDocs(promosQuery);
+            const allVendorsPromise = getDocs(collection(db, 'vendedores'));
+            const rubrosPromise = getDocs(collection(db, 'rubros'));
 
             let finalData: IDataContext = { ...defaultContextValue, isLoading: true };
 
-            // Procesador genérico (convierte Timestamp a Date)
             const processFirebaseDoc = (docSnap: FirebaseFirestoreTypes.DocumentSnapshot): any => {
                 const data = docSnap.data();
-                if (!data) return { id: docSnap.id }; // Manejar caso de documento vacío
+                if (!data) return { id: docSnap.id }; 
                 Object.keys(data).forEach(key => {
-                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                    // Cambiamos 'Timestamp' por 'firestore.Timestamp'
-                    if (data[key] instanceof firestore.Timestamp) {
-                    // --- FIN DE CAMBIOS ---
+                    if (data[key] instanceof Timestamp) { // <-- CORREGIDO: Usa Timestamp importado
                         data[key] = data[key].toDate();
                     }
                 });
                 return { id: docSnap.id, ...data };
             };
 
-            // Procesador específico para Sales (sin cambios en la lógica interna)
-                const processFirebaseSale = (docSnap: FirebaseFirestoreTypes.DocumentSnapshot): Sale => {
-                    const rawData = processFirebaseDoc(docSnap); 
-                    const items = (rawData.items || []).map((item: any) => ({
-                        ...item,
-                        precioOriginal: item.precioOriginal ?? item.precio,
-                    }));
-                    return {
-                        id: rawData.id,
-                        clienteId: rawData.clienteId || rawData.clientId || '', 
-                        clientName: rawData.clientName || rawData.clienteNombre || 'Cliente anónimo',
-                        clienteNombre: rawData.clienteNombre || rawData.clientName, 
-                        vendedorId: rawData.vendedorId || rawData.vendorId || '', 
-                        vendedorName: rawData.vendedorName || rawData.vendedorNombre || 'Vendedor anónimo',
-                        vendedorNombre: rawData.vendedorNombre || rawData.vendedorName, 
-                        items: items,
-                        totalVenta: rawData.totalVenta ?? rawData.totalAmount ?? 0, 
-                        totalCosto: rawData.totalCosto ?? 0,
-                        totalComision: rawData.totalComision ?? 0,
-                        observaciones: rawData.observaciones || '',
-                        estado: rawData.estado === 'Pendiente de Pago' ? 'Pendiente de Entrega' : (rawData.estado || rawData.status || 'Pendiente de Entrega'), 
-                        tipo: rawData.tipo || 'venta',
-                        fecha: rawData.fecha || rawData.saleDate || new Date(0), 
-                        saldoPendiente: rawData.saldoPendiente ?? 0,
-                        paymentMethod: rawData.paymentMethod,
-                        totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 
-                        pagoEfectivo: rawData.pagoEfectivo ?? 0,
-                        pagoTransferencia: rawData.pagoTransferencia ?? 0,
-                        itemDiscounts: rawData.itemDiscounts || {}, 
-                        } as Sale;
-                };
+            const processFirebaseSale = (docSnap: FirebaseFirestoreTypes.DocumentSnapshot): Sale => {
+                const rawData = processFirebaseDoc(docSnap); 
+                const items = (rawData.items || []).map((item: any) => ({
+                    ...item,
+                    precioOriginal: item.precioOriginal ?? item.precio,
+                }));
+                return {
+                    id: rawData.id,
+                    clienteId: rawData.clienteId || rawData.clientId || '', 
+                    clientName: rawData.clientName || rawData.clienteNombre || 'Cliente anónimo',
+                    clienteNombre: rawData.clienteNombre || rawData.clientName, 
+                    vendedorId: rawData.vendedorId || rawData.vendorId || '', 
+                    vendedorName: rawData.vendedorName || rawData.vendedorNombre || 'Vendedor anónimo',
+                    vendedorNombre: rawData.vendedorNombre || rawData.vendedorName, 
+                    items: items,
+                    totalVenta: rawData.totalVenta ?? rawData.totalAmount ?? 0, 
+                    totalCosto: rawData.totalCosto ?? 0,
+                    totalComision: rawData.totalComision ?? 0,
+                    observaciones: rawData.observaciones || '',
+                    estado: rawData.estado === 'Pendiente de Pago' ? 'Pendiente de Entrega' : (rawData.estado || rawData.status || 'Pendiente de Entrega'), 
+                    tipo: rawData.tipo || 'venta',
+                    fecha: rawData.fecha || rawData.saleDate || new Date(0), 
+                    saldoPendiente: rawData.saldoPendiente ?? 0,
+                    paymentMethod: rawData.paymentMethod,
+                    totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 
+                    pagoEfectivo: rawData.pagoEfectivo ?? 0,
+                    pagoTransferencia: rawData.pagoTransferencia ?? 0,
+                    itemDiscounts: rawData.itemDiscounts || {}, 
+                    } as Sale;
+            };
 
-            // Ejecuta queries base
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
             const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap] = await Promise.all([
                 productsPromise, categoriesPromise, promosPromise, allVendorsPromise, rubrosPromise
             ]);
-            // --- FIN DE CAMBIOS ---
             
             finalData.products = productsSnap.docs.map(processFirebaseDoc) as Product[];
             finalData.categories = categoriesSnap.docs.map(processFirebaseDoc) as Category[];
             
-            finalData.promotions = promosSnap.docs.map(processFirebaseDoc).map(p => ({
-                ...p, 
-                nombre: p.nombrePromocion || p.nombre, 
-                productoIds: p.productoIds || (p.productoId ? [p.productoId] : []),
-                clienteIds: p.clienteIds || [],
+            // --- CORREGIDO: (p: any) ---
+            finalData.promotions = promosSnap.docs.map((p: any) => ({ // <-- TIPO AÑADIDO
+                ...processFirebaseDoc(p), 
+                nombre: p.data().nombrePromocion || p.data().nombre, 
+                productoIds: p.data().productoIds || (p.data().productoId ? [p.data().productoId] : []),
+                clienteIds: p.data().clienteIds || [],
             })) as Promotion[];
 
             finalData.vendors = vendorsSnap.docs.map(processFirebaseDoc) as Vendor[];
             finalData.rubros = rubrosSnap.docs.map(processFirebaseDoc) as Rubro[];
 
             // Queries condicionales
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
             if (userRole === 'Reparto') {
-                const routesSnap = await db.collection('rutas').where('repartidorId', '==', currentVendorData.id).get();
-                finalData.routes = routesSnap.docs.map(processFirebaseDoc).map(r => ({
-                    ...r, 
-                    fecha: r.fechaCreacion || r.fecha || new Date(0)
+                const routesQuery = query(collection(db, 'rutas'), where('repartidorId', '==', currentVendorData.id));
+                const routesSnap = await getDocs(routesQuery);
+                // --- CORREGIDO: (r: any) ---
+                finalData.routes = routesSnap.docs.map((r: any) => ({ // <-- TIPO AÑADIDO
+                    ...processFirebaseDoc(r), 
+                    fecha: r.data().fechaCreacion || r.data().fecha || new Date(0)
                 })) as Route[];
 
             } else { // Vendedor o Admin
-                const clientsPromise = db.collection('clientes').where('vendedorAsignadoId', '==', currentVendorData.id).get();
-                const salesPromise = db.collection('ventas').where('vendedorId', '==', currentVendorData.id).get();
+                const clientsQuery = query(collection(db, 'clientes'), where('vendedorAsignadoId', '==', currentVendorData.id));
+                const clientsPromise = getDocs(clientsQuery);
+                const salesQuery = query(collection(db, 'ventas'), where('vendedorId', '==', currentVendorData.id));
+                const salesPromise = getDocs(salesQuery);
                 const [clientsSnap, salesSnap] = await Promise.all([clientsPromise, salesPromise]);
-                // --- FIN DE CAMBIOS ---
 
                 finalData.clients = clientsSnap.docs.map(processFirebaseDoc) as Client[];
                 finalData.sales = salesSnap.docs.map(processFirebaseSale); 
 
                 const zoneIds = currentVendorData.zonasAsignadas || [];
                     if (zoneIds.length > 0) {
-                        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                        // Reemplazamos '__name__' por 'firestore.FieldPath.documentId()'
                         const zoneIdsChunk = (zoneIds.length > 30) ? zoneIds.slice(0, 30) : zoneIds;
                         if(zoneIds.length > 30) console.warn("Demasiadas zonas asignadas (>30). Cargando solo las primeras 30.");
                         
-                        const zonesQuery = await db.collection('zonas').where(firestore.FieldPath.documentId(), 'in', zoneIdsChunk).get();
-                        finalData.availableZones = zonesQuery.docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
-                        // --- FIN DE CAMBIOS ---
+                        // --- CORRECCIÓN: firestore.FieldPath.documentId() ---
+                        // Usamos el 'firestore' importado por defecto
+                        const zonesQueryRef = query(collection(db, 'zonas'), where(firestore.FieldPath.documentId(), 'in', zoneIdsChunk));
+                        const zonesQuerySnap = await getDocs(zonesQueryRef);
+                        finalData.availableZones = zonesQuerySnap.docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
                     } else { finalData.availableZones = []; }
             }
 
@@ -482,7 +488,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentVendor?.id, auth.currentUser?.uid]); 
 
 
-    // 3. EFECTO PARA LISTENERS DE TIEMPO REAL
+    // --- Listeners (CORREGIDOS CON SINTAXIS v9 y TIPOS) ---
     useEffect(() => {
         let timeoutId: NodeJS.Timeout | undefined;
         let productListener: () => void = () => {}; 
@@ -492,27 +498,25 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
         if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded) {
             console.log('Estableciendo suscripciones a Firestore...');
-
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Nueva sintaxis para onSnapshot
-            const productsQuery = db.collection('productos');
-            // @ts-ignore: El snapshot del SDK nativo es compatible
-            productListener = productsQuery.onSnapshot((snapshot) => {
-                const updatedProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Product[];
+            
+            const productsQueryRef = collection(db, 'productos');
+            // --- CORREGIDO: Tipos de Snapshot y Doc ---
+            productListener = onSnapshot(productsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+                const updatedProducts = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Product[];
                 setProducts(updatedProducts.filter(p => p.id));
             });
 
-            const categoryQuery = db.collection('categorias');
-            // @ts-ignore: El snapshot del SDK nativo es compatible
-            categoryListener = categoryQuery.onSnapshot((snapshot) => {
-                const updatedCategories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Category[];
+            const categoryQueryRef = collection(db, 'categorias');
+            // --- CORREGIDO: Tipos de Snapshot y Doc ---
+            categoryListener = onSnapshot(categoryQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+                const updatedCategories = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Category[];
                 setCategories(updatedCategories.filter(c => c.id));
             });
 
-            const promotionsQuery = db.collection('promociones').where('estado', '==', 'activa');
-            // @ts-ignore: El snapshot del SDK nativo es compatible
-            promotionListener = promotionsQuery.onSnapshot((snapshot) => {
-                const updatedPromotions = snapshot.docs.map(doc => {
+            const promotionsQueryRef = query(collection(db, 'promociones'), where('estado', '==', 'activa'));
+            // --- CORREGIDO: Tipos de Snapshot y Doc ---
+            promotionListener = onSnapshot(promotionsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+                const updatedPromotions = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => {
                     const data = doc.data();
                     return ({ 
                         id: doc.id, 
@@ -525,13 +529,12 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setPromotions(updatedPromotions.filter(p => p.id));
             });
 
-            const rubrosQuery = db.collection('rubros');
-            // @ts-ignore: El snapshot del SDK nativo es compatible
-            rubroListener = rubrosQuery.onSnapshot((snapshot) => {
-                const updatedRubros = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Rubro[];
+            const rubrosQueryRef = collection(db, 'rubros');
+            // --- CORREGIDO: Tipos de Snapshot y Doc ---
+            rubroListener = onSnapshot(rubrosQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+                const updatedRubros = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Rubro[];
                 setRubros(updatedRubros.filter(r => r.id));
             });
-            // --- FIN DE CAMBIOS ---
 
             timeoutId = setTimeout(() => {
                 console.log('Timeout alcanzado. Forzando una verificación de datos.');
@@ -552,7 +555,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentVendor, userRole, isInitialDataLoaded]); 
 
 
-    // Funciones sync y refresh (sin cambios)
+    // --- Funciones sync y refresh (sin cambios) ---
     const syncData = useCallback(async () => {
         await fetchDataAndStore(true);
     }, [fetchDataAndStore]);
@@ -562,77 +565,78 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [fetchDataAndStore]);
 
     
-    // --- INICIO DE CAMBIOS: Nuevas Funciones de Lógica de Negocio ---
-    
-    /**
-     * Crea una venta y descuenta el stock, todo en una transacción.
-     */
+    // ======================================================
+    // --- INICIO DE CAMBIOS: LÓGICA OFFLINE (CORREGIDA v9) ---
+    // ======================================================
+
     const crearVentaConStock = useCallback(async (saleData: any): Promise<string> => {
         
-        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-        // Generamos un nuevo ID de documento
-        const saleRef = db.collection("ventas").doc();
+        const isCurrentlyOffline = netInfo.isConnected === false;
+        
+        if (isCurrentlyOffline) {
+            console.log("DataContext: Modo Offline detectado. Usando 'addDoc' modular.");
+            const finalSaleData = {
+                ...saleData,
+                fecha: serverTimestamp()
+            };
+            
+            const ventasCollectionRef = collection(db, "ventas");
+            const docRef = await addDoc(ventasCollectionRef, finalSaleData); 
+            return docRef.id;
 
-        // La sintaxis de runTransaction es casi idéntica
-        await db.runTransaction(async (transaction) => {
-        // --- FIN DE CAMBIOS ---
-            const items = saleData.items as CartItem[];
-            if (!items || items.length === 0) { throw new Error("No se pueden procesar 0 items."); }
-            const productUpdates: { ref: FirebaseFirestoreTypes.DocumentReference, newStock: number }[] = [];
-
-            for (const item of items) {
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                const productRef = db.collection("productos").doc(item.id);
-                // --- FIN DE CAMBIOS ---
-                const productSnap = await transaction.get(productRef);
-
-                // --- CORRECCIÓN DE SINTAXIS: .exists() es una función ---
-                if (!productSnap.exists()) { throw new Error(`Producto ${item.nombre} no encontrado.`); }
+        } else {
+            console.log("DataContext: Modo Online detectado. Usando 'runTransaction' modular.");
+            const saleRef = doc(collection(db, "ventas"));
+            
+            await runTransaction(db, async (transaction) => {
+                const items = saleData.items as CartItem[];
+                if (!items || items.length === 0) { throw new Error("No se pueden procesar 0 items."); }
                 
-                const currentStock = productSnap.data()!.stock;
-                if (currentStock === undefined || currentStock < item.quantity) {
-                    throw new Error(`Stock insuficiente para ${item.nombre}. Disponible: ${currentStock || 0}`);
+                const productUpdates: { ref: FirebaseFirestoreTypes.DocumentReference, newStock: number }[] = [];
+
+                for (const item of items) {
+                    const productRef = doc(db, "productos", item.id);
+                    const productSnap = await transaction.get(productRef);
+
+                    // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
+                    if (!productSnap.exists) { 
+                        throw new Error(`Producto ${item.nombre} no encontrado.`); 
+                    }
+                    
+                    const currentStock = productSnap.data()!.stock;
+                    if (currentStock === undefined || currentStock < item.quantity) {
+                        throw new Error(`Stock insuficiente para ${item.nombre}. Disponible: ${currentStock || 0}`);
+                    }
+                    
+                    const newStock = currentStock - item.quantity;
+                    productUpdates.push({ ref: productRef, newStock: newStock });
                 }
                 
-                const newStock = currentStock - item.quantity;
-                productUpdates.push({ ref: productRef, newStock: newStock });
-            }
-            
-            for (const update of productUpdates) {
-                transaction.update(update.ref, { stock: update.newStock });
-            }
+                for (const update of productUpdates) {
+                    transaction.update(update.ref, { stock: update.newStock });
+                }
 
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Cambiamos 'serverTimestamp()' por 'firestore.FieldValue.serverTimestamp()'
-            transaction.set(saleRef, {
-                ...saleData,
-                fecha: firestore.FieldValue.serverTimestamp()
+                transaction.set(saleRef, {
+                    ...saleData,
+                    fecha: serverTimestamp()
+                });
             });
-            // --- FIN DE CAMBIOS ---
-        });
-        return saleRef.id;
-    // --- CORRECCIÓN DE DEPENDENCIA ---
-    }, []); // 'db' es una instancia estable importada, no es necesario como dependencia.
+            return saleRef.id;
+        }
+    }, [netInfo.isConnected]); 
 
-    /**
-     * Anula una venta y revierte el stock, todo en una transacción.
-     */
     const anularVentaConStock = useCallback(async (saleId: string, items: CartItem[]) => {
         
-        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-        await db.runTransaction(async (transaction) => {
-        // --- FIN DE CAMBIOS ---
+        await runTransaction(db, async (transaction) => {
             if (!items || items.length === 0) { throw new Error("No hay items para revertir."); }
             const productUpdates: { ref: FirebaseFirestoreTypes.DocumentReference, newStock: number }[] = [];
 
             for (const item of items) {
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                const productRef = db.collection("productos").doc(item.id);
-                // --- FIN DE CAMBIOS ---
+                const productRef = doc(db, "productos", item.id);
                 const productSnap = await transaction.get(productRef);
-
-                // --- CORRECCIÓN DE SINTAXIS: .exists() es una función ---
-                if (productSnap.exists()) {
+                
+                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
+                if (productSnap.exists) {
                     const currentStock = productSnap.data()!.stock || 0;
                     const newStock = currentStock + item.quantity;
                     productUpdates.push({ ref: productRef, newStock: newStock });
@@ -645,21 +649,19 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 transaction.update(update.ref, { stock: update.newStock });
             }
 
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            const saleRef = db.collection("ventas").doc(saleId);
-            // --- FIN DE CAMBIOS ---
+            const saleRef = doc(db, "ventas", saleId);
             transaction.update(saleRef, { 
                 estado: "Anulada",
                 saldoPendiente: 0 
             });
         });
-    // --- CORRECCIÓN DE DEPENDENCIA ---
     }, []);
-    // --- FIN DE CAMBIOS: Nuevas Funciones ---
+    // ======================================================
+    // --- FIN DE CAMBIOS ---
+    // ======================================================
 
 
-    // --- Función de Stock Optimista ---
-    // (Sin cambios)
+    // --- Función de Stock Optimista (Sin cambios) ---
     const descontarStockLocalmente = useCallback((items: CartItem[]) => {
         console.log("Descontando stock del estado local (optimista)...");
         const itemsMap = new Map<string, number>();
@@ -681,17 +683,12 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, []);
 
 
-    // --- Función updateClient ---
-    /**
-     * Actualiza un cliente en Firestore y refresca los datos locales.
-     */
+    // --- Función updateClient (CORREGIDO v9) ---
     const updateClient = useCallback(async (clientId: string, updatedData: Partial<Client>) => {
         console.log(`Actualizando cliente ${clientId}...`);
         try {
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            const clientRef = db.collection('clientes').doc(clientId);
-            await clientRef.update(updatedData);
-            // --- FIN DE CAMBIOS ---
+            const clientRef = doc(db, 'clientes', clientId);
+            await updateDoc(clientRef, updatedData); // <-- CORREGIDO
             
             await fetchDataAndStore(false); 
             console.log(`Cliente ${clientId} actualizado con éxito.`);
@@ -708,7 +705,6 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
 
     // Valor que se provee a los componentes hijos
-    // (Sin cambios)
     const value: IDataContext = {
         products,
         clients,
@@ -735,7 +731,6 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 };
 
 // Hook personalizado para usar el contexto
-// (Sin cambios)
 export const useData = (): IDataContext => {
     const context = useContext(DataContext);
     if (context === undefined) {

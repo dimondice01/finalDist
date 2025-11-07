@@ -1,16 +1,17 @@
 // src/screens/CreateSaleScreen.tsx
 import { Feather } from '@expo/vector-icons';
-// ELIMINAMOS: import { Picker } from '@react-native-picker/picker';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Print from 'expo-print'; // Necesario para generar el archivo PDF local
+import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 
-// --- INICIO DE CAMBIOS: Importaciones NATIVAS ---
-// ELIMINAMOS: import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-// AÑADIMOS: el SDK nativo de firestore
-import firestore from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: Importaciones NATIVAS ---
+// --- INICIO DE CAMBIOS: Importaciones NATIVAS (v9 Modular) ---
+import {
+    doc,
+    serverTimestamp,
+    updateDoc
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS ---
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -31,8 +32,8 @@ import {
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
-import { useRoute } from '@react-navigation/native'; // Usamos useRoute para obtener params
-import { CreateSaleScreenProps } from '../navigation/AppNavigator'; // Importa el tipo de props
+import { useRoute } from '@react-navigation/native';
+import { CreateSaleScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Servicios, Estilos ---
 import {
@@ -42,17 +43,16 @@ import {
     Client,
     Product,
     Promotion,
-    useData, // <-- ¡Importante!
+    useData,
     Vendor
-} from '../../context/DataContext'; // Ajusta la ruta si es necesario
+} from '../../context/DataContext';
 // Esta importación ahora trae las INSTANCIAS NATIVAS
 import { auth, db } from '../../db/firebase-service';
-import { generatePdf } from '../../services/pdfGenerator'; // Asumimos que retorna el HTML string
-import { COLORS } from '../../styles/theme'; // Ajusta la ruta si es necesario
+import { generatePdf } from '../../services/pdfGenerator';
+import { COLORS } from '../../styles/theme';
 
 
-// Interface para la venta que guardaremos (con campos de BD correctos)
-// (Sin cambios en la interfaz)
+// Interface para la venta que guardaremos (Sin cambios)
 interface SaleDataToSave {
     clienteId: string;
     clienteNombre: string;
@@ -71,8 +71,7 @@ interface SaleDataToSave {
     tipo: 'venta' | 'reposicion' | 'devolucion';
 }
 
-// --- Componente Modal Selector de Categoría (REEMPLAZO DEL PICKER) ---
-// (Sin cambios)
+// --- Componente Modal Selector de Categoría (Sin cambios) ---
 const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
@@ -80,6 +79,7 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
     selectedId: string;
     onSelect: (id: string) => void;
 }) => {
+    // ... (contenido del modal sin cambios)
     const dataWithAllOption: Category[] = useMemo(() => [
         { id: '', nombre: 'Todas las Categorías' } as Category,
         ...categories
@@ -121,8 +121,7 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
 // --- FIN Componente Modal Selector de Categoría ---
 
 
-// --- Componente Memoizado para el Item de Producto ---
-// (Sin cambios)
+// --- Componente Memoizado para el Item de Producto (Sin cambios) ---
 const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }: {
     item: Product,
     cart: CartItem[],
@@ -130,6 +129,7 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
     clientId: string | string[] | undefined,
     handleAddProduct: (product: Product) => void
 }) => {
+    // ... (contenido del card sin cambios)
     if (!item || !item.id) return null;
 
     const itemInCart = useMemo(() => cart.find(cartItem => cartItem.id === item.id), [cart, item.id]);
@@ -209,7 +209,7 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
 
 
 const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
-    // --- Obtener parámetros de useRoute ---
+    // --- Obtener parámetros de useRoute (Sin cambios) ---
     const route = useRoute();
     const { clientId, saleId, isEditing, isReposicion = false, isDevolucion = false, cliente: initialCliente } = route.params as {
         clientId?: string,
@@ -222,7 +222,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
     const editMode = isEditing === 'true';
 
-    // --- IMPORTANTE: Estas funciones ahora vienen del DataContext NATIVO ---
+    // --- IMPORTANTE: Estas funciones ahora vienen del DataContext NATIVO (Sin cambios) ---
     const {
         products: allProducts,
         categories,
@@ -231,25 +231,25 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         sales,
         promotions,
         isLoading: isDataLoading,
-        refreshAllData, // refreshAllData sigue siendo útil
+        refreshAllData,
         isOffline,
         descontarStockLocalmente,
-        crearVentaConStock, // ¡Ahora usamos la versión nativa de DataContext!
+        crearVentaConStock, // <-- ¡Esto usa la función v9 que corregimos!
     } = useData();
 
+    // --- Estados (Sin cambios) ---
     const [cart, setCart] = useState<CartItem[]>([]);
     const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
     const [categoryFilter, setCategoryFilter] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
-
     const [modalVisible, setModalVisible] = useState(false);
     const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false); 
     const [selectedProduct, setSelectedProduct] = useState<Product & { precioOriginal?: number } | null>(null);
     const [currentQuantity, setCurrentQuantity] = useState('1');
-
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [originalSale, setOriginalSale] = useState<BaseSale | null>(null);
 
+    // --- Memos y Hooks (Sin cambios) ---
     const currentUser = auth.currentUser;
 
     const currentVendedor = useMemo(() => {
@@ -300,14 +300,16 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 const aInCart = cart.some(cartItem => cartItem.id === a.id);
                 const bInCart = cart.some(cartItem => cartItem.id === b.id);
                 if (aInCart && !bInCart) return -1; 
-                if (!aInCart && bInCart) return 1;  
+                if (!aInCart && bInCart) return 1; 
             }
             return (a.nombre || '').localeCompare(b.nombre || '');
         });
         setFilteredProducts(products);
     }, [allProducts, categoryFilter, searchQuery, cart, editMode]);
 
+    // --- Lógica de Carrito y Precios (Sin cambios) ---
     const getComision = useCallback((product: Product, quantity: number): number => {
+        // ... (sin cambios)
         if (isReposicion || isDevolucion) return 0;
         const comisionGeneral = currentVendedor?.comisionGeneral || 0;
         const precio = product.precio || 0;
@@ -325,6 +327,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }, [currentVendedor, isReposicion, isDevolucion]);
 
     const handleAddProduct = useCallback((product: Product) => {
+        // ... (sin cambios)
         const existingItem = cart.find(item => item.id === product.id);
         let precioFinal = product.precio;
         let precioOriginal = product.precio;
@@ -346,6 +349,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }, [cart, promotions, client, isReposicion, isDevolucion]);
 
     const handleConfirmQuantity = useCallback(() => {
+        // ... (sin cambios)
         const quantity = parseInt(currentQuantity, 10);
         if (isNaN(quantity) || quantity <= 0) { Alert.alert("Cantidad Inválida", "Por favor ingrese un número mayor a 0."); return; }
         if (!selectedProduct) return;
@@ -363,6 +367,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }, [currentQuantity, selectedProduct, getComision]);
 
     const handleRemoveFromCart = useCallback(() => {
+        // ... (sin cambios)
         if (!selectedProduct) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setCart(prevCart => prevCart.filter(item => item.id !== selectedProduct!.id));
@@ -372,6 +377,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }, [selectedProduct]);
 
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
+        // ... (lógica de cálculo de totales sin cambios)
         if (isReposicion || isDevolucion) {
             const costo = cart.reduce((acc, item) => acc + (item.costo || 0) * item.quantity, 0);
             return {
@@ -445,7 +451,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         };
     }, [cart, promotions, client, isReposicion, isDevolucion]);
 
+    // --- handleShare (Sin cambios) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
+        // ... (sin cambios)
         if (!clientData) {
             Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
             return;
@@ -467,11 +475,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
             }
         }
-    // --- CORRECCIÓN DE DEPENDENCIA ---
-    }, []); // refreshAllData no es dependencia
+    }, []);
 
 
-    // --- confirmarVenta (¡ACTUALIZADO CON SINTAXIS NATIVA!) ---
+    // --- confirmarVenta (¡CORREGIDA CON SINTAXIS v9!) ---
     const confirmarVenta = useCallback(async () => {
         if (isSubmitting) return;
         if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos del cliente o vendedor."); return; }
@@ -480,9 +487,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setIsSubmitting(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        // Preparamos los datos
-        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-        // Reemplazamos 'serverTimestamp()' por 'firestore.FieldValue.serverTimestamp()'
+        // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+        // CORREGIDO: serverTimestamp() (importado)
         const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { 
             clienteId: client.id,
             clienteNombre: client.nombre,
@@ -500,7 +506,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             totalDescuentoPromociones: totalDescuentoPromociones,
             observaciones: originalSale?.observaciones || '',
             tipo: 'venta', 
-            ...(editMode ? { fechaUltimaEdicion: firestore.FieldValue.serverTimestamp() } : {})
+            ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {}) // <-- CORREGIDO
         };
         // --- FIN DE CAMBIOS ---
 
@@ -508,13 +514,14 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
-                // --- Lógica de Edición (Sin cambios) ---
-                const saleRef = db.collection('ventas').doc(originalSale.id);
-                await saleRef.update(saleDataToSave as any);
+                // --- Lógica de Edición (CORREGIDA v9) ---
+                // CORREGIDO: doc
+                const saleRef = doc(db, 'ventas', originalSale.id); 
+                // CORREGIDO: updateDoc
+                await updateDoc(saleRef, saleDataToSave as any);
                 
                 Toast.show({
                     type: 'success',
-                    // 'isOffline' sigue siendo útil para los mensajes de UI
                     text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Actualizada', 
                     text2: isOffline ? 'Se sincronizará al conectar.' : undefined,
                     position: 'bottom',
@@ -522,9 +529,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 });
 
             } else {
-                // --- Lógica de NUEVA VENTA (SIMPLIFICADA) ---
+                // --- Lógica de NUEVA VENTA (Sin cambios, ya usa DataContext) ---
                 
-                // Preparamos los datos (sin 'fecha', ya que la pone 'crearVentaConStock')
                 const finalSaleData = {
                     ...saleDataToSave,
                     tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' 
@@ -532,10 +538,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 
                 console.log("Enviando venta a DataContext (online/offline)...");
                 
-                // --- ¡CAMBIO ÚNICO! ---
-                // 'crearVentaConStock' ahora maneja AMBAS lógicas (online y offline)
+                // ¡Esto ya estaba bien! Usa la función que corregimos en DataContext.
                 savedSaleId = await crearVentaConStock(finalSaleData);
-                // --- FIN DEL CAMBIO ---
 
                 console.log("Venta guardada (ID):", savedSaleId);
 
@@ -589,7 +593,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             );
 
         } catch (error: any) {
-            // ... (el 'catch' block no cambia)
             console.error("Error capturado en confirmarVenta:", error); 
             const errorMessage = (error.message || 'No se pudo completar la operación.');
             
@@ -600,10 +603,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision,
         totalDescuentoPromociones,
         itemsConDescuentosAplicados,
-        editMode, originalSale, handleShare, navigation, // Quitado refreshAllData
+        editMode, originalSale, handleShare, navigation,
         isOffline, 
         descontarStockLocalmente,
-        crearVentaConStock // Añadida la dependencia
+        crearVentaConStock
     ]);
     // --- FIN DE confirmarVenta ---
 
@@ -632,6 +635,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     };
     // --- FIN DE handleConfirmPress ---
 
+    // --- RENDERIZADO (Sin cambios) ---
     const renderProductItem = useCallback(({ item }: { item: Product }) => (
         <ProductCard
             item={item}
@@ -642,7 +646,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         />
     ), [cart, promotions, client?.id, handleAddProduct]);
 
-    // --- RENDERIZADO PRINCIPAL ---
     if (isDataLoading && !client) {
         return (
             <View style={styles.fullScreenLoader}>
@@ -668,7 +671,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     const headerTitle = editMode ? 'Editar Venta' : (isReposicion ? 'Nueva Reposición' : (isDevolucion ? 'Nueva Devolución' : 'Nueva Venta'));
     const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary);
 
-    // --- Texto de Botón Dinámico (Sin cambios) ---
     const buttonText = useMemo(() => {
         if (isSubmitting) {
             return editMode ? 'Actualizando...' : 'Guardando...';
@@ -793,7 +795,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 };
 
 // --- ESTILOS ---
-// (Sin cambios en los estilos, van aquí...)
+// (Sin cambios)
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },

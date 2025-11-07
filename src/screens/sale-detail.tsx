@@ -2,11 +2,18 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINADAS: import { addDoc, collection, doc, onSnapshot, runTransaction, Timestamp } from 'firebase/firestore';
-// AÑADIDO: el import nativo de firestore
-import firestore from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+import {
+    addDoc,
+    collection,
+    doc,
+    FirebaseFirestoreTypes // <-- CORREGIDO: Importamos el TIPO
+    ,
+    onSnapshot,
+    runTransaction,
+    serverTimestamp
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -33,10 +40,10 @@ interface Sale {
     id: string;
     clienteId?: string;
     clienteNombre?: string;
-    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-    // El tipo nativo para Timestamp
-    fecha: firestore.Timestamp;
-    // --- FIN DE CAMBIOS: SDK NATIVO ---
+    // --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+    // CORREGIDO: Usamos el TIPO importado
+    fecha: FirebaseFirestoreTypes.Timestamp;
+    // --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
     items: SaleItem[];
     totalVenta: number;
     saldoPendiente: number;
@@ -60,7 +67,7 @@ interface SaleDetailRouteParams {
 
 const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
 
-// --- Componente CollectDebtModal (¡CORREGIDO CON SDK NATIVO!) ---
+// --- Componente CollectDebtModal (¡CORREGIDO CON SDK NATIVO v9!) ---
 const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: CollectDebtModalProps) => {
     const [montoCobrado, setMontoCobrado] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -76,17 +83,17 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
 
         setIsSaving(true);
         try {
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
-            await db.runTransaction(async (transaction) => {
-                const ventaRef = db.collection('ventas').doc(venta.id); // Sintaxis Nativa
+            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+            // CORREGIDO: runTransaction(db, ...)
+            await runTransaction(db, async (transaction) => {
+                const ventaRef = doc(db, 'ventas', venta.id); // <-- CORREGIDO: doc
                 
-                // Usamos 'db.collection().add()' (Nativo)
-                await db.collection('ventas').add({
+                // CORREGIDO: addDoc, collection
+                await addDoc(collection(db, 'ventas'), {
                     clientName: `Cobro Saldo - ${venta.clienteNombre}`, 
                     estado: "Pagada", 
-                    // Usamos 'firestore.FieldValue.serverTimestamp()' (Nativo)
-                    fecha: firestore.FieldValue.serverTimestamp(), 
+                    // CORREGIDO: serverTimestamp()
+                    fecha: serverTimestamp(), 
                     numeroFactura: `COBRO-${venta.numeroFactura || venta.id.substring(0,6)}`,
                     pagoEfectivo: cobro, 
                     pagoTransferencia: 0, 
@@ -97,12 +104,12 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
                 
                 const ventaDoc = await transaction.get(ventaRef);
                 
-                // Usamos la propiedad '.exists' (Nativa)
+                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
                 if (!ventaDoc.exists) throw new Error("La factura original no fue encontrada.");
-                // --- FIN DE CAMBIOS: SDK NATIVO ---
+                // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                 const data = ventaDoc.data();
-                if (!data) throw new Error("No se pudieron leer los datos de la venta."); // Chequeo de nulidad
+                if (!data) throw new Error("No se pudieron leer los datos de la venta.");
                 
                 const nuevoSaldo = (data.saldoPendiente || 0) - cobro;
                 const nuevoEstado = nuevoSaldo <= 0.01 ? "Pagada" : "Adeuda";
@@ -135,7 +142,7 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
     );
 };
 
-// --- Pantalla SaleDetailScreen (¡CORREGIDA CON SDK NATIVO!) ---
+// --- Pantalla SaleDetailScreen (¡CORREGIDA CON SDK NATIVO v9!) ---
 const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     const route = useRoute();
     const { saleId } = route.params as SaleDetailRouteParams; 
@@ -151,12 +158,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             return;
         }
 
-        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-        // Usamos la sintaxis Nativa para la referencia y el listener
-        const saleRef = db.collection('ventas').doc(saleId);
+        // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+        // CORREGIDO: doc
+        const saleRef = doc(db, 'ventas', saleId);
         
-        const unsubscribe = saleRef.onSnapshot((doc) => {
-            // Usamos la propiedad '.exists' (Nativa)
+        // CORREGIDO: onSnapshot
+        const unsubscribe = onSnapshot(saleRef, (doc) => {
+            // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
             if (doc.exists) {
                 setSale({ id: doc.id, ...doc.data() } as Sale);
             } else {
@@ -168,7 +176,7 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             console.error("Error al cargar la venta:", error);
             setIsLoading(false);
         });
-        // --- FIN DE CAMBIOS: SDK NATIVO ---
+        // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
         return () => unsubscribe();
     }, [saleId]);
@@ -199,10 +207,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
         return (
             <View style={styles.container}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+                {/* --- HEADER MEJORADO --- */}
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                         <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                     </TouchableOpacity>
+                    <Text style={styles.title}>Error</Text>
+                    <View style={styles.headerButton} />
                 </View>
                 <Text style={styles.errorText}>No se pudieron cargar los datos de la venta.</Text>
             </View>
@@ -215,11 +226,14 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            
+            {/* --- HEADER MEJORADO --- */}
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Detalle de Venta</Text>
+                <View style={styles.headerButton} /> {/* Placeholder */}
             </View>
 
             <View style={styles.summaryCard}>
@@ -269,15 +283,32 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     );
 };
 
-// --- Estilos (Sin cambios) ---
+// --- Estilos (Con Header Mejorado) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     errorText: { color: COLORS.danger, textAlign: 'center', marginTop: 100, fontSize: 16 },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingBottom: 10, paddingHorizontal: 20, position: 'relative' },
-    backButton: { position: 'absolute', left: 20, top: 60, padding: 10 },
-    title: { fontSize: 28, fontWeight: 'bold', color: COLORS.textPrimary },
+    // --- HEADER ESTANDARIZADO ---
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingTop: (StatusBar.currentHeight || 0) + 20,
+        paddingBottom: 20, 
+        paddingHorizontal: 10
+    },
+    headerButton: { 
+        padding: 10,
+        width: 44,
+        alignItems: 'center',
+    },
+    title: { 
+        fontSize: 22, 
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary 
+    },
+    // --- FIN HEADER ---
     
     summaryCard: { backgroundColor: COLORS.glass, margin: 15, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
     clientName: { color: COLORS.textPrimary, fontSize: 20, fontWeight: 'bold', marginBottom: 5 },
@@ -289,7 +320,7 @@ const styles = StyleSheet.create({
     balanceLabel: { color: COLORS.textSecondary, fontSize: 16 },
     balanceAmount: { color: COLORS.warning, fontSize: 18, fontWeight: 'bold' },
 
-    listHeader: { fontSize: 18, fontWeight: '600', color: COLORS.textPrimary, paddingHorizontal: 20, marginBottom: 10 },
+    listHeader: { fontSize: 16, fontWeight: '600', color: COLORS.textSecondary, paddingHorizontal: 25, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
     listContentContainer: { paddingHorizontal: 15, paddingBottom: 120 },
     itemCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.glass, paddingVertical: 15, paddingHorizontal: 20, borderRadius: 10, marginBottom: 10 },
     itemDetails: { flex: 1 },

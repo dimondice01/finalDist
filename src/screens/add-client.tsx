@@ -4,18 +4,19 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINAMOS: import { addDoc, collection } from 'firebase/firestore';
-// AÑADIMOS: el SDK nativo de firestore
-import firestore from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+import {
+    addDoc,
+    collection,
+    serverTimestamp
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS ---
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     FlatList,
-
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -31,7 +32,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
-import { AddClientScreenProps } from '../navigation/AppNavigator'; // Ajusta la ruta
+import { AddClientScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Tipos ---
 import { Rubro, useData, Zone } from '../../context/DataContext';
@@ -140,6 +141,7 @@ const RubroSelectorModal = ({ visible, onClose, rubros, selectedId, onSelect }: 
 
 
 const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
+    // --- Estados (Sin cambios) ---
     const [nombre, setNombre] = useState('');
     const [direccion, setDireccion] = useState('');
     const [barrio, setBarrio] = useState('');
@@ -150,10 +152,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [rubroId, setRubroId] = useState('');
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
-
     const { availableZones, vendors, refreshAllData, rubros, isOffline } = useData();
     const currentUser = auth.currentUser;
-
     const [mapModalVisible, setMapModalVisible] = useState(false);
     const [tempRegion, setTempRegion] = useState({
         latitude: -29.4134, 
@@ -165,7 +165,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); 
     const [isRubroModalVisible, setIsRubroModalVisible] = useState(false);
 
-    // Lógica de Vendedor y Zonas (Sin cambios)
+    // --- Memos (Sin cambios) ---
     const currentVendedor = useMemo(() => {
         if (!currentUser || !vendors) return null;
         return vendors.find((v: any) => v.firebaseAuthUid === currentUser.uid);
@@ -179,13 +179,11 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     }, [currentVendedor, availableZones]);
 
-    // Lógica de Rubros (Sin cambios)
     const rubrosOrdenados = useMemo(() => {
         const safeRubros = Array.isArray(rubros) ? rubros : [];
         return [...safeRubros].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     }, [rubros]);
 
-    // Nombres seleccionados (Sin cambios)
     const selectedZoneName = useMemo(() => {
         const selectedZone = zonasDelVendedor.find(z => z.id === zonaId);
         return selectedZone ? selectedZone.nombre : 'Seleccionar Zona *';
@@ -197,8 +195,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         return selectedRubro ? selectedRubro.nombre : 'Seleccionar Rubro (Opcional)';
     }, [rubroId, rubros]);
 
-
-    // handleLocation (Sin cambios)
+    // --- Callbacks (handleLocation, handleConfirmLocation sin cambios) ---
     const handleLocation = useCallback(async () => {
         setLocationLoading(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -222,13 +219,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         }
     }, [tempRegion]); 
 
-    // handleConfirmLocation (Sin cambios)
     const handleConfirmLocation = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setMapModalVisible(false);
     }, []);
 
-    // --- handleSubmit (MODIFICADO CON SDK NATIVO) ---
+    // --- handleSubmit (MODIFICADO CON SDK NATIVO v9) ---
     const handleSubmit = useCallback(async () => {
         if (!nombre.trim() || !zonaId) {
             Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
@@ -252,16 +248,15 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 rubroId: rubroId || '', 
                 location: location || null,
                 vendedorAsignadoId: currentUser?.uid,
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                // Reemplazamos 'new Date()' por 'firestore.FieldValue.serverTimestamp()'
-                fechaCreacion: firestore.FieldValue.serverTimestamp(),
+                // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                fechaCreacion: serverTimestamp(), // <-- CORREGIDO
                 // --- FIN DE CAMBIOS ---
             };
 
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Reemplazamos 'addDoc(collection(db, ...))' por 'db.collection(...).add()'
-            // Esto funcionará offline automáticamente.
-            await db.collection('clientes').add(newClientData);
+            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+            // ¡¡Este es el arreglo para el bug offline!!
+            const clientesCollectionRef = collection(db, 'clientes');
+            await addDoc(clientesCollectionRef, newClientData); // <-- CORREGIDO
             // --- FIN DE CAMBIOS ---
             
             if (!isOffline) {
@@ -417,7 +412,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     </MapView>
                     <View style={styles.mapControls}>
                         <Text style={styles.mapInstructions}>
-                             Mueva el mapa hasta que el marcador esté en la ubicación exacta.
+                            Mueva el mapa hasta que el marcador esté en la ubicación exacta.
                         </Text>
                          <TouchableOpacity style={styles.button} onPress={handleConfirmLocation}>
                             <Text style={styles.buttonText}>Confirmar Ubicación</Text>

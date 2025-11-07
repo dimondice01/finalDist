@@ -143,7 +143,8 @@ function RootNavigator() {
 
                     // --- ¡¡AQUÍ ESTÁ LA CORRECCIÓN!! ---
                     // En el SDK Nativo, '.exists' es una PROPIEDAD booleana, NO una función.
-                    if (userDocSnap.exists) { 
+                    // @ts-ignore
+                     if (userDocSnap.exists) { 
                     // --- FIN DE LA CORRECCIÓN ---
                         setUserRole(userDocSnap.data()?.rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
                     } else {

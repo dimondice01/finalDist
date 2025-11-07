@@ -2,9 +2,12 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINADAS: import { deleteDoc, doc } from 'firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+import {
+    deleteDoc,
+    doc
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
@@ -12,7 +15,6 @@ import {
     Alert,
     FlatList,
     Linking,
-
     Platform,
     StatusBar,
     StyleSheet,
@@ -222,6 +224,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     const { clients, sales, rubros, isLoading: isDataLoading, refreshAllData } = useData();
     const [isDeleting, setIsDeleting] = useState(false);
 
+    // --- Memos (Sin cambios) ---
     const client: Client | undefined = useMemo(() => {
         const allClientsArray = Array.isArray(clients) ? clients : [];
         return allClientsArray.find(c => c && c.id === clientId);
@@ -249,7 +252,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
             .sort((a, b) => getTimestamp(b) - getTimestamp(a));
     }, [sales, clientId]);
 
-    // --- Lógica de Meta Semanal (Sin cambios) ---
     const weeklyGoalInfo = useMemo(() => {
         const clientRubro = (Array.isArray(rubros) ? rubros : []).find(r => r.id === client?.rubroId); 
         
@@ -285,7 +287,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
 
     }, [client?.rubroId, rubros, clientSales]); 
 
-    // --- handleDeleteSale (¡CORREGIDO CON SDK NATIVO!) ---
+    // --- handleDeleteSale (¡CORREGIDO CON SDK NATIVO v9!) ---
     const handleDeleteSale = useCallback(async (saleId: string) => {
         if (isDeleting || !saleId) return;
 
@@ -299,14 +301,11 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                     onPress: async () => {
                         setIsDeleting(true);
                         try {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                            // const saleRef = doc(db, 'ventas', saleId); // SDK WEB
-                            // await deleteDoc(saleRef); // SDK WEB
-                            
-                            // Sintaxis Nativa:
-                            const saleRef = db.collection('ventas').doc(saleId);
-                            await saleRef.delete();
-                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                            // Sintaxis v9:
+                            const saleRef = doc(db, 'ventas', saleId);
+                            await deleteDoc(saleRef);
+                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                             Toast.show({ type: 'success', text1: 'Venta Eliminada', position: 'bottom' });
                             await refreshAllData();

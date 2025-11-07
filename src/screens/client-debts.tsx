@@ -2,11 +2,16 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINADAS: import { addDoc, collection, doc, runTransaction, Timestamp } from 'firebase/firestore';
-// AÑADIDO: el import nativo de firestore
-import firestore from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+import {
+    addDoc,
+    collection,
+    doc,
+    runTransaction,
+    serverTimestamp,
+    Timestamp
+} from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -33,18 +38,18 @@ interface RegisterPaymentModalProps {
     onPaymentSuccess: () => void;
 }
 
-// --- Función auxiliar para fechas (Sin cambios) ---
+// --- Función auxiliar para fechas (CORREGIDA) ---
 const getDateTimestamp = (fecha: Sale['fecha']): number => {
     if (!fecha) return 0;
     if (fecha instanceof Date) {
         return !isNaN(fecha.getTime()) ? fecha.getTime() : 0;
     }
-    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-    // Chequeamos contra el Timestamp nativo
-    if (fecha instanceof firestore.Timestamp) {
+    // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+    // Chequeamos contra el Timestamp importado
+    if (fecha instanceof Timestamp) { // <-- CORREGIDO
         return fecha.toMillis();
     }
-    // --- FIN DE CAMBIOS: SDK NATIVO ---
+    // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
     if (fecha && typeof (fecha as { seconds: number })?.seconds === 'number') {
         const timestampMillis = (fecha as { seconds: number }).seconds * 1000;
         return !isNaN(timestampMillis) ? timestampMillis : 0;
@@ -52,7 +57,7 @@ const getDateTimestamp = (fecha: Sale['fecha']): number => {
     return 0;
 };
 
-// --- COMPONENTE MODAL (¡CORREGIDO CON SDK NATIVO!) ---
+// --- COMPONENTE MODAL (¡CORREGIDO CON SDK NATIVO v9!) ---
 const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess }: RegisterPaymentModalProps) => {
     const [amount, setAmount] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -77,16 +82,15 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
 
         setIsSaving(true);
         try {
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
-            await db.runTransaction(async (transaction) => {
+            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+            // CORREGIDO: runTransaction(db, ...)
+            await runTransaction(db, async (transaction) => {
                 // 1. Crear el documento de "Cobro"
-                // Usamos 'db.collection().add()' (Nativo)
-                await db.collection('ventas').add({
+                // CORREGIDO: addDoc, collection, serverTimestamp
+                await addDoc(collection(db, 'ventas'), {
                     clientName: `Cobro Saldo - ${clientName || debt.clienteNombre || 'Cliente'}`, 
                     estado: "Pagada",
-                    // Usamos 'firestore.FieldValue.serverTimestamp()' (Nativo)
-                    fecha: firestore.FieldValue.serverTimestamp(),
+                    fecha: serverTimestamp(), // <-- CORREGIDO
                     numeroFactura: `COBRO-${debt.numeroFactura || debt.id.substring(0, 6)}`,
                     pagoEfectivo: paymentAmount,
                     pagoTransferencia: 0,
@@ -96,16 +100,16 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
                 });
 
                 // 2. Actualizar la factura original
-                // Usamos la sintaxis Nativa
-                const saleRef = db.collection('ventas').doc(debt.id);
+                // CORREGIDO: doc
+                const saleRef = doc(db, 'ventas', debt.id);
                 const saleDoc = await transaction.get(saleRef);
                 
-                // Usamos la propiedad '.exists' (Nativa)
+                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
                 if (!saleDoc.exists) throw new Error("La factura original no fue encontrada.");
-                // --- FIN DE CAMBIOS: SDK NATIVO ---
+                // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                 const data = saleDoc.data();
-                if (!data) throw new Error("No se pudieron leer los datos de la venta."); // Chequeo de nulidad
+                if (!data) throw new Error("No se pudieron leer los datos de la venta.");
 
                 const newBalance = (data.saldoPendiente || 0) - paymentAmount;
                 const newStatus = newBalance <= 0.01 ? "Pagada" : "Adeuda";

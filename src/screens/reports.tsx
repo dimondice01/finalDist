@@ -1,43 +1,43 @@
+// src/screens/reports.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-// Añadimos memo y useCallback
+
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+// Importamos el Timestamp de v9
+import { Timestamp } from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS ---
+
 import React, { memo, useCallback, useMemo } from 'react';
 import { ActivityIndicator, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // --- Navegación ---
-// Importamos los tipos necesarios para tipar la navegación
 import { useNavigation } from '@react-navigation/native';
-// CORRECCIÓN: Cambiamos StackNavigationProp por NativeStackNavigationProp
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ReportsScreenProps } from '../navigation/AppNavigator'; // Asume la tipificación de props
+// Usamos el tipo de props de AppNavigator, que ya es correcto
+import { ReportsScreenProps, RootStackParamList } from '../navigation/AppNavigator';
 
-// 1. DEFINICIÓN DE TIPOS DE RUTA (NECESARIO PARA RESOLVER EL ERROR 'never')
-// Esta lista debe coincidir con la configuración real de tu Stack Navigator
-type RootStackParamList = {
-    Reports: undefined;
-    SaleDetail: { saleId: string };
-    // Agrega aquí cualquier otra ruta a la que se navegue desde o hacia ReportsScreen
-};
-
-// 2. TIPO PARA EL HOOK useNavigation (Usando el tipo NativeStackNavigationProp corregido)
-type ReportsNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Reports'>;
-
-// Asegúrate que la ruta sea correcta
+// --- Contexto y Estilos ---
 import { Sale as BaseSale, Client, useData } from '../../context/DataContext';
-// Asegúrate que la ruta sea correcta
 import { COLORS } from '../../styles/theme';
 
-// Mantenemos la interfaz Sale local si es específica para esta pantalla
-interface Sale extends BaseSale {}
+// Renombramos el tipo local
+type Sale = BaseSale;
 
-// --- Funciones Auxiliares (fuera del componente para no recrearlas) ---
+// --- TIPO PARA EL HOOK useNavigation (Dentro de la card) ---
+type ReportsNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Reports'>;
+
+
+// --- Funciones Auxiliares (CORREGIDAS v9) ---
 const formatJSDate = (dateInput: Sale['fecha']) => {
     let date: Date;
     if (dateInput instanceof Date) { date = dateInput; }
+    // --- CORREGIDO: Usamos el Timestamp importado ---
+    else if (dateInput instanceof Timestamp) { date = dateInput.toDate(); }
     else if (dateInput && typeof (dateInput as { seconds: number }).seconds === 'number') { date = new Date((dateInput as { seconds: number }).seconds * 1000); }
-    else { date = new Date(); }
-    if (isNaN(date.getTime())) { return 'Fecha inválida'; }
-    return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }); // Formato DD/MM/AAAA
+    else { date = new Date(0); } // Default a una fecha inválida conocida
+
+    if (isNaN(date.getTime()) || date.getFullYear() < 1971) { return 'Fecha inválida'; }
+    return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
 const getClientDisplayName = (sale: Sale, clients: Client[]) => {
@@ -50,45 +50,55 @@ const getClientDisplayName = (sale: Sale, clients: Client[]) => {
     return `Venta ${sale.id.substring(0, 6)}`;
 };
 
-const getStatusColor = (status: Sale['estado']) => {
+// --- ¡NUEVO! Función de Estilos para los "Pills" de Estado ---
+const getStatusStyles = (status: Sale['estado']) => {
     switch (status) {
-        case 'Pagada': return COLORS.success;
-        case 'Adeuda': return COLORS.warning;
-        case 'Pendiente de Entrega': return COLORS.warning;
-        case 'Repartiendo': return COLORS.primary;
-        case 'Anulada': return COLORS.danger;
-        default: return COLORS.disabled;
+        case 'Pagada':
+            return { bg: 'rgba(22, 163, 74, 0.15)', text: COLORS.success, icon: 'check-circle' as keyof typeof Feather.glyphMap };
+        case 'Adeuda':
+            return { bg: 'rgba(234, 179, 8, 0.15)', text: COLORS.warning, icon: 'alert-circle' as keyof typeof Feather.glyphMap };
+        case 'Pendiente de Entrega':
+            return { bg: 'rgba(107, 114, 128, 0.15)', text: COLORS.textSecondary, icon: 'clock' as keyof typeof Feather.glyphMap };
+        case 'Repartiendo':
+            return { bg: 'rgba(59, 130, 246, 0.15)', text: COLORS.primary, icon: 'truck' as keyof typeof Feather.glyphMap }; // Azul para repartiendo
+        case 'Anulada':
+            return { bg: 'rgba(239, 68, 68, 0.15)', text: COLORS.danger, icon: 'x-circle' as keyof typeof Feather.glyphMap };
+        default:
+            return { bg: 'rgba(107, 114, 128, 0.15)', text: COLORS.textSecondary, icon: 'help-circle' as keyof typeof Feather.glyphMap };
     }
 };
 // --- Fin Funciones Auxiliares ---
 
-// --- Componente Memoizado para el Item de Venta (Tipado Correctamente) ---
+// --- Componente Memoizado para el Item de Venta (MEJORADO) ---
 const SaleReportCard = memo(({ item, clients }: { item: Sale, clients: Client[] }) => {
-    // Aplicamos el tipo ReportsNavigationProp corregido
     const navigation = useNavigation<ReportsNavigationProp>();
 
-    // Defensa
     if (!item || !item.id) return null;
 
     const navigateToDetail = useCallback(() => {
-        // navigation.navigate ahora tiene el tipo correcto y acepta esta estructura
-        navigation.navigate('SaleDetail', { saleId: item.id });
-    }, [item.id, navigation]);
+        navigation.navigate('SaleDetail', { saleId: item.id, clientName: item.clientName }); // Pasamos clientName
+    }, [item.id, item.clientName, navigation]);
 
     const clientDisplayName = useMemo(() => getClientDisplayName(item, clients), [item, clients]);
-    const statusColor = useMemo(() => getStatusColor(item.estado), [item.estado]);
+    
+    // --- ¡NUEVO! Usamos la función de estilos ---
+    const { bg, text, icon } = useMemo(() => getStatusStyles(item.estado), [item.estado]);
 
-    // Estructura visual
     return (
         <TouchableOpacity
             style={styles.saleCard}
             onPress={navigateToDetail}
             activeOpacity={0.7}
         >
+            {/* --- ¡NUEVO! Icono de estado --- */}
+            <View style={[styles.statusIcon, { backgroundColor: bg }]}>
+                <Feather name={icon} size={24} color={text} />
+            </View>
+
             <View style={styles.saleInfo}>
                 <Text style={styles.saleClientName} numberOfLines={1}>{clientDisplayName}</Text>
                 <Text style={styles.saleDetails}>
-                    Total: {item.totalVenta.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                    {formatJSDate(item.fecha)}
                 </Text>
                 {(item.estado === 'Adeuda' && item.saldoPendiente > 0.01) && (
                     <Text style={styles.salePending}>
@@ -96,11 +106,11 @@ const SaleReportCard = memo(({ item, clients }: { item: Sale, clients: Client[] 
                     </Text>
                 )}
             </View>
+
             <View style={styles.saleActions}>
-                <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-                    <Text style={styles.statusText}>{item.estado}</Text>
-                </View>
-                <Text style={styles.saleDateText}>{formatJSDate(item.fecha)}</Text>
+                <Text style={styles.saleTotal}>
+                    {item.totalVenta.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                </Text>
                 <Feather name="chevron-right" size={24} color={COLORS.textSecondary} style={styles.chevronIcon}/>
             </View>
         </TouchableOpacity>
@@ -108,7 +118,7 @@ const SaleReportCard = memo(({ item, clients }: { item: Sale, clients: Client[] 
 });
 // --- Fin Componente Memoizado ---
 
-// RECIBIMOS navigation en las props del componente principal
+
 const ReportsScreen = ({ navigation }: ReportsScreenProps) => {
     const { sales: allSales = [], isLoading, clients = [] } = useData();
 
@@ -118,28 +128,27 @@ const ReportsScreen = ({ navigation }: ReportsScreenProps) => {
         return allSales
             .filter(sale => sale && sale.id && !(sale.clientName?.startsWith('Cobro Saldo') || sale.clienteNombre?.startsWith('Cobro Saldo')))
             .sort((a, b) => {
-                const getDateTimestamp = (sale: Sale): number => {
-                    if (sale.fecha instanceof Date) return sale.fecha.getTime();
-                    if (sale.fecha && typeof (sale.fecha as { seconds: number }).seconds === 'number') {
-                        return (sale.fecha as { seconds: number }).seconds * 1000;
-                    }
+                // --- CORREGIDO: Lógica de fecha movida aquí y mejorada ---
+                const getDateTimestamp = (fecha: Sale['fecha']): number => {
+                    if (!fecha) return 0;
+                    if (fecha instanceof Date) return fecha.getTime();
+                    if (fecha instanceof Timestamp) return fecha.toMillis(); // <-- CORREGIDO v9
+                    if ((fecha as any).seconds) return (fecha as any).seconds * 1000;
                     return 0;
                 };
-                return getDateTimestamp(b) - getDateTimestamp(a);
+                return getDateTimestamp(b.fecha) - getDateTimestamp(a.fecha);
             });
     }, [allSales]);
 
-    // Cálculo de métricas (sin cambios)
-    const { comisionesGanadas, deudaPorCobrar } = useMemo(() => {
-        if (!Array.isArray(allSales)) return { comisionesGanadas: 0, deudaPorCobrar: 0 };
-        let comisiones = 0;
+    // Cálculo de métricas (ELIMINAMOS COMISIONES)
+    const { deudaPorCobrar } = useMemo(() => {
+        if (!Array.isArray(allSales)) return { deudaPorCobrar: 0 };
         let deuda = 0;
         allSales.forEach(sale => {
             if (!sale) return;
-            if (sale.estado === 'Pagada' || sale.estado === 'Adeuda') { comisiones += sale.totalComision || 0; }
             if (sale.estado === 'Adeuda') { deuda += sale.saldoPendiente || 0; }
         });
-        return { comisionesGanadas: comisiones, deudaPorCobrar: deuda };
+        return { deudaPorCobrar: deuda };
     }, [allSales]);
 
     // Indicador de Carga (sin cambios)
@@ -159,37 +168,32 @@ const ReportsScreen = ({ navigation }: ReportsScreenProps) => {
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" />
+            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-            {/* Header (Adaptado) */}
+            
+            {/* Header (ESTANDARIZADO) */}
             <View style={styles.header}>
-                {/* CORRECCIÓN: Reemplazamos router.back() con navigation.goBack() */}
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Mis Reportes</Text>
-                 <View style={styles.headerPlaceholder} />
+                 <View style={styles.headerButton} />
             </View>
 
-            {/* Métricas (con formato de moneda mejorado) */}
+            {/* --- Métricas (SOLO QUEDA DEUDA) --- */}
             <View style={styles.metricsContainer}>
                 <View style={styles.metricBox}>
-                    <Feather name="award" size={24} color={COLORS.success} style={styles.metricIcon} />
-                    <Text style={styles.metricValue}>
-                        {comisionesGanadas.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                    </Text>
-                    <Text style={styles.metricLabel}>Comisiones Generadas</Text>
-                </View>
-                <View style={styles.metricBox}>
                     <Feather name="alert-circle" size={24} color={COLORS.warning} style={styles.metricIcon} />
-                    <Text style={styles.metricValue}>
-                        {deudaPorCobrar.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                    </Text>
-                    <Text style={styles.metricLabel}>Deuda por Cobrar</Text>
+                    <View style={styles.metricTextContainer}>
+                        <Text style={styles.metricLabel}>Deuda Total por Cobrar</Text>
+                        <Text style={styles.metricValue}>
+                            {deudaPorCobrar.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                        </Text>
+                    </View>
                 </View>
             </View>
 
-            <Text style={styles.listHeader}>Últimas Ventas Realizadas</Text>
+            <Text style={styles.listHeader}>Historial de Ventas</Text>
 
             {/* FlatList Optimizada */}
             <FlatList
@@ -199,6 +203,7 @@ const ReportsScreen = ({ navigation }: ReportsScreenProps) => {
                 contentContainerStyle={styles.listContentContainer}
                 ListEmptyComponent={
                     <View style={styles.emptyListContainer}>
+                        <Feather name="file-text" size={48} color={COLORS.textSecondary} />
                         <Text style={styles.emptyText}>No hay ventas registradas.</Text>
                     </View>
                 }
@@ -211,55 +216,120 @@ const ReportsScreen = ({ navigation }: ReportsScreenProps) => {
     );
 };
 
-// --- Estilos (sin cambios) ---
+// --- ESTILOS (¡MEJORADOS!) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+    // --- HEADER ESTANDARIZADO ---
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
         paddingTop: (StatusBar.currentHeight || 0) + 20,
-        paddingBottom: 20,
-        paddingHorizontal: 20
+        paddingBottom: 20, 
+        paddingHorizontal: 10
     },
-    backButton: { padding: 10 },
-    headerPlaceholder: { width: 44 }, // Para centrar el título si es necesario
-    title: { fontSize: 28, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center'},
-    metricsContainer: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 15, marginBottom: 30, gap: 15 },
-    metricBox: { flex: 1, backgroundColor: COLORS.glass, padding: 20, borderRadius: 20, borderWidth: 1, borderColor: COLORS.glassBorder, alignItems: 'center' },
-    metricIcon: { marginBottom: 10 },
-    metricValue: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, marginBottom: 5 },
-    metricLabel: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center' },
-    listHeader: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary, paddingHorizontal: 20, marginBottom: 15 },
-    listContentContainer: { paddingHorizontal: 15, paddingBottom: 20 },
-    emptyListContainer: { alignItems: 'center', marginTop: 30, padding: 20 },
-    emptyText: { color: COLORS.textSecondary, textAlign: 'center', fontStyle: 'italic', fontSize: 16 },
+    headerButton: { 
+        padding: 10,
+        width: 44,
+        alignItems: 'center',
+    },
+    title: { 
+        fontSize: 22, 
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary 
+    },
+    // --- FIN HEADER ---
+    metricsContainer: { 
+        paddingHorizontal: 20, // Alineado
+        marginBottom: 20, // Espacio antes de la lista
+    },
+    metricBox: { 
+        // Ya no es flex: 1, ocupa todo el ancho
+        backgroundColor: COLORS.glass, 
+        padding: 20, 
+        borderRadius: 20, 
+        borderWidth: 1, 
+        borderColor: COLORS.glassBorder, 
+        flexDirection: 'row', // Icono al lado del texto
+        alignItems: 'center', // Centrado vertical
+    },
+    metricIcon: { 
+        marginRight: 15, // Espacio entre icono y texto
+    },
+    metricTextContainer: {
+        flex: 1, // Ocupa el espacio restante
+    },
+    metricValue: { 
+        fontSize: 24, // Más grande
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary, 
+        marginBottom: 4, // Espacio
+    },
+    metricLabel: { 
+        fontSize: 14, // Más legible
+        color: COLORS.textSecondary, 
+    },
+    // --- FIN MÉTRICAS ---
+    listHeader: { 
+        fontSize: 16, 
+        fontWeight: '600',
+        color: COLORS.textSecondary, // Menos énfasis
+        paddingHorizontal: 25,
+        marginBottom: 15,
+        textTransform: 'uppercase', // Estilo pro
+        letterSpacing: 0.5,
+    },
+    listContentContainer: { 
+        paddingHorizontal: 20, // Alineado
+        paddingBottom: 20 
+    },
+    emptyListContainer: { 
+        alignItems: 'center', 
+        marginTop: 50, 
+        padding: 20,
+        gap: 20, // Espacio
+    },
+    emptyText: { 
+        color: COLORS.textSecondary, 
+        textAlign: 'center', 
+        fontStyle: 'italic', 
+        fontSize: 17 
+    },
+    // --- TARJETA DE VENTA MEJORADA ---
     saleCard: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'center', // Centrado vertical
         backgroundColor: COLORS.glass,
-        padding: 18,
-        borderRadius: 15,
+        padding: 16, // Padding estándar
+        borderRadius: 16, // Redondeado
         marginBottom: 10,
         borderWidth: 1,
         borderColor: COLORS.glassBorder
     },
+    statusIcon: {
+        width: 44, // Círculo
+        height: 44,
+        borderRadius: 22, // Círculo
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 15,
+        // Color de fondo dinámico
+    },
     saleInfo: {
-        flex: 1,
+        flex: 1, // Ocupa el espacio
         marginRight: 10
     },
     saleClientName: {
         color: COLORS.textPrimary,
         fontSize: 16,
         fontWeight: '600',
-        marginBottom: 5
+        marginBottom: 4, // Espacio
     },
     saleDetails: {
         color: COLORS.textSecondary,
-        fontSize: 14
+        fontSize: 14,
     },
     salePending: {
         color: COLORS.warning,
@@ -268,27 +338,20 @@ const styles = StyleSheet.create({
         marginTop: 4
     },
     saleActions: {
-        alignItems: 'flex-end'
+        alignItems: 'flex-end' // Alinea a la derecha
     },
-    statusBadge: {
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderRadius: 20,
-        marginBottom: 5,
+    saleTotal: {
+        color: COLORS.textPrimary,
+        fontSize: 17,
+        fontWeight: 'bold',
+        marginBottom: 4, // Espacio
     },
-    statusText: {
-        color: COLORS.primaryDark,
-        fontSize: 12,
-        fontWeight: 'bold'
-    },
-    saleDateText: {
-        color: COLORS.textSecondary,
-        fontSize: 12,
-        marginTop: 4,
-        marginBottom: 4,
-    },
+    // --- ESTILO DE "PILL" (Eliminado) ---
+    // statusBadge: { ... },
+    // statusText: { ... },
+    // saleDateText: { ... },
     chevronIcon: {
-        
+        // No necesita estilos extra
     },
 });
 

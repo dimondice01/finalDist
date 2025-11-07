@@ -1,27 +1,59 @@
+// src/screens/promotions.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React from 'react';
+// --- INICIO DE CAMBIOS: Importamos hooks ---
+import React, { useCallback, useMemo } from 'react';
+// --- FIN DE CAMBIOS ---
 import { ActivityIndicator, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // --- Navegación ---
 import { PromotionsScreenProps } from '../navigation/AppNavigator';
 
-// *****************************************************************
-// Importamos el tipo autoritativo 'Promotion' y 'useData' desde DataContext
-// *****************************************************************
+// --- Contexto y Estilos ---
 import { Promotion, useData } from '../../context/DataContext';
 import { COLORS } from '../../styles/theme';
 
 
-// Recibimos 'navigation' en las props
+// --- ¡NUEVO! Función auxiliar para Estilos e Iconos Dinámicos ---
+const getPromoDetails = (tipo: Promotion['tipo']) => {
+    switch (tipo) {
+        case 'precio_especial':
+            return { 
+                icon: 'dollar-sign' as keyof typeof Feather.glyphMap, 
+                color: COLORS.success, // Verde
+                label: 'Precio Especial' 
+            };
+        case 'LLEVA_X_PAGA_Y':
+            return { 
+                icon: 'gift' as keyof typeof Feather.glyphMap, 
+                color: COLORS.primary, // Amarillo
+                label: 'Lleva X, Paga Y' 
+            };
+        case 'DESCUENTO_POR_CANTIDAD':
+            return { 
+                icon: 'percent' as keyof typeof Feather.glyphMap, 
+                color: COLORS.warning, // Naranja
+                label: 'Descuento por Cantidad' 
+            };
+        default:
+            return { 
+                icon: 'tag' as keyof typeof Feather.glyphMap, 
+                color: COLORS.textSecondary, // Gris
+                label: tipo // Muestra el tipo si no se reconoce
+            };
+    }
+};
+// --- FIN de la función auxiliar ---
+
+
 const PromotionsScreen = ({ navigation }: PromotionsScreenProps) => {
-    // --- OBTENEMOS LOS DATOS LOCALMENTE ---
     const { promotions, isLoading } = useData();
 
-    // Filtramos las promociones para solo mostrar aquellas con nombre y tipo definidos
-    const activePromotions = promotions.filter(p => p.nombre && p.tipo);
+    // Filtramos las promociones para solo mostrar las válidas
+    const activePromotions = useMemo(() => 
+        promotions.filter(p => p.nombre && p.tipo), 
+    [promotions]);
     
-    // --- El bucle de carga es manejado por AppNavigator/RootNavigator ---
     
     if (isLoading && activePromotions.length === 0) {
         return (
@@ -32,16 +64,41 @@ const PromotionsScreen = ({ navigation }: PromotionsScreenProps) => {
         );
     }
 
+    // --- ¡NUEVO! RenderItem optimizado con useCallback ---
+    const renderPromoItem = useCallback(({ item }: { item: Promotion }) => {
+        // Obtenemos los detalles dinámicos
+        const { icon, color, label } = getPromoDetails(item.tipo);
+        
+        return (
+            <View style={styles.promoCard}>
+                <View style={[styles.promoIconContainer, { backgroundColor: `${color}20` }]}>
+                    <Feather name={icon} size={24} color={color} />
+                </View>
+                <View style={styles.promoTextContainer}>
+                    <Text style={styles.promoTitle}>{item.nombre}</Text>
+                    <Text style={[styles.promoSubtitle, { color: color }]}>{label}</Text>
+                    <Text style={styles.promoDescription}>
+                        Aplica a {item.productoIds?.length || 0} producto(s)
+                        {item.clienteIds && item.clienteIds.length > 0 ? ` y ${item.clienteIds.length} cliente(s)` : ''}.
+                    </Text>
+                </View>
+            </View>
+        );
+    }, []);
+    // --- FIN de RenderItem ---
+
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" />
+            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            
+            {/* --- HEADER MEJORADO --- */}
             <View style={styles.header}>
-                {/* Reemplazamos router.back() con navigation.goBack() */}
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>Promociones Vigentes</Text>
+                <Text style={styles.title}>Promociones</Text>
+                <View style={styles.headerButton} /> {/* Placeholder para centrar el título */}
             </View>
 
             <FlatList
@@ -50,67 +107,113 @@ const PromotionsScreen = ({ navigation }: PromotionsScreenProps) => {
                 contentContainerStyle={styles.listContentContainer}
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
-                        <Feather name="tag" size={40} color={COLORS.textSecondary} />
+                        <Feather name="tag" size={48} color={COLORS.textSecondary} />
                         <Text style={styles.emptyText}>No hay promociones activas en este momento.</Text>
                     </View>
                 }
-                renderItem={({ item }: { item: Promotion }) => (
-                    <View style={styles.promoCard}>
-                        <View style={styles.promoIconContainer}>
-                            <Feather name="star" size={24} color={COLORS.primaryDark} />
-                        </View>
-                        <View style={styles.promoTextContainer}>
-                            {/* Usamos 'nombre' */}
-                            <Text style={styles.promoProduct}>{item.nombre}</Text>
-                            {/* CORRECCIÓN FINAL: Usamos encadenamiento opcional para la longitud */}
-                            <Text style={styles.promoDescription}>Tipo: {item.tipo} | Aplica a {(item.productoIds?.length || 0)} producto(s)</Text>
-                        </View>
-                    </View>
-                )}
+                renderItem={renderPromoItem} // Usamos la función memoizada
             />
         </View>
     );
 };
 
-// --- ESTILOS COMPLETAMENTE REFACTORIZADOS ---
+// --- ESTILOS MEJORADOS ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
-    background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingBottom: 20, paddingHorizontal: 20, position: 'relative' },
-    backButton: { position: 'absolute', left: 20, top: 60, padding: 10 },
-    title: { fontSize: 28, fontWeight: 'bold', color: COLORS.textPrimary },
-    listContentContainer: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 20 },
-    emptyContainer: { alignItems: 'center', paddingTop: 80, gap: 15 },
-    emptyText: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center' },
+    container: { 
+        flex: 1, 
+        backgroundColor: COLORS.backgroundEnd 
+    },
+    background: { 
+        position: 'absolute', 
+        top: 0, 
+        left: 0, 
+        right: 0, 
+        height: '100%' 
+    },
+    loadingContainer: { 
+        flex: 1, 
+        justifyContent: 'center', 
+        alignItems: 'center' 
+    },
+    // --- ESTILO DE HEADER ESTANDARIZADO ---
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingTop: (StatusBar.currentHeight || 0) + 20,
+        paddingBottom: 20, 
+        paddingHorizontal: 10 // Reducido para que el botón sea más accesible
+    },
+    headerButton: { 
+        padding: 10,
+        width: 44, // Ancho fijo para centrar bien el título
+        alignItems: 'center',
+    },
+    title: { 
+        fontSize: 22, // Tamaño más estándar
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary 
+    },
+    // --- FIN DE HEADER ---
+    listContentContainer: { 
+        paddingHorizontal: 20, 
+        paddingTop: 10, 
+        paddingBottom: 40 // Más espacio al final
+    },
+    emptyContainer: { 
+        alignItems: 'center', 
+        paddingTop: 100, // Más centrado
+        gap: 20 // Espacio entre icono y texto
+    },
+    emptyText: { 
+        fontSize: 17, 
+        color: COLORS.textSecondary, 
+        textAlign: 'center' 
+    },
+    // --- ESTILO DE TARJETA MEJORADO ---
     promoCard: {
         backgroundColor: COLORS.glass,
-        borderRadius: 20,
-        padding: 20,
+        borderRadius: 16, // Más redondeado
+        padding: 16,
         marginBottom: 15,
         borderWidth: 1,
         borderColor: COLORS.glassBorder,
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'center', // Alinea icono y texto
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
     },
     promoIconContainer: {
-        backgroundColor: COLORS.primary,
-        borderRadius: 15,
-        padding: 12,
-        marginRight: 15,
+        width: 50, // Círculo perfecto
+        height: 50,
+        borderRadius: 25, // Círculo perfecto
+        justifyContent: 'center', // Icono centrado
+        alignItems: 'center',
+        marginRight: 16,
+        // El color de fondo se aplica dinámicamente
     },
     promoTextContainer: {
         flex: 1,
     },
-    promoProduct: {
-        fontSize: 18,
-        fontWeight: 'bold',
+    promoTitle: { // Título de la promo
+        fontSize: 17, // Más legible
+        fontWeight: '600', // Semi-bold
         color: COLORS.textPrimary,
+        marginBottom: 4, // Espacio
     },
-    promoDescription: {
-        fontSize: 15,
+    promoSubtitle: { // Tipo de promo (ej. Precio Especial)
+        fontSize: 14,
+        fontWeight: 'bold',
+        // El color se aplica dinámicamente
+        marginBottom: 5,
+    },
+    promoDescription: { // Descripción (ej. Aplica a 5 productos)
+        fontSize: 13,
         color: COLORS.textSecondary,
-        marginTop: 5,
+        lineHeight: 18, // Mejor espaciado de línea
     },
 });
 

@@ -3,12 +3,10 @@ import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINAMOS: import { getAuth, signOut } from 'firebase/auth';
-// ELIMINAMOS: import { Timestamp } from 'firebase/firestore';
-// AÑADIMOS: el TIPO Timestamp nativo
-import firestore from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
+// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+// AÑADIMOS: el TIPO Timestamp nativo v9
+import { Timestamp } from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -125,7 +123,7 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
                     <Feather name="dollar-sign" size={16} color={COLORS.textSecondary} />
                     <Text style={styles.detailText}>{formatCurrency(totalAmount)}</Text>
                 </View>
-                 {!isFinalizada && totalPendiente > 0 && (
+                {!isFinalizada && totalPendiente > 0 && (
                     <View style={[styles.detailItem, styles.detailItemPending]}>
                         <Feather name="alert-circle" size={16} color={COLORS.warning} />
                         <Text style={[styles.detailText, { color: COLORS.warning, fontWeight: 'bold' }]}>{totalPendiente} Pendientes</Text>
@@ -149,7 +147,7 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
     const [isLoadingLocal, setIsLoadingLocal] = useState(false); 
     const [selectedTab, setSelectedTab] = useState<'En Curso' | 'Finalizadas'>('En Curso');
 
-    // --- INICIO CAMBIO LOGOUT: Handler ---
+    // --- handleLogout (Sin cambios) ---
     const handleLogout = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         Alert.alert(
@@ -162,13 +160,8 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                     style: "destructive",
                     onPress: async () => {
                         try {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                            // ELIMINAMOS: const auth = getAuth();
-                            // ELIMINAMOS: await signOut(auth);
-                            
-                            // USAMOS: la instancia nativa
+                            // Usamos la instancia nativa
                             await auth.signOut();
-                            // --- FIN DE CAMBIOS: SDK NATIVO ---
                             
                             Toast.show({ type: 'info', text1: 'Sesión cerrada', position: 'bottom' });
                         } catch (error) {
@@ -182,7 +175,7 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
     };
     // --- FIN CAMBIO LOGOUT ---
 
-    // Mapeamos y Filtramos las rutas
+    // Mapeamos y Filtramos las rutas (CORREGIDO v9)
     const filteredRoutes: DriverRoute[] = useMemo(() => {
 
         const mappedRoutes = (dataContextRoutes || []).map((r: DataContextRoute): DriverRoute => {
@@ -190,10 +183,10 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
             const sourceDate = r.fecha; 
 
             if (sourceDate) {
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                // Usamos 'firestore.Timestamp' (el tipo nativo)
-                if (sourceDate instanceof firestore.Timestamp) { 
-                // --- FIN DE CAMBIOS: SDK NATIVO ---
+                // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                // Usamos 'Timestamp' (importado)
+                if (sourceDate instanceof Timestamp) { // <-- CORRECCIÓN 1
+                // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
                     routeDate = sourceDate.toDate();
                 } else if (sourceDate instanceof Date) { 
                     if (!isNaN(sourceDate.getTime())) { 
@@ -204,20 +197,21 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                 } else if (typeof sourceDate === 'object' && (sourceDate as any).seconds !== undefined && typeof (sourceDate as any).seconds === 'number') {
                     try {
                         if ((sourceDate as any).seconds > 0) {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                            routeDate = new firestore.Timestamp((sourceDate as any).seconds, (sourceDate as any).nanoseconds || 0).toDate();
-                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
+                            // Usamos 'Timestamp' (importado)
+                            routeDate = new Timestamp((sourceDate as any).seconds, (sourceDate as any).nanoseconds || 0).toDate(); // <-- CORRECCIÓN 2
+                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
                         } else {
                              console.warn(`[MAPEO ${r.id}] Timestamp con seconds <= 0 encontrado:`, sourceDate);
                         }
                     } catch (e) { console.warn(`[MAPEO ${r.id}] Error convirtiendo objeto a Timestamp:`, sourceDate, e); }
                 } else if (typeof sourceDate === 'string') {
-                      const parsedDate = new Date(sourceDate);
-                      if (!isNaN(parsedDate.getTime())) {
-                          routeDate = parsedDate;
-                      } else {
-                          console.warn(`[MAPEO ${r.id}] Fecha inválida (string from context):`, sourceDate);
-                      }
+                    const parsedDate = new Date(sourceDate);
+                    if (!isNaN(parsedDate.getTime())) {
+                        routeDate = parsedDate;
+                    } else {
+                        console.warn(`[MAPEO ${r.id}] Fecha inválida (string from context):`, sourceDate);
+                    }
                 } else {
                     console.warn(`[MAPEO ${r.id}] Tipo de fecha no reconocido en context:`, sourceDate);
                 }
@@ -252,28 +246,29 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
             };
         });
 
-      const filtered = mappedRoutes.filter(route => {
-          if (selectedTab === 'En Curso') {
-              const estadosEnCurso = ['Creada', 'En Curso'];
-              return estadosEnCurso.includes(route.estado);
-          } else {
-              const estadosFinalizados = ['Completada', 'Archivada'];
-              return estadosFinalizados.includes(route.estado);
-          }
-      });
+        const filtered = mappedRoutes.filter(route => {
+            if (selectedTab === 'En Curso') {
+                const estadosEnCurso = ['Creada', 'En Curso'];
+                return estadosEnCurso.includes(route.estado);
+            } else {
+                const estadosFinalizados = ['Completada', 'Archivada'];
+                return estadosFinalizados.includes(route.estado);
+            }
+        });
 
         return filtered.sort((a, b) => {
              if (selectedTab === 'En Curso') {
                  if (a.estado === 'En Curso' && b.estado !== 'En Curso') return -1;
                  if (a.estado !== 'En Curso' && b.estado === 'En Curso') return 1;
              }
-           const dateA = a.fecha?.getTime() || 0;
-           const dateB = b.fecha?.getTime() || 0;
-           return dateB - dateA;
+            const dateA = a.fecha?.getTime() || 0;
+            const dateB = b.fecha?.getTime() || 0;
+            return dateB - dateA;
         });
 
     }, [dataContextRoutes, selectedTab]);
 
+    // --- Callbacks (Sin cambios) ---
     const handleRefresh = useCallback(async () => {
         setIsLoadingLocal(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

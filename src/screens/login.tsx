@@ -2,12 +2,20 @@
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINAMOS: import { signInWithEmailAndPassword } from 'firebase/auth';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
-
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+    ActivityIndicator,
+    Alert,
+    Image,
+    KeyboardAvoidingView,
+    Platform,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
+} from 'react-native';
 
 // --- Contexto y DB ---
 import { auth } from '../../db/firebase-service'; // Importa la instancia NATIVA
@@ -16,7 +24,7 @@ import { auth } from '../../db/firebase-service'; // Importa la instancia NATIVA
 import { LoginScreenProps } from '../navigation/AppNavigator';
 
 // --- Estilos ---
-import { COLORS } from '../../styles/theme'; // Ajusta la ruta
+import { COLORS } from '../../styles/theme';
 
 const LoginScreen = ({ navigation }: LoginScreenProps) => { 
     const [email, setEmail] = useState('');
@@ -34,10 +42,8 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
         setLoadingMessage('Iniciando sesión...');
 
         try {
-            // --- INICIO DE CAMBIOS: SDK NATIVO ---
-            // Usamos el método DIRECTAMENTE de la instancia nativa 'auth'
+            // --- ¡Esto ya es correcto! Usa la instancia nativa ---
             await auth.signInWithEmailAndPassword(email.trim(), password);
-            // --- FIN DE CAMBIOS: SDK NATIVO ---
             
             setTimeout(() => {
                 setLoading(false);
@@ -62,7 +68,6 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
         }
     };
 
-    // --- RENDER Y ESTILOS (Sin cambios) ---
     return (
         <KeyboardAvoidingView 
             style={styles.container} 
@@ -71,67 +76,154 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
         >
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundEnd} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-            <Image
-                source={require('../../assets/images/icon_login.png')}
-                style={styles.logo}
-            />
-            <Text style={styles.title}>Bienvenido</Text>
-            <Text style={styles.subtitle}>Inicia sesión para continuar</Text>
-            <View style={styles.formContainer}>
-                <View style={styles.inputContainer}>
-                    <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Email"
-                        placeholderTextColor={COLORS.textSecondary}
-                        value={email}
-                        onChangeText={setEmail}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        returnKeyType="next"
-                    />
+            
+            {/* --- CONTENIDO CENTRADO --- */}
+            <View style={styles.contentContainer}>
+                <Image
+                    source={require('../../assets/images/icon_login.png')}
+                    style={styles.logo}
+                />
+                <Text style={styles.title}>Bienvenido</Text>
+                <Text style={styles.subtitle}>Inicia sesión para continuar</Text>
+                
+                <View style={styles.formContainer}>
+                    <View style={styles.inputContainer}>
+                        <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Email"
+                            placeholderTextColor={COLORS.textSecondary}
+                            value={email}
+                            onChangeText={setEmail}
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            returnKeyType="next"
+                        />
+                    </View>
+                    <View style={styles.inputContainer}>
+                        <Feather name="lock" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Contraseña"
+                            placeholderTextColor={COLORS.textSecondary}
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            returnKeyType="go"
+                            onSubmitEditing={handleLogin}
+                        />
+                    </View>
+                    <TouchableOpacity style={[styles.button, loading && styles.buttonDisabled]} onPress={handleLogin} disabled={loading}>
+                        {loading ? (
+                            <>
+                                <ActivityIndicator size="small" color={COLORS.primaryDark} />
+                                <Text style={styles.buttonTextLoading}>{loadingMessage}</Text>
+                            </>
+                        ) : (
+                            <Text style={styles.buttonText}>Iniciar Sesión</Text>
+                        )}
+                    </TouchableOpacity>
                 </View>
-                <View style={styles.inputContainer}>
-                    <Feather name="lock" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Contraseña"
-                        placeholderTextColor={COLORS.textSecondary}
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        returnKeyType="go"
-                        onSubmitEditing={handleLogin}
-                    />
-                </View>
-                <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-                    {loading ? (
-                        <><ActivityIndicator size="small" color={COLORS.primaryDark} /><Text style={styles.buttonTextLoading}>{loadingMessage}</Text></>
-                    ) : (
-                        <Text style={styles.buttonText}>Iniciar Sesión</Text>
-                    )}
-                </TouchableOpacity>
             </View>
         </KeyboardAvoidingView>
     );
 };
 
+// --- ESTILOS MEJORADOS ---
 const styles = StyleSheet.create({
-    container: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.white, padding: 20 },
-    background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
-    logo: { width: 220, height: 100, resizeMode: 'contain', marginBottom: 15, },
-    title: { fontSize: 48, fontWeight: 'bold', color: COLORS.textPrimary, marginTop: 10 },
-    subtitle: { fontSize: 18, color: COLORS.textSecondary, marginBottom: 40 },
-    formContainer: { width: '100%' },
-    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.glass, borderRadius: 12, borderWidth: 1, borderColor: COLORS.glassBorder, marginBottom: 15, paddingHorizontal: 15, height: 55, },
-    inputIcon: { marginRight: 10 },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: 16, height: '100%', },
-    button: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.primary, padding: 15, borderRadius: 12, marginTop: 10, height: 55, },
-    buttonText: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold', },
-    buttonTextLoading: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold', marginLeft: 10, },
+    container: { 
+        flex: 1, 
+        backgroundColor: COLORS.white, // Color base por si el gradiente falla
+    },
+    background: { 
+        position: 'absolute', 
+        left: 0, 
+        right: 0, 
+        top: 0, 
+        height: '100%' 
+    },
+    contentContainer: {
+        flex: 1,
+        justifyContent: 'center', // Centra todo el contenido
+        alignItems: 'center',
+        paddingHorizontal: 25, // Padding horizontal
+    },
+    logo: { 
+        width: 180, // Más pequeño
+        height: 80, // Más pequeño
+        resizeMode: 'contain', 
+        marginBottom: 20, // Espacio reducido
+    },
+    title: { 
+        fontSize: 40, // Más pequeño y legible
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary, 
+        marginBottom: 8, // Menos espacio
+    },
+    subtitle: { 
+        fontSize: 17, // Ligeramente más pequeño
+        color: COLORS.textSecondary, 
+        marginBottom: 40, // Mantiene el espacio
+        lineHeight: 24, // Mejora legibilidad
+    },
+    formContainer: { 
+        width: '100%' 
+    },
+    inputContainer: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        backgroundColor: COLORS.glass, 
+        borderRadius: 15, // Más redondeado
+        borderWidth: 1, 
+        borderColor: COLORS.glassBorder, 
+        marginBottom: 15, 
+        paddingHorizontal: 15, 
+        height: 52, // Más estándar
+    },
+    inputIcon: { 
+        marginRight: 10 
+    },
+    input: { 
+        flex: 1, 
+        color: COLORS.textPrimary, 
+        fontSize: 16, 
+        height: '100%', 
+    },
+    button: { 
+        flexDirection: 'row', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        backgroundColor: COLORS.primary, 
+        padding: 15, 
+        borderRadius: 15, // Más redondeado
+        marginTop: 20, // Más espacio antes del botón
+        height: 52, // Misma altura que inputs
+        // Sombra sutil
+        shadowColor: COLORS.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 5,
+        elevation: 6,
+    },
+    buttonDisabled: {
+        backgroundColor: COLORS.disabled,
+        shadowOpacity: 0, // Sin sombra si está deshabilitado
+        elevation: 0,
+    },
+    buttonText: { 
+        color: COLORS.primaryDark, 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+    },
+    buttonTextLoading: { 
+        color: COLORS.primaryDark, 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+        marginLeft: 12, // Espacio del spinner
+    },
 });
 
 export default LoginScreen;
