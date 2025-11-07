@@ -1,8 +1,11 @@
-// Asumo que el archivo está en src/screens/home.tsx ahora
-
+// src/screens/home.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { signOut } from 'firebase/auth';
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINADAS: import { signOut } from 'firebase/auth';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -18,10 +21,11 @@ import {
 } from 'react-native';
 
 // --- Importaciones de Navegación ---
-import { HomeScreenProps } from '../navigation/AppNavigator'; // Importamos el tipo de props del Stack Navigator
+import { HomeScreenProps } from '../navigation/AppNavigator';
 
 // --- Contextos y DB ---
 import { Sale, useData, Vendor } from '../../context/DataContext';
+// Esta 'auth' es NATIVA
 import { auth } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
@@ -29,7 +33,6 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
     const { 
         sales, 
         vendors, 
-        // Corregido: Usamos solo las propiedades correctas del contexto.
         isLoading: isDataLoading, 
         refreshAllData 
     } = useData();
@@ -40,11 +43,10 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
     const currentVendedor = useMemo(() => {
         const currentUser = auth.currentUser;
         if (!currentUser || !vendors || vendors.length === 0) return null;
-        // CORRECCIÓN DE BÚSQUEDA: Buscar por firebaseAuthUid si la ID de auth no es la misma que la ID de doc
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid || v.id === currentUser.uid);
     }, [vendors]);
 
-    // --- Obtener últimas 5 ventas ---
+    // --- Obtener últimas 5 ventas (Sin cambios) ---
     const recentSales = useMemo(() => {
         const getDate = (sale: Sale) => {
             if (sale.fecha instanceof Date) {
@@ -57,6 +59,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             .slice(0, 5);
     }, [sales]);
 
+    // --- onRefresh (Sin cambios) ---
     const onRefresh = useCallback(async () => {
         setIsRefreshing(true);
         try {
@@ -69,6 +72,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
         }
     }, [refreshAllData]);
 
+    // --- handleLogout (¡CORREGIDO CON SDK NATIVO!) ---
     const handleLogout = async () => {
         Alert.alert(
             "Cerrar Sesión",
@@ -81,8 +85,13 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                     onPress: async () => {
                         setIsLoggingOut(true);
                         try {
-                            await signOut(auth);
-                            // La navegación a Login la maneja RootNavigator al detectar signOut.
+                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                            // ELIMINADO: await signOut(auth); (SDK WEB)
+                            // AÑADIDO:
+                            await auth.signOut();
+                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+                            
+                            // La navegación a Login la maneja RootNavigator
                         } catch (error) {
                             console.error("Error al cerrar sesión:", error);
                             Alert.alert("Error", "No se pudo cerrar la sesión.");
@@ -93,8 +102,9 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             ]
         );
     };
+    // --- FIN de handleLogout ---
 
-    // --- Funciones auxiliares de formato ---
+    // --- Funciones auxiliares de formato (Sin cambios) ---
     const formatCurrency = (value: number) => {
         return `$${value.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     };
@@ -116,7 +126,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
         }
     };
 
-    // --- RENDERIZADO ---
+    // --- RENDERIZADO (Sin cambios) ---
 
     if (isDataLoading || isLoggingOut) { 
         return (
@@ -267,6 +277,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
     );
 };
 
+// --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
@@ -317,14 +328,13 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     
-    // --- NUEVO: Estilos de Tarjeta de Acción Principal ---
     primaryActionsCard: {
         backgroundColor: COLORS.glass,
         marginHorizontal: 20,
         borderRadius: 20,
         borderWidth: 1,
         borderColor: COLORS.glassBorder,
-        padding: 10, // Padding ligero, los botones tendrán el suyo
+        padding: 10, 
         marginBottom: 25,
     },
     primaryButton: {
@@ -354,7 +364,6 @@ const styles = StyleSheet.create({
         marginHorizontal: 10,
     },
 
-    // --- NUEVO: Estilos de Herramientas (Círculos) ---
     toolsContainer: {
         paddingHorizontal: 20,
         paddingBottom: 10,
@@ -363,12 +372,12 @@ const styles = StyleSheet.create({
     toolButton: {
         alignItems: 'center',
         marginRight: 25,
-        width: 80, // Ancho fijo para alinear texto
+        width: 80, 
     },
     toolIconCircle: {
         width: 64,
         height: 64,
-        borderRadius: 32, // Círculo perfecto
+        borderRadius: 32, 
         backgroundColor: COLORS.glass,
         borderWidth: 1,
         borderColor: COLORS.glassBorder,
@@ -383,10 +392,9 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
 
-    // --- Estilos de Ventas Recientes (Ajustados) ---
     recentSalesList: {
         paddingLeft: 20, 
-        paddingRight: 10, // Espacio al final
+        paddingRight: 10, 
         paddingBottom: 20
     },
     emptyRecent: {
@@ -400,7 +408,7 @@ const styles = StyleSheet.create({
         fontStyle: 'italic'
     },
     recentSaleCard: {
-        width: 220, // Más pequeña
+        width: 220, 
         backgroundColor: COLORS.glass,
         borderRadius: 15,
         borderWidth: 1,

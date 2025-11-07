@@ -1,17 +1,21 @@
+// src/screens/register-payment.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// Quitamos import { router, useLocalSearchParams } from 'expo-router';
-import { doc, runTransaction } from 'firebase/firestore';
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINADAS: import { doc, runTransaction } from 'firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // --- Navegación ---
-import { useRoute } from '@react-navigation/native'; // Para obtener los parámetros de la ruta
-import { RegisterPaymentScreenProps } from '../navigation/AppNavigator'; // Asume la tipificación de props
+import { useRoute } from '@react-navigation/native';
+import { RegisterPaymentScreenProps } from '../navigation/AppNavigator';
 
+// Esta 'db' es NATIVA
 import { db } from '../../db/firebase-service';
-import { COLORS } from '../../styles/theme'; // <-- IMPORTAMOS EL TEMA
+import { COLORS } from '../../styles/theme';
 
 // Definimos la interfaz de parámetros esperada por esta pantalla
 interface RouteParams {
@@ -21,11 +25,9 @@ interface RouteParams {
 }
 
 const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
-    // 1. OBTENER PARÁMETROS DE REACT NAVIGATION
     const route = useRoute();
     const { saleId, saldoPendiente: initialSaldo, saleInfo } = route.params as RouteParams;
     
-    // El saldoPendiente se mantiene como float
     const saldoPendiente = parseFloat(initialSaldo || '0');
 
     const [pagoEfectivo, setPagoEfectivo] = useState('');
@@ -42,7 +44,7 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
             return;
         }
 
-        if (totalPagado > saldoPendiente + 0.01) { // Pequeña tolerancia para errores de punto flotante
+        if (totalPagado > saldoPendiente + 0.01) { 
             Alert.alert("Monto Excedido", `El pago ($${totalPagado.toFixed(2)}) no puede ser mayor al saldo pendiente ($${saldoPendiente.toFixed(2)}).`);
             return;
         }
@@ -50,22 +52,35 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
         setIsSaving(true);
 
         try {
-            const saleRef = doc(db, 'ventas', saleId as string);
+            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+            // Sintaxis Nativa para la referencia
+            const saleRef = db.collection('ventas').doc(saleId as string);
             
-            // runTransaction es "offline-first". Funciona sin conexión y sincroniza después.
-            await runTransaction(db, async (transaction) => {
+            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
+            await db.runTransaction(async (transaction) => {
+            // --- FIN DE CAMBIOS: SDK NATIVO ---
+
                 const saleDoc = await transaction.get(saleRef);
-                if (!saleDoc.exists()) {
+                
+                // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                // Usamos la propiedad '.exists' (Nativa) en lugar de '.exists()' (Web)
+                if (!saleDoc.exists) {
+                // --- FIN DE CAMBIOS: SDK NATIVO ---
                     throw "¡La venta no existe!";
                 }
 
                 const data = saleDoc.data();
+                // Si 'data' es undefined (nunca debería pasar si .exists es true), lanzamos error
+                if (!data) {
+                    throw "No se pudieron leer los datos de la venta.";
+                }
+                
                 const nuevoSaldo = (data.saldoPendiente || 0) - totalPagado;
                 let nuevoEstado = data.estado;
                 if (nuevoSaldo <= 0.01) {
                     nuevoEstado = 'Pagada';
-                } else if (totalPagado > 0) { // Si pagó algo pero no todo
-                    nuevoEstado = 'Adeuda'; // <-- ¡AÑADIR ESTO!
+                } else if (totalPagado > 0) { 
+                    nuevoEstado = 'Adeuda'; 
                 }
                 
                 transaction.update(saleRef, {
@@ -77,7 +92,6 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
             });
             
             Alert.alert("Éxito", "El pago se ha registrado correctamente. Los datos se sincronizarán si estás sin conexión.");
-            // 2. CORRECCIÓN: Reemplazamos router.back() con navigation.goBack()
             navigation.goBack();
 
         } catch (error) {
@@ -93,7 +107,6 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
             <StatusBar barStyle="light-content" />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
             <View style={styles.header}>
-                {/* 3. CORRECCIÓN: Reemplazamos router.back() con navigation.goBack() */}
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
@@ -139,7 +152,7 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
     );
 };
 
-// --- ESTILOS COMPLETAMENTE REFACTORIZADOS ---
+// --- ESTILOS (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },

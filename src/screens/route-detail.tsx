@@ -1,37 +1,36 @@
 // src/screens/route-detail.tsx
 import { Feather } from '@expo/vector-icons';
-// --- INICIO CAMBIOS: Importar Haptics ---
 import * as Haptics from 'expo-haptics';
-// --- FIN CAMBIOS ---
 import { LinearGradient } from 'expo-linear-gradient';
-// --- INICIO CAMBIOS: Importar lógica de Transacción ---
-import { doc, increment, runTransaction, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
-// --- FIN CAMBIOS ---
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINAMOS: import { doc, increment, runTransaction, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+// AÑADIMOS: el import nativo de firestore
+import firestore from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { useEffect, useMemo, useState } from 'react';
-// --- INICIO CAMBIOS: FlatList, KeyboardAvoidingView y ScrollView ---
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-// --- FIN CAMBIOS ---
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
 import type { RouteDetailScreenProps } from '../navigation/AppNavigator';
 
+// --- Contexto y DB ---
 import { useData } from '../../context/DataContext';
+// Esta 'db' es NATIVA
 import { db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
 
-// --- INTERFACES LOCALES (ACTUALIZADAS) ---
-// --- INICIO CAMBIOS: Añadir DriverItem ---
+// --- INTERFACES LOCALES (Sin cambios) ---
 interface DriverItem {
     productId: string;
     nombre: string;
     quantity: number;
     precio: number;
 }
-// --- FIN CAMBIOS ---
-
 interface Invoice {
     id: string;
     clienteId: string;
@@ -41,7 +40,7 @@ interface Invoice {
     estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda';
     location?: { latitude: number; longitude: number; };
     telefono?: string;
-    items: DriverItem[]; // <-- CAMBIO: Aseguramos que items esté aquí
+    items: DriverItem[];
 }
 interface RouteFull {
     id: string;
@@ -49,11 +48,9 @@ interface RouteFull {
     estado?: 'Creada' | 'En Curso' | 'Completada' | 'Archivada';
     facturas: Invoice[];
 }
-// --- FIN INTERFACES ---
-
 
 // =================================================================================
-// --- Componente DeliveryAdjustmentModal (ACTUALIZADO) ---
+// --- Componente DeliveryAdjustmentModal (ACTUALIZADO CON SDK NATIVO) ---
 // =================================================================================
 interface DeliveryAdjustmentModalProps {
     visible: boolean;
@@ -84,6 +81,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
         return modifiedItems.reduce((total, item) => total + (item.precio * item.quantity), 0);
     }, [modifiedItems]);
 
+    // handleQuantityChange (Sin cambios)
     const handleQuantityChange = (index: number, change: 'increment' | 'decrement' | 'input', value?: string) => {
         if (change !== 'input') {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -125,7 +123,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
         });
     };
 
-    // --- LÓGICA DE TRANSACCIÓN COMPLETA (CORREGIDA) ---
+    // --- LÓGICA DE TRANSACCIÓN COMPLETA (CORREGIDA CON SDK NATIVO) ---
     const executeTransaction = async () => {
         setIsSaving(true);
         setEditingItemIndex(null); 
@@ -138,12 +136,19 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
             const finalStatus = totalPagado < newTotalVenta ? 'Adeuda' : 'Pagada';
             const finalItemsToDeliver = modifiedItems.filter(item => item.quantity > 0);
 
-            await runTransaction(db, async (transaction) => {
-                const ventaRef = doc(db, 'ventas', stop.id);
-                const routeRef = doc(db, 'rutas', routeId);
+            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
+            await db.runTransaction(async (transaction) => {
+                // Sintaxis Nativa para referencias
+                const ventaRef = db.collection('ventas').doc(stop.id);
+                const routeRef = db.collection('rutas').doc(routeId);
+            // --- FIN DE CAMBIOS: SDK NATIVO ---
 
                 const routeDoc = await transaction.get(routeRef);
-                if (!routeDoc.exists()) throw new Error("La ruta no fue encontrada.");
+                // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                // Usamos la propiedad '.exists' (Nativa)
+                if (!routeDoc.exists) throw new Error("La ruta no fue encontrada.");
+                // --- FIN DE CAMBIOS: SDK NATIVO ---
 
                 const stockDevueltoMap = new Map<string, number>();
 
@@ -157,8 +162,11 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                 
                 for (const [productId, stockDifference] of stockDevueltoMap.entries()) {
                     if (stockDifference > 0 && productId) { 
-                        const productRef = doc(db, 'productos', productId);
-                        transaction.update(productRef, { stock: increment(stockDifference) });
+                        // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                        const productRef = db.collection('productos').doc(productId);
+                        // Usamos 'firestore.FieldValue.increment'
+                        transaction.update(productRef, { stock: firestore.FieldValue.increment(stockDifference) });
+                        // --- FIN DE CAMBIOS: SDK NATIVO ---
                     }
                 }
 
@@ -169,7 +177,10 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
                     pagoEfectivo: efectivo,
                     pagoTransferencia: transferencia,
                     saldoPendiente: newTotalVenta - totalPagado,
-                    fechaUltimoPago: Timestamp.now(),
+                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                    // Usamos 'firestore.FieldValue.serverTimestamp'
+                    fechaUltimoPago: firestore.FieldValue.serverTimestamp(),
+                    // --- FIN DE CAMBIOS: SDK NATIVO ---
                 });
 
                 const routeData = routeDoc.data();
@@ -199,7 +210,9 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
             setIsSaving(false);
         }
     };
+    // --- FIN DE executeTransaction ---
 
+    // handleConfirmDelivery (Sin cambios lógicos)
     const handleConfirmDelivery = async () => {
         const efectivo = parseFloat(pagoEfectivo.replace(',', '.')) || 0;
         const transferencia = parseFloat(pagoTransferencia.replace(',', '.')) || 0;
@@ -242,6 +255,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
 
     if (!stop) return null;
 
+    // --- RENDER DEL MODAL (Sin cambios) ---
     return (
         <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
             <KeyboardAvoidingView
@@ -333,7 +347,7 @@ const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }:
 // =================================================================================
 
 
-// --- Pantalla Principal: RouteDetailScreen ---
+// --- Pantalla Principal: RouteDetailScreen (ACTUALIZADA CON SDK NATIVO) ---
 const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const routeId = route.params?.routeId;
     const { routes, clients, syncData } = useData();
@@ -349,24 +363,24 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         const foundRoute = routes.find(r => r.id === routeId);
         if (!foundRoute) return undefined;
 
-        // --- ¡¡¡INICIO DE LA CORRECCIÓN (Error 'undefined')!!! ---
         const enrichedFacturas = (foundRoute.facturas || []).map(f => {
             const clientData = clients.find(c => c.id === f.clienteId);
             return {
                 ...f,
                 estadoVisita: f.estadoVisita || 'Pendiente',
-                // Si 'clientData' no existe, 'location' y 'telefono' deben ser NULL, no undefined.
                 location: clientData?.location || null, 
                 telefono: clientData?.telefono || null,
                 items: f.items || [] 
             };
         });
-        // --- ¡¡¡FIN DE LA CORRECCIÓN!!! ---
 
         let routeDate = foundRoute.fecha;
+        // --- INICIO DE CAMBIOS: SDK NATIVO ---
+        // Usamos 'firestore.Timestamp' (el tipo nativo)
         if (routeDate && !(routeDate instanceof Date) && (routeDate as any).seconds !== undefined) {
-             routeDate = new Timestamp((routeDate as any).seconds, (routeDate as any).nanoseconds).toDate();
+             routeDate = new firestore.Timestamp((routeDate as any).seconds, (routeDate as any).nanoseconds).toDate();
         }
+        // --- FIN DE CAMBIOS: SDK NATIVO ---
 
         return {
              ...foundRoute,
@@ -378,11 +392,12 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     useEffect(() => {
         if (currentRoute?.facturas) {
              if (JSON.stringify(localInvoices) !== JSON.stringify(currentRoute.facturas)) {
-                setLocalInvoices(currentRoute.facturas);
+                 setLocalInvoices(currentRoute.facturas);
              }
         }
     }, [currentRoute, localInvoices]);
 
+    // routeReport (Sin cambios)
     const routeReport = useMemo(() => {
         if (localInvoices.length === 0) return { total: 0, pendientes: 0, entregadas: 0 };
         const facturas = localInvoices;
@@ -395,6 +410,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         };
     }, [localInvoices]);
 
+    // handleOpenMap (Sin cambios)
     const handleOpenMap = (invoice: Invoice) => {
         if (invoice.location) {
             const { latitude, longitude } = invoice.location;
@@ -408,14 +424,16 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         }
     };
 
+    // handleCallClient (Sin cambios)
     const handleCallClient = (invoice: Invoice) => {
          if (invoice.telefono) {
-            Linking.openURL(`tel:${invoice.telefono}`).catch(err => console.error('Error al llamar:', err));
-        } else {
-            Alert.alert("Teléfono no disponible", "Este cliente no tiene un teléfono registrado.");
-        }
+             Linking.openURL(`tel:${invoice.telefono}`).catch(err => console.error('Error al llamar:', err));
+         } else {
+             Alert.alert("Teléfono no disponible", "Este cliente no tiene un teléfono registrado.");
+         }
     };
 
+    // openAdjustmentModal (Sin cambios)
     const openAdjustmentModal = (invoice: Invoice) => {
         if (invoice.estadoVisita !== 'Pendiente' && invoice.estadoVisita !== 'Adeuda') {
              Toast.show({ type: 'info', text1: 'Estado inválido', text2: 'Solo se pueden gestionar facturas Pendientes o Adeudadas.', position: 'bottom' });
@@ -430,6 +448,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     };
 
+    // handleConfirmAndUpdateUI (Sin cambios)
     const handleConfirmAndUpdateUI = (updatedInvoice: Invoice) => {
         setLocalInvoices(prevInvoices =>
             prevInvoices.map(inv =>
@@ -439,7 +458,8 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         syncData();
     };
 
-     const handleMarkAsPending = async (invoice: Invoice) => {
+    // --- handleMarkAsPending (¡CORREGIDO CON SDK NATIVO!) ---
+    const handleMarkAsPending = async (invoice: Invoice) => {
         if (invoice.estadoVisita === 'Pendiente') return;
 
         if (currentRoute?.estado === 'Completada' || currentRoute?.estado === 'Archivada') {
@@ -458,9 +478,11 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     onPress: async () => {
                         setIsUpdating(true);
                         try {
-                            const batch = writeBatch(db);
-                            const saleRef = doc(db, 'ventas', invoice.id);
-                            const routeRef = doc(db, 'rutas', routeId);
+                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                            const batch = db.batch(); // Nativo
+                            const saleRef = db.collection('ventas').doc(invoice.id); // Nativo
+                            const routeRef = db.collection('rutas').doc(routeId); // Nativo
+                            // --- FIN DE CAMBIOS: SDK NATIVO ---
 
                             batch.update(saleRef, {
                                 estado: 'Pendiente de Entrega',
@@ -475,6 +497,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                             batch.update(routeRef, { facturas: updatedFacturas });
                             
                             await batch.commit();
+                            
                             setLocalInvoices(updatedFacturas);
                             Toast.show({ type: 'info', text1: 'Revertido a Pendiente', position: 'bottom' });
 
@@ -490,7 +513,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         );
     };
 
-    // --- ¡¡¡INICIO DE LA CORRECCIÓN (Lógica Anulación)!!! ---
+    // --- handleCancelInvoice (¡CORREGIDO CON SDK NATIVO!) ---
     const handleCancelInvoice = async (invoice: Invoice) => {
         if (invoice.estadoVisita === 'Anulada') return;
 
@@ -510,30 +533,24 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     onPress: async () => {
                         setIsUpdating(true);
                         try {
-                            // 1. Encontrar la ruta original desde el contexto (la fuente de verdad)
                             const originalRoute = routes.find(r => r.id === routeId);
-
-                            // 2. Encontrar la factura ORIGINAL (con los items originales)
-                            // (Corrección TS 18048: Se añade '?' después de 'facturas')
                             const originalInvoice = originalRoute?.facturas?.find(f => f.id === invoice.id);
-                            
-                            // 3. Determinar qué items devolver
-                            // Si encontramos la factura original en el contexto, usamos esos items.
-                            // Si no (fallback muy improbable), usamos los items de la factura local.
                             const itemsToReturn = originalInvoice?.items || invoice.items;
                             
                             if (!originalInvoice) {
                                 console.warn(`ADVERTENCIA: No se encontró la factura original en DataContext (ID: ${invoice.id}). Se usará la factura local para anular. El stock devuelto podría ser incorrecto si la factura fue modificada.`);
                             }
                             
-                            const batch = writeBatch(db);
-                            const saleRef = doc(db, 'ventas', invoice.id);
-                            const routeRef = doc(db, 'rutas', routeId);
+                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                            const batch = db.batch(); // Nativo
+                            const saleRef = db.collection('ventas').doc(invoice.id); // Nativo
+                            const routeRef = db.collection('rutas').doc(routeId); // Nativo
+                            // --- FIN DE CAMBIOS: SDK NATIVO ---
 
                             // 4. Actualizar la Venta
                             batch.update(saleRef, {
                                 estado: 'Anulada',
-                                saldoPendiente: invoice.totalVenta // El saldo pendiente es el total
+                                saldoPendiente: invoice.totalVenta 
                             });
 
                             // 5. Actualizar la Factura en la Ruta
@@ -543,24 +560,22 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                             batch.update(routeRef, { facturas: updatedFacturas });
 
                             // 6. Devolver Stock usando los items ORIGINALES (itemsToReturn)
-                            // (Corrección TS 7006: Se añade el tipo 'DriverItem' a 'item')
                             itemsToReturn.forEach((item: DriverItem) => {
-                                // Doble validación: que exista productId Y que quantity sea un número válido > 0
                                 if (item.productId && typeof item.quantity === 'number' && item.quantity > 0) {
-                                    const productRef = doc(db, 'productos', item.productId);
-                                    batch.update(productRef, { stock: increment(item.quantity) });
+                                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                                    const productRef = db.collection('productos').doc(item.productId); // Nativo
+                                    batch.update(productRef, { stock: firestore.FieldValue.increment(item.quantity) }); // Nativo
+                                    // --- FIN DE CAMBIOS: SDK NATIVO ---
                                 } else {
                                     console.warn("Item inválido al anular, no se devuelve stock para este item:", item);
                                 }
                             });
                             
-                            // 7. Ejecutar
                             await batch.commit();
                             
-                            // 8. Actualizar UI
                             setLocalInvoices(updatedFacturas);
                             Toast.show({ type: 'info', text1: 'Visita Anulada y Stock Devuelto', position: 'bottom' });
-                            syncData(); // Sincronizar datos
+                            syncData(); 
 
                         } catch (error: any) {
                             console.error("Error al anular factura:", error);
@@ -573,8 +588,8 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
             ]
         );
     };
-    // --- ¡¡¡FIN DE LA CORRECCIÓN!!! ---
 
+    // --- handleFinalizeRoute (¡CORREGIDO CON SDK NATIVO!) ---
     const handleFinalizeRoute = async () => {
         if (!currentRoute || routeReport.pendientes > 0 || isUpdating) {
             if (routeReport.pendientes > 0) {
@@ -592,10 +607,12 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     text: "Sí, Finalizar", onPress: async () => {
                         setIsUpdating(true);
                         try {
-                            const routeRef = doc(db, 'rutas', currentRoute.id);
-                            await updateDoc(routeRef, {
+                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                            const routeRef = db.collection('rutas').doc(currentRoute.id); // Nativo
+                            await routeRef.update({ // Nativo
                                 estado: 'Completada'
                             });
+                            // --- FIN DE CAMBIOS: SDK NATIVO ---
                             
                             await syncData();
                             
@@ -613,20 +630,21 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         );
     };
 
+    // --- RENDER (Sin cambios lógicos) ---
     if (!currentRoute) {
         return (
              <SafeAreaView style={styles.container}>
                  <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
                  <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
                  <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                        <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
-                    </TouchableOpacity>
-                    <Text style={styles.title}>Cargando...</Text>
-                    <View style={styles.headerButton} />
-                </View>
-                <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 50 }} />
-            </SafeAreaView>
+                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
+                         <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
+                     </TouchableOpacity>
+                     <Text style={styles.title}>Cargando...</Text>
+                     <View style={styles.headerButton} />
+                 </View>
+                 <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 50 }} />
+             </SafeAreaView>
         );
     }
 
@@ -676,8 +694,8 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 )}
             </View>
              <View style={styles.statusBadge}>
-                <Text style={styles.statusBadgeText}>{item.estadoVisita}</Text>
-            </View>
+                 <Text style={styles.statusBadgeText}>{item.estadoVisita}</Text>
+             </View>
         </View>
     );
 
@@ -687,26 +705,26 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
 
              <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                    <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
-                </TouchableOpacity>
-                <Text style={styles.title}>Detalle de Ruta</Text>
-                <TouchableOpacity
-                    onPress={handleFinalizeRoute}
-                    style={styles.headerButton}
-                    disabled={routeReport.pendientes > 0 || isUpdating || currentRoute.estado === 'Completada' || currentRoute.estado === 'Archivada'}
-                >
-                    {isUpdating ? (
-                        <ActivityIndicator color={COLORS.success} size="small" />
-                    ) : (
-                        <Feather
-                            name="check-circle"
-                            size={24}
-                            color={routeReport.pendientes === 0 && currentRoute.estado !== 'Completada' && currentRoute.estado !== 'Archivada' ? COLORS.success : COLORS.disabled}
-                        />
-                    )}
-                </TouchableOpacity>
-            </View>
+                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
+                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
+                 </TouchableOpacity>
+                 <Text style={styles.title}>Detalle de Ruta</Text>
+                 <TouchableOpacity
+                     onPress={handleFinalizeRoute}
+                     style={styles.headerButton}
+                     disabled={routeReport.pendientes > 0 || isUpdating || currentRoute.estado === 'Completada' || currentRoute.estado === 'Archivada'}
+                 >
+                     {isUpdating ? (
+                         <ActivityIndicator color={COLORS.success} size="small" />
+                     ) : (
+                         <Feather
+                             name="check-circle"
+                             size={24}
+                             color={routeReport.pendientes === 0 && currentRoute.estado !== 'Completada' && currentRoute.estado !== 'Archivada' ? COLORS.success : COLORS.disabled}
+                         />
+                     )}
+                 </TouchableOpacity>
+             </View>
 
             <View style={styles.reportContainer}>
                 <View style={styles.reportItem}>
@@ -747,7 +765,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     );
 };
 
-// --- Estilos ---
+// --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -812,30 +830,26 @@ const styles = StyleSheet.create({
     },
     adjustmentModalContent: {
         width: '95%',
-        maxHeight: '85%', // El modal se encogerá si es necesario
+        maxHeight: '85%', 
         backgroundColor: COLORS.backgroundStart, 
         borderRadius: 20, 
         borderWidth: 1, 
         borderColor: COLORS.glassBorder,
-        // --- CORRECCIÓN TECLADO: El padding se mueve al ScrollView ---
         padding: 0, 
-        overflow: 'hidden' // Para que el ScrollView respete el borde redondeado
+        overflow: 'hidden' 
     },
-    // --- CORRECCIÓN TECLADO: Estilo para el contenido del ScrollView ---
     modalScrollViewContent: {
-        padding: 20, // El padding que antes estaba en adjustmentModalContent
+        padding: 20, 
     },
     modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
     modalSubtitle: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20 },
     
     itemList: { 
         marginBottom: 15, 
-        // --- CORRECCIÓN TECLADO: Quitamos maxHeight para que el ScrollView maneje la altura ---
-        // maxHeight: '40%', 
         borderTopWidth: 1,
         borderBottomWidth: 1,
         borderColor: COLORS.glassBorder,
-        flexGrow: 0, // Importante para que FlatList no intente ocupar todo el espacio
+        flexGrow: 0, 
     },
     itemRow: { 
         flexDirection: 'row', 

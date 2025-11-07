@@ -1,38 +1,50 @@
 // src/screens/ClientDebtsScreen.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-// Quitamos import { router, useLocalSearchParams } from 'expo-router';
-import { addDoc, collection, doc, runTransaction, Timestamp } from 'firebase/firestore';
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINADAS: import { addDoc, collection, doc, runTransaction, Timestamp } from 'firebase/firestore';
+// AÑADIDO: el import nativo de firestore
+import firestore from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
-import { ClientDebtsScreenProps } from '../navigation/AppNavigator'; // Asegúrate de que esta ruta sea correcta
+import { ClientDebtsScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Estilos ---
-import { Sale as BaseSale, useData } from '../../context/DataContext'; // Importamos Sale como BaseSale
+import { Sale as BaseSale, useData } from '../../context/DataContext';
+// Esta 'db' es NATIVA
 import { db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 // Usamos el tipo completo de DataContext, renombrado para claridad
 type Sale = BaseSale; 
 
-// --- Props del Modal (Adaptado para usar Sale) ---
+// --- Props del Modal (Sin cambios) ---
 interface RegisterPaymentModalProps {
     visible: boolean;
     onClose: () => void;
-    debt: Sale | null; // <-- Usamos el tipo Sale completo
-    clientName?: string | string[]; // Recibe clientName como prop
+    debt: Sale | null; 
+    clientName?: string | string[]; 
     onPaymentSuccess: () => void;
 }
 
-// --- Función auxiliar para fechas (Robusta) ---
+// --- Función auxiliar para fechas (Sin cambios) ---
 const getDateTimestamp = (fecha: Sale['fecha']): number => {
     if (!fecha) return 0;
     if (fecha instanceof Date) {
         return !isNaN(fecha.getTime()) ? fecha.getTime() : 0;
     }
+    // --- INICIO DE CAMBIOS: SDK NATIVO ---
+    // Chequeamos contra el Timestamp nativo
+    if (fecha instanceof firestore.Timestamp) {
+        return fecha.toMillis();
+    }
+    // --- FIN DE CAMBIOS: SDK NATIVO ---
     if (fecha && typeof (fecha as { seconds: number })?.seconds === 'number') {
         const timestampMillis = (fecha as { seconds: number }).seconds * 1000;
         return !isNaN(timestampMillis) ? timestampMillis : 0;
@@ -40,7 +52,7 @@ const getDateTimestamp = (fecha: Sale['fecha']): number => {
     return 0;
 };
 
-// --- COMPONENTE MODAL (Adaptado a recibir props) ---
+// --- COMPONENTE MODAL (¡CORREGIDO CON SDK NATIVO!) ---
 const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess }: RegisterPaymentModalProps) => {
     const [amount, setAmount] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -65,12 +77,16 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
 
         setIsSaving(true);
         try {
-            await runTransaction(db, async (transaction) => {
+            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
+            await db.runTransaction(async (transaction) => {
                 // 1. Crear el documento de "Cobro"
-                await addDoc(collection(db, 'ventas'), {
+                // Usamos 'db.collection().add()' (Nativo)
+                await db.collection('ventas').add({
                     clientName: `Cobro Saldo - ${clientName || debt.clienteNombre || 'Cliente'}`, 
                     estado: "Pagada",
-                    fecha: Timestamp.now(),
+                    // Usamos 'firestore.FieldValue.serverTimestamp()' (Nativo)
+                    fecha: firestore.FieldValue.serverTimestamp(),
                     numeroFactura: `COBRO-${debt.numeroFactura || debt.id.substring(0, 6)}`,
                     pagoEfectivo: paymentAmount,
                     pagoTransferencia: 0,
@@ -80,11 +96,17 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
                 });
 
                 // 2. Actualizar la factura original
-                const saleRef = doc(db, 'ventas', debt.id);
+                // Usamos la sintaxis Nativa
+                const saleRef = db.collection('ventas').doc(debt.id);
                 const saleDoc = await transaction.get(saleRef);
-                if (!saleDoc.exists()) throw new Error("La factura original no fue encontrada.");
+                
+                // Usamos la propiedad '.exists' (Nativa)
+                if (!saleDoc.exists) throw new Error("La factura original no fue encontrada.");
+                // --- FIN DE CAMBIOS: SDK NATIVO ---
 
                 const data = saleDoc.data();
+                if (!data) throw new Error("No se pudieron leer los datos de la venta."); // Chequeo de nulidad
+
                 const newBalance = (data.saldoPendiente || 0) - paymentAmount;
                 const newStatus = newBalance <= 0.01 ? "Pagada" : "Adeuda";
 
@@ -112,6 +134,7 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
         }
     }, [amount, debt, clientName, onPaymentSuccess, onClose]);
 
+    // --- RENDER DEL MODAL (Sin cambios) ---
     return (
         <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
             <View style={styles.modalOverlay}>
@@ -145,7 +168,7 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
 // --- FIN COMPONENTE MODAL ---
 
 
-// --- Componente Memoizado para la Tarjeta de Deuda ---
+// --- Componente DebtCard (Sin cambios) ---
 const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) => void }) => {
     
     const formattedDate = useMemo(() => {
@@ -174,29 +197,26 @@ const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) =>
 // --- FIN Componente Memoizado ---
 
 
-// --- Pantalla Principal (Adaptada) ---
+// --- Pantalla Principal (Sin cambios) ---
 const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
-    // --- Usar route.params ---
     const { clientId, clientName } = route.params;
     const { sales, isLoading, syncData } = useData();
 
     const [modalVisible, setModalVisible] = useState(false);
-    const [selectedDebt, setSelectedDebt] = useState<Sale | null>(null); // Usa el tipo Sale
+    const [selectedDebt, setSelectedDebt] = useState<Sale | null>(null); 
 
-    // --- useMemo con helper de fecha robusto ---
     const debts: Sale[] = useMemo(() => {
         return (sales || [])
             .filter((sale: Sale) => 
                 sale &&
                 sale.clienteId === clientId &&
                 sale.estado === 'Adeuda' &&
-                (sale.saldoPendiente || 0) > 0.01 // Evitar deudas mínimas
+                (sale.saldoPendiente || 0) > 0.01 
             )
             .sort((a, b) => getDateTimestamp(a.fecha) - getDateTimestamp(b.fecha)); // Orden ascendente
     }, [sales, clientId]);
 
-    // --- Handlers con useCallback ---
-    const handleOpenModal = useCallback((debt: Sale) => { // Usa el tipo Sale
+    const handleOpenModal = useCallback((debt: Sale) => { 
         setSelectedDebt(debt);
         setModalVisible(true);
     }, []);
@@ -206,12 +226,10 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
         setSelectedDebt(null);
     }, []);
 
-    const renderDebtItem = useCallback(({ item }: { item: Sale }) => ( // Usa el tipo Sale
+    const renderDebtItem = useCallback(({ item }: { item: Sale }) => ( 
         <DebtCard item={item} onPress={handleOpenModal} />
     ), [handleOpenModal]);
     
-    // --- Fin Handlers ---
-
     if (isLoading && sales.length === 0) {
         return (
             <View style={styles.loadingContainer}>
@@ -226,17 +244,15 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
             <StatusBar barStyle="light-content" />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
             
-            {/* Header Adaptado */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Saldos a Cobrar</Text>
-                <View style={styles.headerPlaceholder} />{/* Espaciador */}
+                <View style={styles.headerPlaceholder} />
             </View>
             <Text style={styles.clientName}>{clientName}</Text>
 
-            {/* FlatList Optimizada */}
             <FlatList
                 data={debts}
                 renderItem={renderDebtItem}
@@ -254,18 +270,18 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
                 removeClippedSubviews={Platform.OS === 'android'}
             />
             
-            {/* Modal Adaptado */}
             <RegisterPaymentModal
                 visible={modalVisible}
                 onClose={handleCloseModal}
                 debt={selectedDebt}
-                clientName={clientName} // <-- Prop clientName pasada al modal
+                clientName={clientName} 
                 onPaymentSuccess={syncData}
             />
         </View>
     );
 };
 
+// --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },

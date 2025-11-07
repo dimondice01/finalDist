@@ -1,16 +1,24 @@
+// src/screens/SaleDetailScreen.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-// Quitamos import { router, useLocalSearchParams } from 'expo-router';
-import { addDoc, collection, doc, onSnapshot, runTransaction, Timestamp } from 'firebase/firestore';
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINADAS: import { addDoc, collection, doc, onSnapshot, runTransaction, Timestamp } from 'firebase/firestore';
+// AÑADIDO: el import nativo de firestore
+import firestore from '@react-native-firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
 import { useRoute } from '@react-navigation/native';
-import { SaleDetailScreenProps } from '../navigation/AppNavigator'; // Asumiendo la tipificación de props
+import { SaleDetailScreenProps } from '../navigation/AppNavigator';
 
+// --- Contexto y DB ---
 import { useData } from '../../context/DataContext';
+// Esta 'db' es NATIVA
 import { db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
@@ -25,7 +33,10 @@ interface Sale {
     id: string;
     clienteId?: string;
     clienteNombre?: string;
-    fecha: Timestamp;
+    // --- INICIO DE CAMBIOS: SDK NATIVO ---
+    // El tipo nativo para Timestamp
+    fecha: firestore.Timestamp;
+    // --- FIN DE CAMBIOS: SDK NATIVO ---
     items: SaleItem[];
     totalVenta: number;
     saldoPendiente: number;
@@ -43,14 +54,13 @@ interface CollectDebtModalProps {
     onPaymentSuccess: () => void;
 }
 
-// Definición de tipos de parámetros para SaleDetailScreen
 interface SaleDetailRouteParams {
     saleId: string;
 }
 
-
 const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
 
+// --- Componente CollectDebtModal (¡CORREGIDO CON SDK NATIVO!) ---
 const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: CollectDebtModalProps) => {
     const [montoCobrado, setMontoCobrado] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -66,21 +76,45 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
 
         setIsSaving(true);
         try {
-            await runTransaction(db, async (transaction) => {
-                const ventaRef = doc(db, 'ventas', venta.id);
-                // NOTA: Se asume que este addDoc de "Cobro Saldo" es un registro de movimiento/comprobante
-                await addDoc(collection(db, 'ventas'), {
-                    clientName: `Cobro Saldo - ${venta.clienteNombre}`, estado: "Pagada", fecha: Timestamp.now(), numeroFactura: `COBRO-${venta.numeroFactura || venta.id.substring(0,6)}`,
-                    pagoEfectivo: cobro, pagoTransferencia: 0, saldoPendiente: 0, vendedorId: venta.vendedorId, vendedorNombre: venta.vendedorNombre,
+            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+            // Usamos el 'runTransaction' de la instancia NATIVA 'db'
+            await db.runTransaction(async (transaction) => {
+                const ventaRef = db.collection('ventas').doc(venta.id); // Sintaxis Nativa
+                
+                // Usamos 'db.collection().add()' (Nativo)
+                await db.collection('ventas').add({
+                    clientName: `Cobro Saldo - ${venta.clienteNombre}`, 
+                    estado: "Pagada", 
+                    // Usamos 'firestore.FieldValue.serverTimestamp()' (Nativo)
+                    fecha: firestore.FieldValue.serverTimestamp(), 
+                    numeroFactura: `COBRO-${venta.numeroFactura || venta.id.substring(0,6)}`,
+                    pagoEfectivo: cobro, 
+                    pagoTransferencia: 0, 
+                    saldoPendiente: 0, 
+                    vendedorId: venta.vendedorId, 
+                    vendedorNombre: venta.vendedorNombre,
                 });
+                
                 const ventaDoc = await transaction.get(ventaRef);
-                if (!ventaDoc.exists()) throw new Error("La factura original no fue encontrada.");
+                
+                // Usamos la propiedad '.exists' (Nativa)
+                if (!ventaDoc.exists) throw new Error("La factura original no fue encontrada.");
+                // --- FIN DE CAMBIOS: SDK NATIVO ---
+
                 const data = ventaDoc.data();
+                if (!data) throw new Error("No se pudieron leer los datos de la venta."); // Chequeo de nulidad
+                
                 const nuevoSaldo = (data.saldoPendiente || 0) - cobro;
                 const nuevoEstado = nuevoSaldo <= 0.01 ? "Pagada" : "Adeuda";
                 const comisionFinal = nuevoEstado === 'Pagada' ? data.totalVenta * ((data.porcentajeComision || 0) / 100) : (data.totalComision || 0);
-                transaction.update(ventaRef, { saldoPendiente: nuevoSaldo, estado: nuevoEstado, totalComision: comisionFinal });
+                
+                transaction.update(ventaRef, { 
+                    saldoPendiente: nuevoSaldo, 
+                    estado: nuevoEstado, 
+                    totalComision: comisionFinal 
+                });
             });
+            
             Toast.show({ type: 'success', text1: '¡Cobro registrado con éxito!' });
             if(onPaymentSuccess) onPaymentSuccess();
             onClose();
@@ -93,6 +127,7 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
         }
     };
     
+    // --- RENDER DEL MODAL (Sin cambios) ---
     return (
         <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
             <View style={styles.modalOverlay}><View style={styles.modalContent}><Text style={styles.modalTitle}>Registrar Cobro</Text><Text style={styles.modalSubtitle}>Venta del {venta.fecha.toDate().toLocaleDateString('es-AR')}</Text><Text style={styles.modalDebt}>Saldo actual: {formatCurrency(venta.saldoPendiente)}</Text><TextInput style={styles.input} placeholder="Monto Cobrado" keyboardType="numeric" value={montoCobrado} onChangeText={setMontoCobrado} autoFocus/><View style={styles.modalActions}><TouchableOpacity onPress={onClose} style={styles.modalButtonCancel}><Text style={styles.modalButtonText}>Cancelar</Text></TouchableOpacity><TouchableOpacity onPress={handleConfirmPayment} disabled={isSaving} style={styles.modalButtonConfirm}>{isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Confirmar</Text>}</TouchableOpacity></View></View></View>
@@ -100,16 +135,15 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
     );
 };
 
-// Modificamos la firma del componente para recibir navigation
+// --- Pantalla SaleDetailScreen (¡CORREGIDA CON SDK NATIVO!) ---
 const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
-    // 1. OBTENER PARÁMETROS DE REACT NAVIGATION
     const route = useRoute();
     const { saleId } = route.params as SaleDetailRouteParams; 
 
     const [sale, setSale] = useState<Sale | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
-    const { clients, syncData } = useData(); // Se añade syncData para el refresh
+    const { clients, syncData } = useData(); 
 
     useEffect(() => {
         if (!saleId || typeof saleId !== 'string') {
@@ -117,9 +151,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             return;
         }
 
-        const saleRef = doc(db, 'ventas', saleId);
-        const unsubscribe = onSnapshot(saleRef, (doc) => {
-            if (doc.exists()) {
+        // --- INICIO DE CAMBIOS: SDK NATIVO ---
+        // Usamos la sintaxis Nativa para la referencia y el listener
+        const saleRef = db.collection('ventas').doc(saleId);
+        
+        const unsubscribe = saleRef.onSnapshot((doc) => {
+            // Usamos la propiedad '.exists' (Nativa)
+            if (doc.exists) {
                 setSale({ id: doc.id, ...doc.data() } as Sale);
             } else {
                 console.error("No se encontró la venta.");
@@ -130,6 +168,7 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             console.error("Error al cargar la venta:", error);
             setIsLoading(false);
         });
+        // --- FIN DE CAMBIOS: SDK NATIVO ---
 
         return () => unsubscribe();
     }, [saleId]);
@@ -141,12 +180,12 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
         return client?.nombre || 'Cliente no especificado';
     }, [sale, clients]);
     
-    // Función para refrescar los datos del contexto después de un pago
     const handlePaymentSuccess = () => {
         syncData();
-        // El onSnapshot de arriba actualizará la vista automáticamente
+        // El listener (onSnapshot) se encarga de actualizar la UI
     };
 
+    // --- RENDER (Sin cambios lógicos) ---
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
@@ -161,7 +200,6 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             <View style={styles.container}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
                 <View style={styles.header}>
-                    {/* 2. CORRECCIÓN: Reemplazamos router.back() con navigation.goBack() */}
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                         <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                     </TouchableOpacity>
@@ -178,7 +216,6 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             <StatusBar barStyle="light-content" />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
             <View style={styles.header}>
-                 {/* 3. CORRECCIÓN: Reemplazamos router.back() con navigation.goBack() */}
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
@@ -212,13 +249,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             
             {sale.estado === 'Adeuda' && (sale.saldoPendiente || 0) > 0 && (
                  <View style={styles.footer}>
-                    <TouchableOpacity 
-                        style={styles.actionButton}
-                        onPress={() => setIsDebtModalOpen(true)}
-                    >
-                        <Feather name="dollar-sign" size={20} color={COLORS.primaryDark} />
-                        <Text style={styles.actionButtonText}>Registrar Cobro</Text>
-                    </TouchableOpacity>
+                     <TouchableOpacity 
+                         style={styles.actionButton}
+                         onPress={() => setIsDebtModalOpen(true)}
+                     >
+                         <Feather name="dollar-sign" size={20} color={COLORS.primaryDark} />
+                         <Text style={styles.actionButtonText}>Registrar Cobro</Text>
+                     </TouchableOpacity>
                  </View>
             )}
 
@@ -226,12 +263,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
                 visible={isDebtModalOpen}
                 onClose={() => setIsDebtModalOpen(false)}
                 venta={sale}
-                onPaymentSuccess={handlePaymentSuccess} // Pasa la función de refresh
+                onPaymentSuccess={handlePaymentSuccess} 
             />
         </View>
     );
 };
 
+// --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },

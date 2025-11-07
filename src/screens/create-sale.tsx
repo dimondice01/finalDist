@@ -508,53 +508,38 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                // Nueva sintaxis para updateDoc
+                // --- Lógica de Edición (Sin cambios) ---
                 const saleRef = db.collection('ventas').doc(originalSale.id);
                 await saleRef.update(saleDataToSave as any);
-                // --- FIN DE CAMBIOS ---
                 
                 Toast.show({
                     type: 'success',
-                    text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Actualizada',
+                    // 'isOffline' sigue siendo útil para los mensajes de UI
+                    text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Actualizada', 
                     text2: isOffline ? 'Se sincronizará al conectar.' : undefined,
                     position: 'bottom',
                     visibilityTime: 3000
                 });
 
             } else {
-                // Lógica de NUEVA VENTA
+                // --- Lógica de NUEVA VENTA (SIMPLIFICADA) ---
                 
-                // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                // Reemplazamos 'serverTimestamp()' y 'addDoc(collection(...))'
+                // Preparamos los datos (sin 'fecha', ya que la pone 'crearVentaConStock')
                 const finalSaleData = {
                     ...saleDataToSave,
-                    fecha: firestore.FieldValue.serverTimestamp(),
                     tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' 
                 };
                 
-                console.log("Intentando guardar venta (offline-first)...");
+                console.log("Enviando venta a DataContext (online/offline)...");
                 
-                // --- INICIO DE CAMBIOS: LÓGICA DE STOCK ---
-                // Si estamos online, usamos la transacción segura que
-                // descuenta el stock (crearVentaConStock).
-                // Si estamos offline, solo añadimos la venta (addDoc),
-                // y la Cloud Function descontará el stock cuando se conecte.
-                if (isOffline) {
-                    // MODO OFFLINE: Solo guardar.
-                    // (El SDK Nativo SÍ pone 'add' en cola offline)
-                    const docRef = await db.collection("ventas").add(finalSaleData);
-                    savedSaleId = docRef.id;
-                } else {
-                    // MODO ONLINE: Usar la transacción segura de DataContext.
-                    // (Esta función fallará si se la llama offline)
-                    savedSaleId = await crearVentaConStock(finalSaleData);
-                }
-                // --- FIN DE CAMBIOS: LÓGICA DE STOCK ---
-                
-                console.log("Venta guardada localmente/online con ID:", savedSaleId);
+                // --- ¡CAMBIO ÚNICO! ---
+                // 'crearVentaConStock' ahora maneja AMBAS lógicas (online y offline)
+                savedSaleId = await crearVentaConStock(finalSaleData);
+                // --- FIN DEL CAMBIO ---
 
-                // --- Actualización de Stock Optimista (Sin cambios) ---
+                console.log("Venta guardada (ID):", savedSaleId);
+
+                // Actualización de Stock Optimista (Sin cambios)
                 descontarStockLocalmente(cart);
 
                 Toast.show({
@@ -604,8 +589,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             );
 
         } catch (error: any) {
+            // ... (el 'catch' block no cambia)
             console.error("Error capturado en confirmarVenta:", error); 
-            // La Cloud Function ahora manejará los errores de stock
             const errorMessage = (error.message || 'No se pudo completar la operación.');
             
             Toast.show({ type: 'error', text1: 'Error al Guardar', text2: errorMessage, position: 'bottom' });

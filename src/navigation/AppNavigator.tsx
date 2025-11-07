@@ -1,13 +1,19 @@
 // src/navigation/AppNavigator.tsx
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINADAS: import { onAuthStateChanged, User } from 'firebase/auth';
+// ELIMINADAS: import { doc, getDoc } from 'firebase/firestore';
+// AÑADIDO: el TIPO 'FirebaseAuthTypes'
+import { FirebaseAuthTypes } from '@react-native-firebase/auth';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { CartItem, Client } from '../../context/DataContext';
 
-// --- Importa tus pantallas (Ajusta rutas si moviste carpetas) ---
+// --- Importa tus pantallas ---
 import AddClientScreen from '../screens/add-client';
 import ClientDashboardScreen from '../screens/client-dashboard';
 import ClientDebtsScreen from '../screens/client-debts';
@@ -26,59 +32,53 @@ import RouteDetailScreen from '../screens/route-detail';
 import SaleDetailScreen from '../screens/sale-detail';
 import SelectClientForSaleScreen from '../screens/select-client-for-sale';
 
-// --- Contextos y Auth (Ajusta rutas) ---
-// 🔥 CORRECCIÓN: Importar Sale as BaseSale
+// --- Contextos y Auth ---
 import { Sale as BaseSale, useData } from '../../context/DataContext';
+// Esta 'auth' y 'db' son NATIVAS
 import { auth, db } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
-// --- 1. Define los Parámetros de Ruta CORREGIDOS ---
+// --- 1. Define los Parámetros de Ruta (Sin cambios) ---
 export type RootStackParamList = {
-  Login: undefined;
-  Home: undefined; // Home y Driver usan esta misma entrada
-  Driver: undefined; // Mantenido para el tipo del componente, pero no en Stack principal
-ClientList: undefined;
+    Login: undefined;
+    Home: undefined; 
+    Driver: undefined; 
+    ClientList: undefined;
     ClientDashboard: { clientId: string };
-    ClientDebts: { clientId: string, clientName: string }; // <-- CORRECCIÓN: Tu dashboard solo envía clientId
-    SaleDetail: { saleId: string; clientName: string }; // <-- CORRECCIÓN: Tu dashboard SÍ envía clientName
+    ClientDebts: { clientId: string, clientName: string }; 
+    SaleDetail: { saleId: string; clientName: string }; 
     AddClient: undefined;
-    EditClient: { client: Client}; // <-- CORRECCIÓN: Espera el objeto 'client'
-  SelectClientForSale: undefined;
-  // 🔥 CORRECCIÓN: Parámetros para CreateSale
-  CreateSale: {
-   
-
-    clientId: string;
-    clientName?: string;    // Nombre para mostrar
-    saleToEdit?: BaseSale; // Objeto de venta para editar
-    saleId?: string;     // Para editar
-  isEditing?: string;  // Para editar
-  isReposicion?: boolean;
-  isDevolucion?: boolean; // <-- AÑADIDO
-  cliente?: Client;
-  };
-  // 🔥 CORRECCIÓN: Parámetros para ReviewSale (saleIdToEdit es opcional)
-  ReviewSale: {
-    cliente: Client;
-   clientId: string;
-    cart: CartItem[]; // <-- Cambiado: Espera un array de CartItem
-    isReposicion: boolean;
-    totalVenta: number;
-    totalCosto: number;
-    totalComision: number;
-    totalDescuento: number; // Mantenemos por si acaso
-    isDevolucion: boolean; // <-- AÑADIDO
-};
-  
-  Reports: undefined;
-  Promotions: undefined;
-  ClientMap: undefined;
-
-  RegisterPayment: { saleId: string; saldoPendiente: string; saleInfo?: string; clientName?: string; };
-  RouteDetail: { routeId: string };
+    EditClient: { client: Client}; 
+    SelectClientForSale: undefined;
+    CreateSale: {
+        clientId: string;
+        clientName?: string; 
+        saleToEdit?: BaseSale; 
+        saleId?: string; 
+        isEditing?: string; 
+        isReposicion?: boolean;
+        isDevolucion?: boolean; 
+        cliente?: Client;
+    };
+    ReviewSale: {
+        cliente: Client;
+        clientId: string;
+        cart: CartItem[]; 
+        isReposicion: boolean;
+        totalVenta: number;
+        totalCosto: number;
+        totalComision: number;
+        totalDescuento: number; 
+        isDevolucion: boolean; 
+    };
+    Reports: undefined;
+    Promotions: undefined;
+    ClientMap: undefined;
+    RegisterPayment: { saleId: string; saldoPendiente: string; saleInfo?: string; clientName?: string; };
+    RouteDetail: { routeId: string };
 };
 
-// --- 2. Define los Tipos de Props (Sin cambios, pero ahora reflejan RootStackParamList corregido) ---
+// --- 2. Define los Tipos de Props (Sin cambios) ---
 export type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
 export type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 export type DriverScreenProps = NativeStackScreenProps<RootStackParamList, 'Driver'>;
@@ -97,29 +97,36 @@ export type ClientDebtsScreenProps = NativeStackScreenProps<RootStackParamList, 
 export type RegisterPaymentScreenProps = NativeStackScreenProps<RootStackParamList, 'RegisterPayment'>;
 export type RouteDetailScreenProps = NativeStackScreenProps<RootStackParamList, 'RouteDetail'>;
 
-
 // --- Crea el Navegador ---
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-// --- Componente Navegador Principal con Lógica de Autenticación y Rol ---
+// --- Componente Navegador Principal ---
 function RootNavigator() {
     // 1. Estados de control
     const [isAppReady, setIsAppReady] = useState(false);
-    const [user, setUser] = useState<User | null>(null);
+    
+    // --- INICIO DE CAMBIOS: SDK NATIVO ---
+    // (Arregla el error 'any type')
+    const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
+    // --- FIN DE CAMBIOS: SDK NATIVO ---
+    
     const [userRole, setUserRole] = useState<'Vendedor' | 'Reparto' | 'Admin' | null>(null);
     const [loadingMessage, setLoadingMessage] = useState('Verificando sesión...');
 
-    // 2. Acceso a DataContext para sincronización
+    // 2. Acceso a DataContext
     const { syncData, isLoading: isDataLoading, isInitialDataLoaded } = useData();
 
     useEffect(() => {
-        // Solo comenzamos la suscripción de Firebase una vez que AsyncStorage esté cargado,
         if (!isInitialDataLoaded) {
             setLoadingMessage('Cargando datos locales...');
             return;
         }
 
-        const subscriber = onAuthStateChanged(auth, async (currentUser) => {
+        // --- INICIO DE CAMBIOS: SDK NATIVO ---
+        // Usamos el método 'onAuthStateChanged' de la INSTANCIA NATIVA 'auth'
+        // y tipamos 'currentUser' para arreglar el error de TypeScript
+        const subscriber = auth.onAuthStateChanged(async (currentUser: FirebaseAuthTypes.User | null) => {
+        // --- FIN DE CAMBIOS: SDK NATIVO ---
             setUser(currentUser);
             setUserRole(null);
 
@@ -128,39 +135,46 @@ function RootNavigator() {
                 try {
                     await syncData();
 
-                    const userDocRef = doc(db, 'vendedores', currentUser.uid);
-                    const userDocSnap = await getDoc(userDocRef);
+                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                    // Usamos la sintaxis NATIVA para leer un documento
+                    const userDocRef = db.collection('vendedores').doc(currentUser.uid);
+                    const userDocSnap = await userDocRef.get();
+                    // --- FIN DE CAMBIOS: SDK NATIVO ---
 
-                    if (userDocSnap.exists()) {
-                        setUserRole(userDocSnap.data().rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
+                    // --- ¡¡AQUÍ ESTÁ LA CORRECCIÓN!! ---
+                    // En el SDK Nativo, '.exists' es una PROPIEDAD booleana, NO una función.
+                    if (userDocSnap.exists) { 
+                    // --- FIN DE LA CORRECCIÓN ---
+                        setUserRole(userDocSnap.data()?.rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
                     } else {
-                        // Podríamos intentar buscar por firebaseAuthUid como fallback si es necesario
                         console.warn("Datos de vendedor no encontrados por UID directo, intentando fallback...");
-                        // Aquí iría la lógica de fallback si la implementas
-                        throw new Error("Datos de vendedor no encontrados en DB.");
+                        // --- INICIO DE CAMBIOS: SDK NATIVO (Fallback) ---
+                        const vendorsQuery = await db.collection('vendedores').where('firebaseAuthUid', '==', currentUser.uid).get();
+                        if (!vendorsQuery.empty) {
+                            setUserRole(vendorsQuery.docs[0].data().rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
+                        } else {
+                            throw new Error("Datos de vendedor no encontrados en DB (ni por UID ni por firebaseAuthUid).");
+                        }
+                        // --- FIN DE CAMBIOS: SDK NATIVO (Fallback) ---
                     }
-
                 } catch (error) {
                     console.error("Error al sincronizar datos o obtener rol:", error);
-                    // Considera no cerrar sesión automáticamente aquí, quizás mostrar un error persistente
-                    // await auth.signOut();
-                    // setUser(null);
-                    // setUserRole(null); // Asegura limpiar el rol en error
-                     alert("Error de Sincronización");
+                    alert("Error de Sincronización. La sesión se cerrará.");
+                    auth.signOut(); 
+                    setUser(null);
+                    setUserRole(null);
                 }
-
             } else {
-                 setLoadingMessage('Esperando credenciales...');
+                setLoadingMessage('Esperando credenciales...');
             }
-
-            setIsAppReady(true); // Marca la app como lista después de verificar auth y rol (o fallo)
+            setIsAppReady(true); 
         });
 
-        return subscriber; // Limpia la suscripción al desmontar
-    }, [isInitialDataLoaded, syncData]); // Depende de la carga inicial y la función sync
+        return subscriber; 
+    }, [isInitialDataLoaded, syncData]); 
 
-    // --- LOADER DE INICIO (Condición Triple) ---
-    if (!isAppReady || isDataLoading || !isInitialDataLoaded) {
+    // --- LOADER DE INICIO ---
+    if (!isAppReady || isDataLoading || (user && !userRole)) {
         return (
             <View style={styles.loaderContainer}>
                 <ActivityIndicator size="large" color={COLORS.primary} />
@@ -174,31 +188,25 @@ function RootNavigator() {
         if (userRole === 'Reparto') {
             return <DriverScreen {...props} />;
         }
-        // Vendedor, Admin o rol no determinado (cae en Home por defecto)
         return <HomeScreen {...props} />;
     };
 
     const screenOptions = {
         headerShown: false,
-        animation: 'slide_from_right' as const, // Animación estándar
+        animation: 'slide_from_right' as const, 
     };
 
-    // Opciones específicas para desmontar pantallas y liberar memoria
     const unmountOptions = {
-        ...screenOptions, // Hereda las opciones base
-        unmountOnBlur: true, // Desmonta la pantalla cuando pierde el foco
+        ...screenOptions, 
+        unmountOnBlur: true, 
     };
 
     return (
-
         <Stack.Navigator screenOptions={screenOptions}>
-            {user && userRole ? ( // Solo muestra el stack principal si hay usuario Y rol
-                // --- USUARIO AUTENTICADO: Definición del Stack Principal ---
+            {user && userRole ? ( 
+                // --- USUARIO AUTENTICADO: Stack Principal ---
                 <>
-                    {/* Home/Driver siempre activa */}
                     <Stack.Screen name="Home" component={HomeOrDriverScreen} />
-
-                    {/* Pantallas que se desmontan para liberar memoria */}
                     <Stack.Screen name="ClientList" component={ClientListScreen} options={unmountOptions} />
                     <Stack.Screen name="ClientDashboard" component={ClientDashboardScreen} options={unmountOptions} />
                     <Stack.Screen name="SelectClientForSale" component={SelectClientForSaleScreen} options={unmountOptions} />
@@ -211,14 +219,11 @@ function RootNavigator() {
                     <Stack.Screen name="ClientDebts" component={ClientDebtsScreen} options={unmountOptions} />
                     <Stack.Screen name="RegisterPayment" component={RegisterPaymentScreen} options={unmountOptions} />
                     <Stack.Screen name="RouteDetail" component={RouteDetailScreen} options={unmountOptions} />
-
-                    {/* Pantallas simples que pueden permanecer montadas (o usa unmountOptions si prefieres) */}
                     <Stack.Screen name="AddClient" component={AddClientScreen} />
                     <Stack.Screen name="EditClient" component={EditClientScreen} />
-
                 </>
             ) : (
-                // --- Pantalla de Login si el usuario NO está logueado o no tiene rol ---
+                // --- Pantalla de Login ---
                 <Stack.Screen name="Login" component={LoginScreen} />
             )}
         </Stack.Navigator>
@@ -231,11 +236,11 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: COLORS.backgroundEnd, // Fondo oscuro
+        backgroundColor: COLORS.backgroundEnd, 
     },
     loaderText: {
         marginTop: 15,
-        color: COLORS.textSecondary, // Texto gris claro
+        color: COLORS.textSecondary, 
         fontSize: 16
     }
 });

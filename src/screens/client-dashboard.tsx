@@ -1,16 +1,17 @@
 // src/screens/ClientDashboardScreen.tsx
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient'; // <-- ¡AÑADIDO!
-// Quitamos import { router, useLocalSearchParams } from 'expo-router';
-import { deleteDoc, doc } from 'firebase/firestore';
+import { LinearGradient } from 'expo-linear-gradient';
+
+// --- INICIO DE CAMBIOS: SDK NATIVO ---
+// ELIMINADAS: import { deleteDoc, doc } from 'firebase/firestore';
+// --- FIN DE CAMBIOS: SDK NATIVO ---
+
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    FlatList, // <-- Importado
-    Linking // <-- Importado
-    ,
-
+    FlatList,
+    Linking,
 
     Platform,
     StatusBar,
@@ -22,30 +23,28 @@ import {
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
-import { ClientDashboardScreenProps } from '../navigation/AppNavigator'; // <-- Importamos los tipos
+import { ClientDashboardScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Tipos, Estilos ---
-// --- ¡CAMBIO! Importamos 'Rubro' ---
-import { Client, Rubro, Sale, useData } from '../../context/DataContext'; // Asegura la ruta
-import { db } from '../../db/firebase-service'; // Asegura la ruta
-import { COLORS } from '../../styles/theme'; // Asegura la ruta
+import { Client, Rubro, Sale, useData } from '../../context/DataContext';
+// Esta 'db' es NATIVA
+import { db } from '../../db/firebase-service';
+import { COLORS } from '../../styles/theme';
 
-// --- Funciones de ayuda (del original) ---
+// --- Funciones de ayuda (Sin cambios) ---
 const formatCurrency = (value?: number): string => {
     const numericValue = typeof value === 'number' && !isNaN(value) ? value : 0;
     return `$${numericValue.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-// --- ¡NUEVO! Función helper para obtener el Lunes de esta semana ---
 const getMonday = (date: Date): Date => {
     const d = new Date(date);
-    const day = d.getDay(); // Domingo = 0, Lunes = 1, ...
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Ajusta para Lunes
+    const day = d.getDay(); 
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
     const monday = new Date(d.setDate(diff));
-    monday.setHours(0, 0, 0, 0); // Setea a medianoche
+    monday.setHours(0, 0, 0, 0); 
     return monday;
 };
-// --- FIN NUEVO HELPER ---
 
 const getStatusColor = (estado?: Sale['estado']): string => {
     switch (estado) {
@@ -80,7 +79,6 @@ const formatDate = (dateInput: Sale['fecha'] | undefined): string => {
             if (isNaN(timestampMillis)) throw new Error('Timestamp seconds inválido');
             date = new Date(timestampMillis);
         } else {
-            // console.warn("Formato de fecha inesperado en formatDate:", dateInput);
             return 'Fecha inválida';
         }
 
@@ -89,12 +87,11 @@ const formatDate = (dateInput: Sale['fecha'] | undefined): string => {
         }
         return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
     } catch (e) {
-        // console.error("Error formateando fecha:", dateInput, e);
         return "Error fecha";
     }
 };
 
-// --- ¡NUEVO! Widget de Meta Semanal ---
+// --- Widget de Meta Semanal (Sin cambios) ---
 const WeeklyGoalWidget = memo(({ goalInfo }: {
     goalInfo: {
         rubro: Rubro | undefined;
@@ -104,7 +101,6 @@ const WeeklyGoalWidget = memo(({ goalInfo }: {
 }) => {
     const { rubro, totalSold, percentage } = goalInfo;
 
-    // Si el cliente no tiene rubro, o la meta es 0, no mostramos nada.
     if (!rubro || !rubro.metaSemanal || rubro.metaSemanal <= 0) {
         return null;
     }
@@ -120,7 +116,7 @@ const WeeklyGoalWidget = memo(({ goalInfo }: {
 
             <View style={styles.progressBarBackground}>
                 <LinearGradient
-                    colors={[COLORS.primary, COLORS.secondary || COLORS.primary]} // Agregamos fallback por si accent no existe
+                    colors={[COLORS.primary, COLORS.secondary || COLORS.primary]} 
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={[styles.progressBarFill, { width: `${percentage}%` }]}
@@ -129,9 +125,8 @@ const WeeklyGoalWidget = memo(({ goalInfo }: {
         </View>
     );
 });
-// --- FIN NUEVO WIDGET ---
 
-// --- Componente Memoizado para SaleCard (CORREGIDO) ---
+// --- Componente SaleCard (Sin cambios) ---
 const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
     item: Sale;
     onEdit: (saleId: string, clientId: string) => void;
@@ -144,7 +139,6 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
     const isPending = item.estado === 'Pendiente de Entrega';
     const isAnulada = item.estado === 'Anulada';
 
-    // --- INICIO DE CORRECCIÓN: Lógica de Icono y Título por TIPO ---
     let icon: keyof typeof Feather.glyphMap;
     let iconColor: string;
     let title: string;
@@ -152,24 +146,21 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
 
     if (isAnulada) {
         icon = 'x-circle';
-        iconColor = COLORS.danger; // Usamos 'danger'
+        iconColor = COLORS.danger; 
         title = `Anulada - ${formattedDate}`;
     } else if (item.tipo === 'reposicion') {
         icon = 'truck';
-        iconColor = COLORS.warning; // Color para reposición
+        iconColor = COLORS.warning; 
         title = `Reposición - ${formattedDate}`;
     } else if (item.tipo === 'devolucion') {
         icon = 'refresh-ccw';
-        iconColor = COLORS.warning; // Color para devolución
+        iconColor = COLORS.warning; 
         title = `Devolución - ${formattedDate}`;
     } else {
-        // Es una 'venta' normal o 'undefined' (antiguas)
-        icon = getStatusIcon(item.estado); // Usamos el icono de estado
-        iconColor = color; // Usamos el color de estado
+        icon = getStatusIcon(item.estado); 
+        iconColor = color; 
         title = `Venta - ${formattedDate}`;
     }
-    // --- FIN DE CORRECCIÓN ---
-
 
     const handleNavigate = useCallback(() => onNavigate(item.id), [item.id, onNavigate]);
     const handleEdit = useCallback((e: any) => {
@@ -192,7 +183,7 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
             </View>
 
             <View style={styles.saleInfo}>
-                <Text style={styles.saleDate}>{title}</Text> {/* <-- Título dinámico */}
+                <Text style={styles.saleDate}>{title}</Text> 
                 <Text style={styles.saleTotal}>{formatCurrency(item.totalVenta)}</Text>
                 <Text style={[styles.saleStatus, { color: color }]}>{item.estado || 'Desconocido'}</Text>
             </View>
@@ -226,14 +217,11 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
 
 
 const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps) => {
-    // --- Obtener parámetros de route.params ---
     const { clientId } = route.params; 
     
-    // --- ¡CAMBIO! Obtenemos 'rubros' ---
     const { clients, sales, rubros, isLoading: isDataLoading, refreshAllData } = useData();
     const [isDeleting, setIsDeleting] = useState(false);
 
-    // Variable 'client' (con 't') es la correcta en este archivo
     const client: Client | undefined = useMemo(() => {
         const allClientsArray = Array.isArray(clients) ? clients : [];
         return allClientsArray.find(c => c && c.id === clientId);
@@ -243,7 +231,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         const allSalesArray = Array.isArray(sales) ? sales : [];
         if (!allSalesArray || !clientId) return [];
 
-        // Función auxiliar para obtener timestamp (ya definida arriba, pero la repetimos por contexto)
         const getTimestamp = (sale: Sale): number => {
             if (!sale || !sale.fecha) return 0;
             if (sale.fecha instanceof Date) {
@@ -262,56 +249,43 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
             .sort((a, b) => getTimestamp(b) - getTimestamp(a));
     }, [sales, clientId]);
 
-    // --- ¡NUEVA LÓGICA! Cálculo de la Meta Semanal ---
+    // --- Lógica de Meta Semanal (Sin cambios) ---
     const weeklyGoalInfo = useMemo(() => {
-        // 1. Encontrar el rubro del cliente
-        const clientRubro = (Array.isArray(rubros) ? rubros : []).find(r => r.id === client?.rubroId); // Usamos client?.rubroId
+        const clientRubro = (Array.isArray(rubros) ? rubros : []).find(r => r.id === client?.rubroId); 
         
         if (!clientRubro) {
             return { rubro: undefined, totalSold: 0, percentage: 0 };
         }
 
-        // 2. Obtener la meta
         const metaSemanal = clientRubro.metaSemanal || 0;
-
-        // 3. Calcular las ventas de esta semana (desde el lunes a las 00:00)
         const lastMonday = getMonday(new Date());
         
         const salesThisWeek = clientSales.filter(sale => {
-            // No contar ventas anuladas
             if (sale.estado === 'Anulada') return false;
             
-            // Convertir la fecha de la venta (Date o Timestamp) a Date
             let saleDate: Date;
             if (sale.fecha instanceof Date) {
                 saleDate = sale.fecha;
             } else if (sale.fecha && typeof (sale.fecha as { seconds: number }).seconds === 'number') {
                 saleDate = new Date((sale.fecha as { seconds: number }).seconds * 1000);
             } else {
-                return false; // Si no tiene fecha válida, no la contamos
+                return false; 
             }
-            
-            // Comparar
             return saleDate >= lastMonday;
         });
 
-        // 4. Sumar el total vendido
         const totalSoldThisWeek = salesThisWeek.reduce((sum, sale) => sum + sale.totalVenta, 0);
-
-        // 5. Calcular porcentaje
         const percentage = (metaSemanal > 0) ? (totalSoldThisWeek / metaSemanal) * 100 : 0;
         
         return {
             rubro: clientRubro,
             totalSold: totalSoldThisWeek,
-            // Aseguramos que el porcentaje no pase de 100 (para la barra)
             percentage: Math.min(100, Math.max(0, percentage)), 
         };
 
-    }, [client?.rubroId, rubros, clientSales]); // Usamos client?.rubroId
-    // --- FIN NUEVA LÓGICA ---
+    }, [client?.rubroId, rubros, clientSales]); 
 
-
+    // --- handleDeleteSale (¡CORREGIDO CON SDK NATIVO!) ---
     const handleDeleteSale = useCallback(async (saleId: string) => {
         if (isDeleting || !saleId) return;
 
@@ -325,8 +299,15 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                     onPress: async () => {
                         setIsDeleting(true);
                         try {
-                            const saleRef = doc(db, 'ventas', saleId);
-                            await deleteDoc(saleRef);
+                            // --- INICIO DE CAMBIOS: SDK NATIVO ---
+                            // const saleRef = doc(db, 'ventas', saleId); // SDK WEB
+                            // await deleteDoc(saleRef); // SDK WEB
+                            
+                            // Sintaxis Nativa:
+                            const saleRef = db.collection('ventas').doc(saleId);
+                            await saleRef.delete();
+                            // --- FIN DE CAMBIOS: SDK NATIVO ---
+
                             Toast.show({ type: 'success', text1: 'Venta Eliminada', position: 'bottom' });
                             await refreshAllData();
                         } catch (error) {
@@ -340,11 +321,11 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
             ]
         );
     }, [isDeleting, refreshAllData]);
+    // --- FIN de handleDeleteSale ---
 
-    // --- Handlers de Navegación (CORREGIDOS para que coincidan con AppNavigator) ---
+    // --- Handlers de Navegación (Sin cambios) ---
     const navigateToSaleDetail = useCallback((saleId: string) => {
         if (!client) return;
-        // CORRECCIÓN: 'SaleDetail' SÍ espera 'clientName' según AppNavigator.tsx
         navigation.navigate('SaleDetail', { 
             saleId: saleId, 
             clientName: client.nombreCompleto || client.nombre 
@@ -353,11 +334,9 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
 
     const navigateToEditSale = useCallback((saleId: string, currentClientId: string) => {
         if (!client) return;
-        // CORRECCIÓN: 'CreateSale' espera 'cliente' (objeto) y 'clientId' (string)
-        // (Basado en el AppNavigator.tsx que enviaste)
         navigation.navigate('CreateSale', {
-            cliente: client, // <-- Pasamos el objeto 'client' (con 't') como parámetro 'cliente' (con 'e')
-            clientId: client.id, // <-- Pasamos el 'clientId'
+            cliente: client, 
+            clientId: client.id, 
             saleId: saleId, 
             isEditing: 'true' 
         });
@@ -365,7 +344,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
 
     const navigateToNewSale = useCallback(() => {
         if (!client) return;
-        // CORRECCIÓN: 'CreateSale' espera 'cliente' (objeto) y 'clientId' (string)
         navigation.navigate('CreateSale', { 
             cliente: client, 
             clientId: client.id,
@@ -374,7 +352,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         });
     }, [navigation, client]);
     
-    // --- NUEVO: Handler para Devolución ---
     const navigateToNewDevolucion = useCallback(() => {
         if (!client) return; 
         navigation.navigate('CreateSale', { 
@@ -385,13 +362,8 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         });
     }, [navigation, client]);
 
-
     const navigateToEditClient = useCallback(() => {
         if (!client) return;
-        // CORRECCIÓN: 'EditClient' espera el objeto 'client' (con 't')
-        // (Tu AppNavigator dice 'clientId: string', 
-        // pero el 'EditClient' espera el objeto. 
-        // Pasamos el objeto, que es lo que EditClientScreen necesita.)
         navigation.navigate('EditClient', { 
             client: client 
         });
@@ -399,14 +371,13 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     
     const navigateToClientDebts = useCallback(() => {
         if (!client) return;
-        // CORRECCIÓN: 'ClientDebts' espera 'clientId' y 'clientName'
         navigation.navigate('ClientDebts', { 
             clientId: client.id,
             clientName: client.nombreCompleto || client.nombre
         });
     }, [navigation, client]);
     
-    // --- Handlers de Contacto (Movidos aquí desde el original) ---
+    // --- Handlers de Contacto (Sin cambios) ---
     const handleCall = () => {
         if (client?.telefono) {
             const phoneNumber = Platform.OS === 'android' ? `tel:${client.telefono}` : `telprompt:${client.telefono}`;
@@ -426,7 +397,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         }
     };
 
-    // --- RenderItem memoizado ---
+    // --- RenderItem (Sin cambios) ---
     const renderSaleCard = useCallback(({ item }: { item: Sale }) => (
         <SaleCard
             item={item}
@@ -437,6 +408,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     ), [navigateToSaleDetail, navigateToEditSale, handleDeleteSale]);
 
 
+    // --- Render Lógica de Carga (Sin cambios) ---
     if (isDataLoading && !client) {
         return (
             <View style={styles.loadingContainer}>
@@ -464,6 +436,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         );
     }
 
+    // --- RENDER (Sin cambios) ---
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
@@ -487,7 +460,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             </View>
                             <Text style={styles.title} numberOfLines={2}>{client?.nombreCompleto || client?.nombre || 'Cliente'}</Text>
                             {client?.direccion && <Text style={styles.subtitle}><Feather name="map-pin" size={14} /> {client.direccion}</Text>}
-                            {/* --- Botones de Contacto (Añadidos para que coincida con el layout original) --- */}
                             {client?.telefono && (
                                 <View style={styles.contactActions}>
                                     <TouchableOpacity onPress={handleCall} style={styles.contactButton}>
@@ -502,11 +474,8 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             )}
                         </View>
 
-                        {/* --- ¡AQUÍ ESTÁ EL WIDGET! --- */}
                         <WeeklyGoalWidget goalInfo={weeklyGoalInfo} />
-                        {/* --- FIN WIDGET --- */}
 
-                        {/* --- CONTENEDOR DE ACCIONES MODIFICADO --- */}
                         <View style={styles.actionsContainer}>
                             <TouchableOpacity
                                 style={styles.mainActionButton}
@@ -516,7 +485,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                                 <Text style={styles.mainActionButtonText}>Nueva Venta</Text>
                             </TouchableOpacity>
                             
-                            {/* Fila secundaria con 2 botones (Reposición y Devolución) */}
                             <View style={styles.secondaryActionsRow}>
                                 
                                 <TouchableOpacity
@@ -528,7 +496,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                                 </TouchableOpacity>
                             </View>
 
-                            {/* Botón de Saldos (como estaba) */}
                             <TouchableOpacity
                                 style={[styles.secondaryActionButton, { backgroundColor: COLORS.glass }]}
                                 onPress={navigateToClientDebts}
@@ -538,7 +505,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             </TouchableOpacity>
 
                         </View>
-                        {/* --- FIN CONTENEDOR DE ACCIONES --- */}
 
                         <Text style={styles.listHeader}>Historial de Ventas</Text>
                     </>
@@ -554,7 +520,6 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                     </View>
                 }
                 ListFooterComponent={<View style={{ height: 40 }} />}
-                // Optimizaciones de FlatList
                 initialNumToRender={10}
                 maxToRenderPerBatch={5}
                 windowSize={11}
@@ -563,7 +528,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     );
 };
 
-// --- Estilos (Modificados para el nuevo layout de botones y contacto) ---
+// --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -585,12 +550,12 @@ const styles = StyleSheet.create({
     title: { fontSize: 24, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 15, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 5 },
     
-    contactActions: { // <-- NUEVO (Para botones de contacto)
+    contactActions: { 
         flexDirection: 'row',
         gap: 15,
         marginTop: 10,
     },
-    contactButton: { // <-- NUEVO
+    contactButton: { 
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
@@ -599,13 +564,12 @@ const styles = StyleSheet.create({
         paddingVertical: 5,
         borderRadius: 10,
     },
-    contactButtonText: { // <-- NUEVO
+    contactButtonText: { 
         color: COLORS.textPrimary,
         fontSize: 14,
         fontWeight: '500',
     },
 
-    // --- ¡NUEVOS ESTILOS! ---
     goalCard: {
         backgroundColor: COLORS.glass,
         marginHorizontal: 20,
@@ -613,7 +577,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: COLORS.glassBorder,
         padding: 15,
-        marginBottom: 25, // Separación
+        marginBottom: 25, 
     },
     goalTitle: {
         color: COLORS.textSecondary,
@@ -636,11 +600,11 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
         marginLeft: 5,
-        marginBottom: 2, // Alinear con la base del monto vendido
+        marginBottom: 2, 
     },
     progressBarBackground: {
         height: 10,
-        backgroundColor: 'rgba(255,255,255,0.1)', // Fondo más claro
+        backgroundColor: 'rgba(255,255,255,0.1)', 
         borderRadius: 5,
         overflow: 'hidden', 
     },
@@ -648,7 +612,6 @@ const styles = StyleSheet.create({
         height: '100%',
         borderRadius: 5,
     },
-    // --- FIN NUEVOS ESTILOS ---
 
     actionsContainer: { paddingHorizontal: 20, marginBottom: 30, gap: 15 },
     secondaryActionsRow: { flexDirection: 'row', gap: 15 },
@@ -685,7 +648,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'flex-end',
     },
-    actionButtonsGroup: { // <-- Estilo del original
+    actionButtonsGroup: { 
         flexDirection: 'row', 
         alignItems: 'center', 
     },
