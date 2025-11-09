@@ -9,6 +9,7 @@ import {
     doc,
     FirebaseFirestoreTypes // <-- CORREGIDO: Importamos el TIPO
     ,
+
     onSnapshot,
     runTransaction,
     serverTimestamp
@@ -26,7 +27,7 @@ import { SaleDetailScreenProps } from '../navigation/AppNavigator';
 // --- Contexto y DB ---
 import { useData } from '../../context/DataContext';
 // Esta 'db' es NATIVA
-import { db } from '../../db/firebase-service';
+import { dbContainer } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 // --- INTERFACES ---
@@ -85,6 +86,11 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess }: Collect
         try {
             // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
             // CORREGIDO: runTransaction(db, ...)
+            const db = dbContainer.instance;
+            if (!db) {
+                console.error("CollectDebtModal: DB no está lista, abortando PAGO.");
+            	throw new Error("La base de datos no está lista. Reinicia la app.");
+            }
             await runTransaction(db, async (transaction) => {
                 const ventaRef = doc(db, 'ventas', venta.id); // <-- CORREGIDO: doc
                 
@@ -160,6 +166,14 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
 
         // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
         // CORREGIDO: doc
+          const db = dbContainer.instance;
+        if (!db) {
+        	// Esto no debería pasar si App.tsx funciona, pero es una guarda de seguridad.
+        	console.error("SaleDetailScreen: DB no está lista para el listener.");
+        	setIsLoading(false);
+        	return; // No hacer nada si la db no está lista
+        }
+
         const saleRef = doc(db, 'ventas', saleId);
         
         // CORREGIDO: onSnapshot

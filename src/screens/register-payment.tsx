@@ -17,7 +17,7 @@ import { useRoute } from '@react-navigation/native';
 import { RegisterPaymentScreenProps } from '../navigation/AppNavigator';
 
 // Esta 'db' es NATIVA
-import { db } from '../../db/firebase-service';
+import { dbContainer } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 // Definimos la interfaz de parámetros esperada por esta pantalla
@@ -57,6 +57,13 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
         try {
             // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
             // Sintaxis v9 para la referencia
+            const db = dbContainer.instance;
+
+            // 2. Comprobación de seguridad
+            if (!db) {
+                console.error("RegisterPayment: DB no está lista, abortando PAGO.");
+                throw new Error("La base de datos no está lista. Reinicia la app.");
+            }
             const saleRef = doc(db, 'ventas', saleId as string); // <-- CORREGIDO
             
             // Sintaxis v9 para la transacción

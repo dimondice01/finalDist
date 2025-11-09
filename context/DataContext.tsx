@@ -10,10 +10,9 @@ import firestore, {
     FirebaseFirestoreTypes,
     getDocs,
     onSnapshot,
-    query, // Lo dejamos por si se usa en 'anularVenta' online, pero 'anular' también se corrigió
+    query,
     serverTimestamp,
     Timestamp,
-    // FieldPath se usa a través del objeto 'firestore', no se importa por separado
     updateDoc,
     where
 } from '@react-native-firebase/firestore';
@@ -21,8 +20,10 @@ import firestore, {
 
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Toast from 'react-native-toast-message';
-// Esta importación ahora trae las INSTANCIAS NATIVAS de db/firebase-service.ts
-import { auth, db } from '../db/firebase-service';
+
+// ¡¡AQUÍ ESTÁ EL CAMBIO DE IMPORTACIÓN!!
+// Importamos 'auth' y el 'dbContainer'
+import { auth, dbContainer } from '../db/firebase-service';
 
 // --- Definición de Interfaces Estrictas ---
 // (Sin cambios)
@@ -218,13 +219,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     // --- Carga inicial (Sin cambios) ---
     useEffect(() => {
         const loadDataFromStorage = async () => {
-            // (Sin cambios)
-            // ...
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
                 const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros'];
-                const storedData = await AsyncStorage.multiGet(keys);
-                const dataMap = new Map(storedData);
+                const storedData = await AsyncStorage.multiGet(keys);
+                const dataMap = new Map(storedData);
 
                 const setDataState = (key: string, setter: React.Dispatch<React.SetStateAction<any[]>>, parseDates = false) => {
                     const jsonData = dataMap.get(key);
@@ -304,8 +303,24 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         prevIsConnected.current = isConnected;
     }, [netInfo.isConnected]);
 
-    // --- fetchDataAndStore (Sin cambios) ---
+
+    // ======================================================
+    // --- INICIO DE CORRECCIÓN CON dbContainer ---
+    // ======================================================
+
+    // --- fetchDataAndStore (CORREGIDO) ---
     const fetchDataAndStore = useCallback(async (showToast = true) => {
+        // ¡¡AÑADIR ESTA COMPROBACIÓN!!
+        // Espera a que 'dbContainer.instance' sea inyectado por App.tsx
+        if (!dbContainer.instance) {
+            console.warn("fetchDataAndStore: DB no está lista, reintentando en 100ms...");
+            // Esto puede pasar si 'fetch' se llama antes de que 'App.tsx' termine
+            setTimeout(() => fetchDataAndStore(showToast), 100);
+            return;
+        }
+        // ¡¡AÑADIR ESTA LÍNEA!!
+        const db = dbContainer.instance;
+
         setIsLoading(true);
         console.log("Iniciando obtención de datos desde Firestore...");
         try {
@@ -352,7 +367,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 const data = docSnap.data();
                 if (!data) return { id: docSnap.id }; 
                 Object.keys(data).forEach(key => {
-                    if (data[key] instanceof Timestamp) { // <-- CORREGIDO: Usa Timestamp importado
+                    if (data[key] instanceof Timestamp) { 
                         data[key] = data[key].toDate();
                     }
                 });
@@ -397,8 +412,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             finalData.products = productsSnap.docs.map(processFirebaseDoc) as Product[];
             finalData.categories = categoriesSnap.docs.map(processFirebaseDoc) as Category[];
             
-            // --- CORREGIDO: (p: any) ---
-            finalData.promotions = promosSnap.docs.map((p: any) => ({ // <-- TIPO AÑADIDO
+            finalData.promotions = promosSnap.docs.map((p: any) => ({
                 ...processFirebaseDoc(p), 
                 nombre: p.data().nombrePromocion || p.data().nombre, 
                 productoIds: p.data().productoIds || (p.data().productoId ? [p.data().productoId] : []),
@@ -412,8 +426,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             if (userRole === 'Reparto') {
                 const routesQuery = query(collection(db, 'rutas'), where('repartidorId', '==', currentVendorData.id));
                 const routesSnap = await getDocs(routesQuery);
-                // --- CORREGIDO: (r: any) ---
-                finalData.routes = routesSnap.docs.map((r: any) => ({ // <-- TIPO AÑADIDO
+                finalData.routes = routesSnap.docs.map((r: any) => ({ 
                     ...processFirebaseDoc(r), 
                     fecha: r.data().fechaCreacion || r.data().fecha || new Date(0)
                 })) as Route[];
@@ -433,8 +446,6 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                         const zoneIdsChunk = (zoneIds.length > 30) ? zoneIds.slice(0, 30) : zoneIds;
                         if(zoneIds.length > 30) console.warn("Demasiadas zonas asignadas (>30). Cargando solo las primeras 30.");
                         
-                        // --- CORRECCIÓN: firestore.FieldPath.documentId() ---
-                        // Usamos el 'firestore' importado por defecto
                         const zonesQueryRef = query(collection(db, 'zonas'), where(firestore.FieldPath.documentId(), 'in', zoneIdsChunk));
                         const zonesQuerySnap = await getDocs(zonesQueryRef);
                         finalData.availableZones = zonesQuerySnap.docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
@@ -445,7 +456,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             await Promise.all([
                 AsyncStorage.setItem('products', JSON.stringify(finalData.products)),
                 AsyncStorage.setItem('categories', JSON.stringify(finalData.categories)),
-                AsyncStorage.setItem('promotions', JSON.stringify(finalData.promotions)),
+                AsyncStorage.setItem('promotions', JSON.stringify(finalData.promotions)),
                 AsyncStorage.setItem('vendors', JSON.stringify(finalData.vendors)),
                 AsyncStorage.setItem('clients', JSON.stringify(finalData.clients)),
                 AsyncStorage.setItem('availableZones', JSON.stringify(finalData.availableZones)),
@@ -487,7 +498,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentVendor?.id, auth.currentUser?.uid]); 
 
 
-    // --- Listeners (Sin cambios) ---
+    // --- Listeners (CORREGIDO) ---
     useEffect(() => {
         let timeoutId: NodeJS.Timeout | undefined;
         let productListener: () => void = () => {}; 
@@ -495,28 +506,30 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         let promotionListener: () => void = () => {}; 
         let rubroListener: () => void = () => {};
 
-        if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded) {
+        // ¡¡AÑADIR ESTA COMPROBACIÓN!!
+        // Solo se suscribe si la DB está lista Y los datos iniciales cargados
+        if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded && dbContainer.instance) {
+            // ¡¡AÑADIR ESTA LÍNEA!!
+            const db = dbContainer.instance;
+
             console.log('Estableciendo suscripciones a Firestore...');
             
             const productsQueryRef = collection(db, 'productos');
-            // --- CORREGIDO: Tipos de Snapshot y Doc ---
             productListener = onSnapshot(productsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedProducts = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Product[];
                 setProducts(updatedProducts.filter(p => p.id));
             });
 
             const categoryQueryRef = collection(db, 'categorias');
-            // --- CORREGIDO: Tipos de Snapshot y Doc ---
             categoryListener = onSnapshot(categoryQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedCategories = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Category[];
                 setCategories(updatedCategories.filter(c => c.id));
             });
 
             const promotionsQueryRef = query(collection(db, 'promociones'), where('estado', '==', 'activa'));
-            // --- CORREGIDO: Tipos de Snapshot y Doc ---
             promotionListener = onSnapshot(promotionsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedPromotions = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => {
-                const data = doc.data();
+                    const data = doc.data();
                     return ({ 
                         id: doc.id, 
                         ...data,
@@ -529,7 +542,6 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             });
 
             const rubrosQueryRef = collection(db, 'rubros');
-            // --- CORREGIDO: Tipos de Snapshot y Doc ---
             rubroListener = onSnapshot(rubrosQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedRubros = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Rubro[];
                 setRubros(updatedRubros.filter(r => r.id));
@@ -551,65 +563,99 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             }
             console.log('Suscripciones de DataContext limpiadas.');
         };
-    }, [currentVendor, userRole, isInitialDataLoaded]); 
+        // ¡¡AÑADIR 'dbContainer.instance' A LAS DEPENDENCIAS!!
+    }, [currentVendor, userRole, isInitialDataLoaded, dbContainer.instance]); 
 
 
     // --- Funciones sync y refresh (sin cambios) ---
     const syncData = useCallback(async () => {
         await fetchDataAndStore(true);
-    }, [fetchDataAndStore]);
+   }, [fetchDataAndStore]);
 
     const refreshAllData = useCallback(async () => {
         await fetchDataAndStore(true);
     }, [fetchDataAndStore]);
 
     
-    // ======================================================
-    // --- INICIO DE CORRECCIÓN ---
-    // ======================================================
-
-    /**
-     * CORRECCIÓN: Esta función implementa tu arquitectura de "Cloud Function + UI Optimista".
-     * 1. NUNCA comprueba la conexión (`netInfo`).
-     * 2. NUNCA usa `runTransaction` (que bloquea la UI offline).
-     * 3. SÓLO usa `addDoc` para crear la venta. Esto se encola y resuelve INMEDIATAMENTE offline.
-     * 4. Confía en que la Cloud Function descontará el stock en el backend.
-     * 5. 'create-sale.tsx' se encarga de llamar a 'descontarStockLocalmente' (UI Optimista).
-     */
+    // --- crearVentaConStock (CORREGIDO) ---
     const crearVentaConStock = useCallback(async (saleData: any): Promise<string> => {
         
-        console.log("DataContext (Arquitectura Cloud Function): Creando venta (solo addDoc).");
+        console.log("DataContext: Creando venta...");
 
-        // 1. Preparar el objeto de venta
+        // 1. Obtener la DB (esto ya estaba bien)
+        if (!dbContainer.instance) {
+            console.error("crearVentaConStock: DB no está lista, abortando.");
+            throw new Error("La base de datos no está lista para crear la venta.");
+        }
+        const db = dbContainer.instance;
+
+        // 2. Preparar los datos
         const finalSaleData = {
             ...saleData,
-            fecha: serverTimestamp() // La nube pondrá la fecha cuando sincronice
-        };
+            fecha: serverTimestamp() // La nube pondrá la fecha
+        };
 
-        // 2. Añadir SÓLO la venta a la colección.
-        // addDoc() SÍ se resuelve inmediatamente offline y no cuelga la UI.
         const ventasCollectionRef = collection(db, "ventas");
-        const docRef = await addDoc(ventasCollectionRef, finalSaleData); 
-        
-        // 3. Actualizar el estado local de ventas (para que aparezca en la lista)
-        // El descuento de stock local (optimista) lo llama 'create-sale.tsx'
-        setSales(prevSales => [...prevSales, { ...saleData, id: docRef.id, fecha: new Date() } as Sale]);
 
-        // 4. Devolver el ID (libera la UI)
-        return docRef.id;
+        // --- ¡¡ESTA ES LA NUEVA LÓGICA DE UI OPTIMISTA!! ---
 
-    }, [setSales]); // Única dependencia necesaria
+        if (isOffline) {
+            // --- MODO OFFLINE ---
+            console.log("Modo Offline: Creando venta localmente (UI Optimista).");
+            
+            // 1. Generar un ID temporal único
+            const tempId = `OFFLINE_${Date.now()}`; 
+            
+            // 2. LLAMAR A addDoc PERO NO ESPERAR (SIN 'await')
+            // Esto lo añade a la cola de persistencia de Firestore
+            // para que se sincronice cuando vuelva la conexión.
+            addDoc(ventasCollectionRef, finalSaleData)
+                .then(docRef => {
+                    // Esto se ejecutará en segundo plano cuando la app esté online
+                    console.log(`Venta offline sincronizada. ID temporal: ${tempId}, ID real de Firestore: ${docRef.id}`);
+                    // Opcional: Aquí podrías buscar la venta con 'tempId' en tu estado
+                    // y reemplazarla por el 'docRef.id', pero no es crítico.
+                })
+                .catch(err => {
+                    // Manejar error de escritura en segundo plano
+                    console.error("Error grave en la escritura offline en segundo plano:", err);
+                });
+
+            // 3. Actualizar el estado local (la UI) INMEDIATAMENTE con el ID temporal
+            setSales(prevSales => [...prevSales, { ...saleData, id: tempId, fecha: new Date() } as Sale]);
+            
+            // 4. Devolver el ID temporal INMEDIATAMENTE para desbloquear la UI
+            return tempId;
+
+        } else {
+            // --- MODO ONLINE (Como estaba antes) ---
+            console.log("Modo Online: Creando venta en Firestore.");
+            
+            // 1. Esperar (await) el ID real de Firestore
+            const docRef = await addDoc(ventasCollectionRef, finalSaleData); 
+            
+            // 2. Actualizar la UI con el ID real
+            setSales(prevSales => [...prevSales, { ...saleData, id: docRef.id, fecha: new Date() } as Sale]);
+            
+            // 3. Devolver el ID real
+            return docRef.id;
+        }
+
+    }, [isOffline, setSales]); // Única dependencia necesaria
 
     
-    /**
-     * CORRECCIÓN: 'anularVentaConStock' también usaría 'runTransaction', que bloquea la UI.
-     * Asumiendo que tu Cloud Function también maneja la REVERSIÓN de stock cuando
-     * el estado es "Anulada", esta función solo debe hacer un 'updateDoc'.
-     * Esto también se encolará y se resolverá inmediatamente offline.
-     */
+    // --- anularVentaConStock (CORREGIDO) ---
     const anularVentaConStock = useCallback(async (saleId: string, items: CartItem[]) => {
         
         console.log("DataContext (Arquitectura Cloud Function): Anulando venta.");
+
+        // ¡¡AÑADIR ESTA COMPROBACIÓN!!
+        if (!dbContainer.instance) {
+            console.error("anularVentaConStock: DB no está lista, abortando.");
+            throw new Error("La base de datos no está lista para anular la venta.");
+        }
+        // ¡¡AÑADIR ESTA LÍNEA!!
+        const db = dbContainer.instance;
 
         // 1. Simplemente actualizamos el estado. La Cloud Function revertirá el stock.
         const saleRef = doc(db, "ventas", saleId);
@@ -646,33 +692,42 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 const cantidadVendida = itemsMap.get(product.id);
                 if (cantidadVendida) {
                     const stockActual = product.stock ?? 0;
+section: "stock"
                     const nuevoStock = stockActual - cantidadVendida;
                     return { ...product, stock: nuevoStock };
                 }
-                return product;
-            });
+                return product;        });
         });
         console.log("Estado local de productos actualizado.");
     }, []);
 
 
-    // --- Función updateClient (Sin cambios) ---
+    // --- Función updateClient (CORREGIDO) ---
     const updateClient = useCallback(async (clientId: string, updatedData: Partial<Client>) => {
+        // ¡¡AÑADIR ESTA COMPROBACIÓN!!
+        if (!dbContainer.instance) {
+            console.error("updateClient: DB no está lista, abortando.");
+         throw new Error("La base de datos no está lista para actualizar el cliente.");
+        }
+        // ¡¡AÑADIR ESTA LÍNEA!!
+        const db = dbContainer.instance;
+
         console.log(`Actualizando cliente ${clientId}...`);
         try {
             const clientRef = doc(db, 'clientes', clientId);
-            await updateDoc(clientRef, updatedData); // <-- CORREGIDO
+
+            await updateDoc(clientRef, updatedData); 
             
             await fetchDataAndStore(false); 
             console.log(`Cliente ${clientId} actualizado con éxito.`);
         } catch (error) {
-          console.error("Error en updateClient:", error);
+            console.error("Error en updateClient:", error);
             Toast.show({
                 type: 'error',
                 text1: 'Error al actualizar',
-                text2: 'No se pudieron guardar los cambios.'
+               text2: 'No se pudieron guardar los cambios.'
             });
-           throw error;
+            throw error;
         }
     }, [fetchDataAndStore]);
 
@@ -693,10 +748,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         syncData,
         refreshAllData,
         isLoading,
-     isInitialDataLoaded,
+        isInitialDataLoaded,
         isOffline,
         crearVentaConStock,
-        anularVentaConStock,
+       anularVentaConStock,
         descontarStockLocalmente,
     };
 

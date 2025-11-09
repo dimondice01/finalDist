@@ -35,7 +35,7 @@ import SelectClientForSaleScreen from '../screens/select-client-for-sale';
 // --- Contextos y Auth ---
 import { Sale as BaseSale, useData } from '../../context/DataContext';
 // Esta 'auth' y 'db' son NATIVAS
-import { auth, db } from '../../db/firebase-service';
+import { auth, dbContainer } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 // --- 1. Define los Parámetros de Ruta (Sin cambios) ---
@@ -133,6 +133,15 @@ function RootNavigator() {
             if (currentUser) {
                 setLoadingMessage('Sincronizando datos...');
                 try {
+                    // 1. Obtenemos la instancia SEGURA
+                	const db = dbContainer.instance;
+
+                	// 2. Comprobación de seguridad
+                	// (App.tsx ya esperó, pero esto es una buena práctica)
+                	if (!db) {
+                		console.error("AppNavigator: ¡La DB no está inicializada! El loader de App.tsx falló.");
+                		throw new Error("Error fatal de inicialización de DB.");
+                	}
                     await syncData();
 
                     // --- INICIO DE CAMBIOS: SDK NATIVO ---
