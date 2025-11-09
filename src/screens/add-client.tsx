@@ -233,6 +233,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     }, []);
 
     // --- handleSubmit (MODIFICADO CON SDK v9 y dbContainer) ---
+    // --- handleSubmit (CORREGIDO PARA MODO OFFLINE) ---
     const handleSubmit = useCallback(async () => {
         if (!nombre.trim() || !zonaId) {
             Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
@@ -243,9 +244,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         setIsSubmitting(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        // --- ¡¡INICIO DE CORRECCIÓN!! ---
-        
-        // 1. Obtener la instancia de DB (con persistencia) del contenedor
+        // 1. Obtener la instancia de DB (esto ya estaba bien)
         const db = dbContainer.instance;
         if (!db) {
             console.error("AddClientScreen: DB no está lista.");
@@ -253,14 +252,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             setIsSubmitting(false);
             return;
         }
-        // --- ¡¡FIN DE CORRECCIÓN!! ---
 
         try {
             const newClientData = {
                 nombre: nombre.trim(),
                 nombreCompleto: nombre.trim(),
                 direccion: direccion.trim(),
-
                 barrio: barrio.trim(),
                 localidad: localidad.trim(),
                 telefono: telefono.trim(),
@@ -269,23 +266,33 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 rubroId: rubroId || '', 
                 location: location || null,
                 vendedorAsignadoId: currentUser?.uid,
-                // --- ¡¡INICIO DE CORRECCIÓN!! (Usando v9)
                 fechaCreacion: serverTimestamp(),
-                // --- ¡¡FIN DE CORRECCIÓN!! ---
             };
 
-            // --- ¡¡INICIO DE CORRECCIÓN!! (Usando v9)
-            // Usamos addDoc y collection con nuestra 'db' (que tiene persistencia)
-            await addDoc(collection(db, 'clientes'), newClientData); 
-            // --- ¡¡FIN DE CORRECCIÓN!! ---
-            
-            if (!isOffline) {
-                await refreshAllData(); 
-            }
+            const clientesCollectionRef = collection(db, 'clientes');
 
+            // --- ¡¡INICIO DE LA CORRECCIÓN OFFLINE!! ---
+            if (isOffline) {
+                // MODO OFFLINE: No usar 'await', solo enviar a la cola
+                console.log("Modo Offline: Creando cliente localmente.");
+                addDoc(clientesCollectionRef, newClientData).catch(err => {
+                	console.error("Error en la escritura de cliente en segundo plano:", err);
+                });
+                // (No llamamos a refreshAllData porque estamos offline)
+            
+            } else {
+                // MODO ONLINE: Usar 'await' y refrescar los datos
+                console.log("Modo Online: Creando cliente en Firestore.");
+            	await addDoc(clientesCollectionRef, newClientData);
+            	// Refrescar la lista de clientes en DataContext
+            	await refreshAllData();
+            }
+            // --- ¡¡FIN DE LA CORRECCIÓN!! ---
+            
+            // Esto se ejecuta INMEDIATAMENTE en modo offline, desbloqueando la UI
             Toast.show({
                 type: 'success',
-                text1: isOffline ? 'Cliente Guardado Localmente' : 'Cliente Creado',
+                text1: isOffline ? 'Cliente Guardado (Offline)' : 'Cliente Creado',
                 text2: isOffline 
                     ? `${nombre.trim()} se sincronizará al conectar.` 
                     : `${nombre.trim()} ha sido agregado.`,
@@ -301,8 +308,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             Alert.alert('Error', 'No se pudo crear el cliente. Inténtalo de nuevo.');
             setIsSubmitting(false); 
         }
-    }, [nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, location, currentUser, isSubmitting, refreshAllData, navigation, isOffline]);
-    // --- FIN de handleSubmit ---
+    }, [
+        // --- ¡¡IMPORTANTE!! Añadir 'isOffline' a la lista de dependencias ---
+        nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, 
+        location, currentUser, isSubmitting, refreshAllData, navigation, isOffline
+    ]);
+// --- FIN de handleSubmit ---
 
 
     // Callbacks de Mapa (Sin cambios)

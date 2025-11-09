@@ -225,7 +225,7 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate }: {
 const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps) => {
     const { clientId } = route.params; 
     
-    const { clients, sales, rubros, isLoading: isDataLoading, refreshAllData } = useData();
+    const { clients, sales, rubros, isLoading: isDataLoading, refreshAllData, isOffline } = useData();
     const [isDeleting, setIsDeleting] = useState(false);
 
     // --- Memos (Sin cambios) ---
@@ -292,6 +292,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
     }, [client?.rubroId, rubros, clientSales]); 
 
     // --- handleDeleteSale (¡¡CORREGIDO CON dbContainer!!) ---
+    // --- handleDeleteSale (¡¡CORREGIDO PARA MODO OFFLINE!!) ---
     const handleDeleteSale = useCallback(async (saleId: string) => {
         if (isDeleting || !saleId) return;
 
@@ -305,8 +306,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                     onPress: async () => {
                         setIsDeleting(true);
 
-                        // --- ¡¡INICIO DE CORRECCIÓN!! ---
-                        // 1. Obtener la instancia de DB (con persistencia) del contenedor
+                        // 1. Obtener la instancia de DB (esto ya estaba bien)
                         const db = dbContainer.instance;
                         if (!db) {
                             console.error("handleDeleteSale: DB no está lista.");
@@ -314,18 +314,37 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                             setIsDeleting(false);
                             return;
                         }
-                        // --- ¡¡FIN DE CORRECCIÓN!! ---
 
                         try {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
-                            // Sintaxis v9:
-                            // ¡Usamos la 'db' (con persistencia) que obtuvimos del contenedor!
                             const saleRef = doc(db, 'ventas', saleId);
-                            await deleteDoc(saleRef);
-                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
-                            Toast.show({ type: 'success', text1: 'Venta Eliminada', position: 'bottom' });
-                            await refreshAllData();
+                            // --- ¡¡INICIO DE LA CORRECCIÓN OFFLINE!! ---
+                            if (isOffline) {
+                            	// MODO OFFLINE: No usar 'await', solo enviar a la cola
+                            	console.log("Modo Offline: Eliminando venta localmente.");
+                            	deleteDoc(saleRef).catch(err => {
+                            		console.error("Error en la eliminación en segundo plano:", err);
+                            	});
+                            	// No refrescamos, la UI se actualizará cuando vuelva la conexión
+                            } else {
+                            	// MODO ONLINE: Usar 'await' y refrescar
+                            	console.log("Modo Online: Eliminando venta en Firestore.");
+                            	await deleteDoc(saleRef);
+                            	await refreshAllData(); // Refrescar solo si estamos online
+                            }
+                            // --- ¡¡FIN DE LA CORRECCIÓN!! ---
+
+                            Toast.show({ 
+                            	type: 'success', 
+                            	text1: isOffline ? 'Eliminada (Offline)' : 'Venta Eliminada', 
+                            	position: 'bottom' 
+                            });
+                        
+                        	// NOTA: En modo offline, la UI no se actualizará
+                        	// (la venta seguirá visible) hasta que la app
+                        	// se reconecte y se llame a syncData().
+                        	// ¡Pero la app ya no se colgará!
+                        
                         } catch (error) {
                             console.error("Error al eliminar la venta:", error);
                             Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo eliminar la venta.', position: 'bottom' });
@@ -336,7 +355,8 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                 }
             ]
         );
-    }, [isDeleting, refreshAllData]);
+    	// --- ¡¡IMPORTANTE!! Añadir 'isOffline' a las dependencias ---
+}, [isDeleting, refreshAllData, isOffline]);
     // --- FIN de handleDeleteSale ---
 
     // --- Handlers de Navegación (Sin cambios) ---
@@ -532,7 +552,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
                         <Feather name="file-text" size={32} color={COLORS.textSecondary} />
-                      A <Text style={styles.emptyText}>Este cliente aún no tiene ventas registradas.</Text>
+                       <Text style={styles.emptyText}>Este cliente aún no tiene ventas registradas.</Text>
                     </View>
                 }
                 ListFooterComponent={<View style={{ height: 40 }} />}

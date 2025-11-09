@@ -33,13 +33,14 @@ import { COLORS } from '../../styles/theme';
 // Usamos el tipo completo de DataContext, renombrado para claridad
 type Sale = BaseSale; 
 
-// --- Props del Modal (Sin cambios) ---
+// --- Props del Modal (ACTUALIZADA) ---
 interface RegisterPaymentModalProps {
     visible: boolean;
     onClose: () => void;
     debt: Sale | null; 
     clientName?: string | string[]; 
     onPaymentSuccess: () => void;
+    isOffline: boolean; // <-- PROPIEDAD AÑADIDA
 }
 
 // --- Función auxiliar para fechas (CORREGIDA) ---
@@ -61,8 +62,8 @@ const getDateTimestamp = (fecha: Sale['fecha']): number => {
     return 0;
 };
 
-// --- COMPONENTE MODAL (¡CORREGIDO CON SDK NATIVO v9!) ---
-const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess }: RegisterPaymentModalProps) => {
+// --- COMPONENTE MODAL (ACTUALIZADO CON LÓGICA OPTIMISTA) ---
+const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess, isOffline }: RegisterPaymentModalProps) => {
     const [amount, setAmount] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
@@ -84,28 +85,24 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
             return;
         }
 
-        // --- ¡¡INICIO DE CORRECCIÓN!! ---
-        // 1. Obtener la instancia de DB (con persistencia) del contenedor
+        // 1. Obtener la instancia de DB
         const db = dbContainer.instance;
         if (!db) {
             console.error("handleConfirmPayment: DB no está lista.");
             Alert.alert('Error', 'La base de datos no está inicializada. Intente reiniciar la app.');
             return;
         }
-        // --- ¡¡FIN DE CORRECCIÓN!! ---
 
         setIsSaving(true);
-        try {
-            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
-            // CORREGIDO: runTransaction(db, ...)
-            // ¡Ahora 'db' es la instancia correcta con persistencia!
+        
+        // Lógica de la Transacción (Común para Online y Offline)
+        const executeTransaction = async () => {
             await runTransaction(db, async (transaction) => {
                 // 1. Crear el documento de "Cobro"
-                // CORREGIDO: addDoc, collection, serverTimestamp
                 await addDoc(collection(db, 'ventas'), {
                     clientName: `Cobro Saldo - ${clientName || debt.clienteNombre || 'Cliente'}`, 
                     estado: "Pagada",
-                    fecha: serverTimestamp(), // <-- CORREGIDO
+                    fecha: serverTimestamp(), 
                     numeroFactura: `COBRO-${debt.numeroFactura || debt.id.substring(0, 6)}`,
                     pagoEfectivo: paymentAmount,
                     pagoTransferencia: 0,
@@ -115,20 +112,17 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
                 });
 
                 // 2. Actualizar la factura original
-                // CORREGIDO: doc
                 const saleRef = doc(db, 'ventas', debt.id);
                 const saleDoc = await transaction.get(saleRef);
                 
-                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
+                // @ts-ignore
                 if (!saleDoc.exists) throw new Error("La factura original no fue encontrada.");
-                // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
 
                 const data = saleDoc.data();
                 if (!data) throw new Error("No se pudieron leer los datos de la venta.");
 
                 const newBalance = (data.saldoPendiente || 0) - paymentAmount;
                 const newStatus = newBalance <= 0.01 ? "Pagada" : "Adeuda";
-
                 const finalCommission = newStatus === 'Pagada'
                     ? data.totalVenta * ((data.porcentajeComision || 0) / 100)
                     : (data.totalComision || 0);
@@ -137,9 +131,31 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
                     saldoPendiente: newBalance,
                     estado: newStatus,
                     totalComision: finalCommission,
-section: "transaction.update"
                 });
             });
+        };
+        
+        // --- LÓGICA OPTIMISTA: MODO OFFLINE ---
+        if (isOffline) {
+            console.log("Modo Offline: Cobro registrado localmente (Optimista).");
+            
+            // 1. Disparar la transacción SIN AWAIT
+            executeTransaction().catch(err => {
+                console.error("Error en la escritura de cobro en segundo plano:", err);
+            });
+
+            // 2. Actualización Optimista e Inmediata (Desbloqueo de UI)
+            Toast.show({ type: 'success', text1: 'Cobro Guardado (Offline)', text2: 'Se sincronizará al conectar.' });
+            onPaymentSuccess(); // Dispara syncData() que refrescará los saldos eventualmente
+            onClose();
+            setIsSaving(false);
+            setAmount('');
+            return;
+        }
+
+        // --- LÓGICA ONLINE: MODO ONLINE ---
+        try {
+            await executeTransaction(); // Esperar confirmación del servidor
 
             Toast.show({ type: 'success', text1: 'Cobro registrado con éxito!' });
             onPaymentSuccess();
@@ -152,7 +168,7 @@ section: "transaction.update"
             setIsSaving(false);
             setAmount('');
         }
-    }, [amount, debt, clientName, onPaymentSuccess, onClose]);
+    }, [amount, debt, clientName, onPaymentSuccess, onClose, isOffline]);
 
     // --- RENDER DEL MODAL (Sin cambios) ---
     return (
@@ -181,7 +197,7 @@ section: "transaction.update"
                         </TouchableOpacity>
                     </View>
                 </View>
-       </View>
+       </View>
         </Modal>
     );
 };
@@ -190,6 +206,7 @@ section: "transaction.update"
 
 // --- Componente DebtCard (Sin cambios) ---
 const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) => void }) => {
+// ... (sin cambios) ...
     
     const formattedDate = useMemo(() => {
         const ts = getDateTimestamp(item.fecha);
@@ -217,10 +234,11 @@ const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) =>
 // --- FIN Componente Memoizado ---
 
 
-// --- Pantalla Principal (Sin cambios) ---
+// --- Pantalla Principal (CORREGIDA) ---
 const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
     const { clientId, clientName } = route.params;
-    const { sales, isLoading, syncData } = useData();
+    // --- ¡CORRECCIÓN! Obtenemos isOffline
+    const { sales, isLoading, syncData, isOffline } = useData();
 
     const [modalVisible, setModalVisible] = useState(false);
     const [selectedDebt, setSelectedDebt] = useState<Sale | null>(null); 
@@ -228,7 +246,6 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
     const debts: Sale[] = useMemo(() => {
         return (sales || [])
             .filter((sale: Sale) => 
-
                 sale &&
                 sale.clienteId === clientId &&
                 sale.estado === 'Adeuda' &&
@@ -271,7 +288,7 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Saldos a Cobrar</Text>
-         <View style={styles.headerPlaceholder} />
+         <View style={styles.headerPlaceholder} />
             </View>
             <Text style={styles.clientName}>{clientName}</Text>
 
@@ -280,7 +297,7 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
                 renderItem={renderDebtItem}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ padding: 15 }}
-           ListEmptyComponent={
+           ListEmptyComponent={
                     <View style={styles.emptyContainer}>
                         <Feather name="check-circle" size={40} color={COLORS.success} />
                         <Text style={styles.emptyText}>¡Este cliente no tiene saldos pendientes!</Text>
@@ -295,9 +312,10 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
             <RegisterPaymentModal
                 visible={modalVisible}
                 onClose={handleCloseModal}
-               debt={selectedDebt}
-             clientName={clientName} 
+               debt={selectedDebt}
+             clientName={clientName} 
                 onPaymentSuccess={syncData}
+                isOffline={isOffline} // <-- ¡CORRECCIÓN AÑADIDA!
             />
         </View>
     );
@@ -305,9 +323,10 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
 
 // --- Estilos (Sin cambios) ---
 const styles = StyleSheet.create({
+// ... (sin cambios) ...
     container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
-   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundEnd },
+   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundEnd },
     header: { 
         flexDirection: 'row', 
         alignItems: 'center', 
@@ -318,19 +337,19 @@ const styles = StyleSheet.create({
     },
     backButton: { padding: 10 },
     headerPlaceholder: { width: 44 },
-   title: { fontSize: 28, fontWeight: '700', color: COLORS.textPrimary, textAlign: 'center' },
+   title: { fontSize: 28, fontWeight: '700', color: COLORS.textPrimary, textAlign: 'center' },
     clientName: { color: COLORS.textSecondary, fontSize: 18, textAlign: 'center', marginBottom: 15 },
     emptyContainer: { alignItems: 'center', marginTop: 80, gap: 15 },
     emptyText: { color: COLORS.textSecondary, fontSize: 16, textAlign: 'center' },
-   debtCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.glass, padding: 20, borderRadius: 15, marginBottom: 10, borderWidth: 1, borderColor: COLORS.glassBorder },
+   debtCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.glass, padding: 20, borderRadius: 15, marginBottom: 10, borderWidth: 1, borderColor: COLORS.glassBorder },
     debtDate: { color: COLORS.textSecondary, fontSize: 14, },
     debtAmount: { color: COLORS.warning, fontSize: 18, fontWeight: 'bold', marginTop: 5 },
-   modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
+   modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
     modalContent: { width: '90%', backgroundColor: COLORS.backgroundStart, borderRadius: 20, padding: 25, borderWidth: 1, borderColor: COLORS.glassBorder },
     modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
     modalSubtitle: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 15 },
     modalDebt: { fontSize: 18, fontWeight: '600', color: COLORS.warning, textAlign: 'center', marginBottom: 20 },
-   input: { backgroundColor: COLORS.glass, color: COLORS.textPrimary, paddingHorizontal: 15, paddingVertical: 12, borderRadius: 10, fontSize: 18, textAlign: 'center', borderWidth: 1, borderColor: COLORS.glassBorder },
+   input: { backgroundColor: COLORS.glass, color: COLORS.textPrimary, paddingHorizontal: 15, paddingVertical: 12, borderRadius: 10, fontSize: 18, textAlign: 'center', borderWidth: 1, borderColor: COLORS.glassBorder },
     modalActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 25, gap: 10 },
     modalButtonCancel: { flex: 1, padding: 15, borderRadius: 12, backgroundColor: COLORS.disabled },
     modalButtonConfirm: { flex: 1, padding: 15, borderRadius: 12, backgroundColor: COLORS.success },

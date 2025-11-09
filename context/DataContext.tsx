@@ -582,7 +582,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         
         console.log("DataContext: Creando venta...");
 
-        // 1. Obtener la DB (esto ya estaba bien)
+        // 1. Obtener la DB
         if (!dbContainer.instance) {
             console.error("crearVentaConStock: DB no está lista, abortando.");
             throw new Error("La base de datos no está lista para crear la venta.");
@@ -593,53 +593,59 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         const finalSaleData = {
             ...saleData,
             fecha: serverTimestamp() // La nube pondrá la fecha
-        };
+        };
 
         const ventasCollectionRef = collection(db, "ventas");
 
-        // --- ¡¡ESTA ES LA NUEVA LÓGICA DE UI OPTIMISTA!! ---
+        // --- LÓGICA DE UI OPTIMISTA ---
 
-        if (isOffline) {
-            // --- MODO OFFLINE ---
-            console.log("Modo Offline: Creando venta localmente (UI Optimista).");
-            
-            // 1. Generar un ID temporal único
-            const tempId = `OFFLINE_${Date.now()}`; 
-            
-            // 2. LLAMAR A addDoc PERO NO ESPERAR (SIN 'await')
-            // Esto lo añade a la cola de persistencia de Firestore
-            // para que se sincronice cuando vuelva la conexión.
-            addDoc(ventasCollectionRef, finalSaleData)
-                .then(docRef => {
-                    // Esto se ejecutará en segundo plano cuando la app esté online
-                    console.log(`Venta offline sincronizada. ID temporal: ${tempId}, ID real de Firestore: ${docRef.id}`);
-                    // Opcional: Aquí podrías buscar la venta con 'tempId' en tu estado
-                    // y reemplazarla por el 'docRef.id', pero no es crítico.
-                })
-                .catch(err => {
-                    // Manejar error de escritura en segundo plano
-                    console.error("Error grave en la escritura offline en segundo plano:", err);
-                });
+        if (isOffline) {
+            // --- MODO OFFLINE ---
+             console.log("Modo Offline: Creando venta localmente (UI Optimista).");
+            
+            // 1. Generar un ID temporal único
+            const tempId = `OFFLINE_${Date.now()}`; 
+            
+            // 2. Llamar a addDoc SIN 'await' (lo envía a la cola)
+            addDoc(ventasCollectionRef, finalSaleData)
+                .then(docRef => {
+                    // --- ¡¡INICIO DE LA CORRECCIÓN "ANTI-DUPLICADOS"!! ---
+                    // Esto se ejecuta en segundo plano cuando se recupera la conexión
+                    console.log(`Venta offline sincronizada. ID temporal: ${tempId}, ID real de Firestore: ${docRef.id}`);
+                	
+                	// Actualizamos el estado de React para reemplazar el ID temporal por el real
+                	// Esto evita que la venta aparezca duplicada cuando se refresquen los datos
+                	setSales(prevSales => 
+                		prevSales.map(sale => 
+                			sale.id === tempId ? { ...sale, id: docRef.id } : sale
+                		)
+                	);
+                	// --- ¡¡FIN DE LA CORRECCIÓN!! ---
+                })
+                .catch(err => {
+                    // Manejar error de escritura en segundo plano
+                    console.error("Error grave en la escritura offline en segundo plano:", err);
+                });
 
-            // 3. Actualizar el estado local (la UI) INMEDIATAMENTE con el ID temporal
-            setSales(prevSales => [...prevSales, { ...saleData, id: tempId, fecha: new Date() } as Sale]);
-            
-            // 4. Devolver el ID temporal INMEDIATAMENTE para desbloquear la UI
-            return tempId;
+            // 3. Actualizar el estado local (la UI) INMEDIATAMENTE con el ID temporal
+            setSales(prevSales => [...prevSales, { ...saleData, id: tempId, fecha: new Date() } as Sale]);
+            
+            // 4. Devolver el ID temporal INMEDIATAMENTE para desbloquear la UI
+            return tempId;
 
-        } else {
-            // --- MODO ONLINE (Como estaba antes) ---
-            console.log("Modo Online: Creando venta en Firestore.");
-            
-            // 1. Esperar (await) el ID real de Firestore
-            const docRef = await addDoc(ventasCollectionRef, finalSaleData); 
-            
-            // 2. Actualizar la UI con el ID real
-            setSales(prevSales => [...prevSales, { ...saleData, id: docRef.id, fecha: new Date() } as Sale]);
-            
-            // 3. Devolver el ID real
-            return docRef.id;
-        }
+        } else {
+            // --- MODO ONLINE (Como estaba antes) ---
+            console.log("Modo Online: Creando venta en Firestore.");
+            
+            // 1. Esperar (await) el ID real de Firestore
+            const docRef = await addDoc(ventasCollectionRef, finalSaleData); 
+            
+            // 2. Actualizar la UI con el ID real
+            setSales(prevSales => [...prevSales, { ...saleData, id: docRef.id, fecha: new Date() } as Sale]);
+            
+            // 3. Devolver el ID real
+            return docRef.id;
+        }
 
     }, [isOffline, setSales]); // Única dependencia necesaria
 
