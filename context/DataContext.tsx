@@ -5,15 +5,15 @@ import { useNetInfo } from '@react-native-community/netinfo';
 // --- INICIO DE CAMBIOS: Importaciones NATIVAS (v9 Modular) ---
 import firestore, {
     collection,
-    doc, // Mantenemos 'firestore' para FieldPath
+    doc,
     FirebaseFirestoreTypes,
     getDocs,
     onSnapshot,
     query,
     runTransaction,
     serverTimestamp,
+    setDoc,
     Timestamp,
-    // FieldPath se usa a través del objeto 'firestore', no se importa por separado
     updateDoc,
     where
 } from '@react-native-firebase/firestore';
@@ -123,7 +123,7 @@ export interface Route {
 }
 
 
-// --- INTERFAZ IDataContext (Sin cambios) ---
+// --- INTERFAZ IDataContext (CORREGIDA) ---
 export interface IDataContext {
     products: Product[];
     clients: Client[];
@@ -144,9 +144,13 @@ export interface IDataContext {
     crearVentaConStock: (saleData: any) => Promise<string>;
     anularVentaConStock: (saleId: string, items: CartItem[]) => Promise<void>;
     descontarStockLocalmente: (items: CartItem[]) => void;
+    // ✅ CLAVE: Función para sumar stock localmente (para revertir/editar)
+    reintegrarStockLocalmente: (items: CartItem[]) => void; 
+    // ✅ CLAVE: Exponer el setter de ventas para mutación optimista
+    setSalesState: React.Dispatch<React.SetStateAction<Sale[]>>; 
 }
 
-// --- Valor por defecto (Sin cambios) ---
+// --- Valor por defecto (CORREGIDO) ---
 const defaultContextValue: IDataContext = {
     products: [],
     clients: [],
@@ -167,6 +171,10 @@ const defaultContextValue: IDataContext = {
     crearVentaConStock: async (saleData: any) => { console.warn("Llamada a crearVentaConStock por defecto"); return "error"; },
     anularVentaConStock: async (saleId: string, items: CartItem[]) => { console.warn("Llamada a anularVentaConStock por defecto"); },
     descontarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a descontarStockLocalmente por defecto"); },
+    // ✅ CLAVE: Default para la nueva función
+    reintegrarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a reintegrarStockLocalmente por defecto"); },
+    // ✅ CLAVE: Valor por defecto para el setter
+    setSalesState: () => { console.warn("Llamada a setSalesState por defecto"); },
 };
 
 const DataContext = createContext<IDataContext>(defaultContextValue);
@@ -305,7 +313,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         prevIsConnected.current = isConnected;
     }, [netInfo.isConnected]);
 
-    // --- fetchDataAndStore (CORREGIDO CON SINTAXIS v9 y TIPOS) ---
+    // --- fetchDataAndStore (Sin cambios relevantes a este flujo) ---
     const fetchDataAndStore = useCallback(async (showToast = true) => {
         // --- REVISIÓN DB INSTANCE ---
         if (!dbContainer.instance) {
@@ -494,7 +502,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentVendor?.id, auth.currentUser?.uid]); 
 
 
-    // --- Listeners (CORREGIDO) ---
+    // --- Listeners (Sin cambios) ---
     useEffect(() => {
         let timeoutId: NodeJS.Timeout | undefined;
         let productListener: () => void = () => {}; 
@@ -574,7 +582,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
     
     // ======================================================
-    // --- FUNCIÓN 1: crearVentaConStock (MUTACIÓN OPTIMISTA) ---
+    // --- FUNCIÓN 1: crearVentaConStock (MUTACIÓN OPTIMISTA - CORREGIDA) ---
     // ======================================================
 
     const crearVentaConStock = useCallback(async (saleData: any): Promise<string> => {
@@ -593,67 +601,45 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
         // 1. MUTACIÓN OPTIMISTA: Agregar a la lista local con ID temporal
         setSales(prevSales => [...prevSales, { ...finalSaleData, id: tempId } as Sale]);
-        
-        // 2. Definición de la Transacción (para stock/atomicidad)
-        const performTransaction = async (ref: FirebaseFirestoreTypes.DocumentReference) => {
-            await runTransaction(db, async (transaction) => {
-                const items = saleData.items as CartItem[];
-                if (!items || items.length === 0) { throw new Error("No se pueden procesar 0 items."); }
-                
-                const productUpdates: { ref: FirebaseFirestoreTypes.DocumentReference, newStock: number }[] = [];
 
-                for (const item of items) {
-                    const productRef = doc(db, "productos", item.id);
-                    const productSnap = await transaction.get(productRef);
-
-                    // @ts-ignore
-                    if (!productSnap.exists) { throw new Error(`Producto ${item.nombre} no encontrado.`); }
-                    
-                    const currentStock = productSnap.data()!.stock;
-                    if (currentStock === undefined || currentStock < item.quantity) {
-                        throw new Error(`Stock insuficiente para ${item.nombre}. Disponible: ${currentStock || 0}`);
-                    }
-                    
-                    const newStock = currentStock - item.quantity;
-                    productUpdates.push({ ref: productRef, newStock: newStock });
-                }
-                
-                for (const update of productUpdates) {
-                    transaction.update(update.ref, { stock: update.newStock });
-                }
-
-                // Usamos serverTimestamp para la versión final en la DB
-                transaction.set(ref, { ...saleData, fecha: serverTimestamp() });
-            });
-        };
-
-        // 3. LÓGICA ASÍNCRONA: Ejecutar y manejar el resultado
+        // 2. LÓGICA ASÍNCRONA: Ejecutar y manejar el resultado
         try {
             if (isOffline) {
-                // MODO OFFLINE: Disparar la transacción y NO esperar (fire-and-forget)
-                performTransaction(saleRef)
+                // MODO OFFLINE: Usamos setDoc simple, es confiablemente puesto en cola.
+                console.log(`[OFFLINE MODE] Venta puesta en cola con setDoc. ID temporal: ${tempId}`); 
+                
+                // Ejecutamos setDoc (escritura simple) y no esperamos el resultado, confiamos en la persistencia.
+                setDoc(saleRef, { ...saleData, fecha: serverTimestamp() })
                     .then(() => {
-                        console.log(`Venta offline sincronizada. ID temporal: ${tempId}, ID real de Firestore: ${saleRef.id}`);
+                        // LOG DE SINCRONIZACIÓN: Este log SÓLO aparece si la venta simple se subió con ÉXITO al servidor.
+                        console.log(`[OFFLINE SYNC SUCCESS] Venta offline creada. ID temporal: ${tempId}, ID real de Firestore: ${saleRef.id}`);
                         // Reemplazar el ID temporal por el ID real
                         setSales(prevSales => 
                             prevSales.map(sale => sale.id === tempId ? { ...sale, id: saleRef.id } as Sale : sale)
                         );
                     })
                     .catch(err => {
-                        console.error("Error en escritura offline en segundo plano (Revertir mutación):", err);
-                        // NOTA: Revertir mutación si falla en segundo plano
+                        const isNetworkError = err.code === 'unavailable' || err.message.includes('UNAVAILABLE');
+                        
+                        if (isNetworkError) {
+                            console.warn(`[IGNORADO] Error de red al intentar sincronizar la venta offline: ${err.message}`);
+                            return;
+                        }
+                        
+                        // Si es un error de LÓGICA/SEGURIDAD permanente, revertimos la mutación optimista.
+                        console.error("Error de LÓGICA/SEGURIDAD en subida OFFLINE (Rollback):", err);
                         setSales(prevSales => prevSales.filter(sale => sale.id !== tempId && sale.id !== saleRef.id));
                     });
-                
+                    
                 // Devolver el ID temporal INMEDIATAMENTE para desbloquear la UI
                 return tempId; 
 
             } else {
-                // MODO ONLINE: Esperar la confirmación de la transacción de stock
-                await performTransaction(saleRef);
+                // MODO ONLINE CORREGIDO: Usamos setDoc simple. La deducción de stock la hace la Cloud Function.
+                console.log(`[ONLINE MODE] Creando venta con setDoc. La Cloud Function manejará el stock.`);
+                await setDoc(saleRef, { ...saleData, fecha: serverTimestamp() });
                 
-                // Si llegamos aquí, la transacción fue exitosa.
-                // La mutación optimista ya está en la lista; solo devolvemos el ID real.
+                // Si llegamos aquí, la escritura fue exitosa.
                 return saleRef.id;
             }
         } catch (error) {
@@ -720,12 +706,16 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 performTransaction()
                     .then(() => console.log("Anulación offline enviada a la cola."))
                     .catch(error => { 
-                        console.error("Error en anulación offline en segundo plano:", error);
-                        // Revertir mutación optimista si falla en segundo plano
-                        setSales(prevSales => prevSales.map(sale => 
-                            sale.id === saleId ? { ...sale, estado: originalStatus as Sale['estado'], saldoPendiente: originalSaldo } as Sale : sale
-                        ));
-                        throw new Error("La anulación falló en segundo plano.");
+                        const isNetworkError = error.code === 'unavailable' || error.message.includes('UNAVAILABLE');
+                        
+                        if (!isNetworkError) {
+                            console.error("Error en anulación offline en segundo plano:", error);
+                            // Revertir mutación optimista si falla en segundo plano
+                            setSales(prevSales => prevSales.map(sale => 
+                                sale.id === saleId ? { ...sale, estado: originalStatus as Sale['estado'], saldoPendiente: originalSaldo } as Sale : sale
+                            ));
+                            throw new Error("La anulación falló en segundo plano.");
+                        }
                     });
             } else {
                 // MODO ONLINE: Esperar confirmación
@@ -772,11 +762,15 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             if (isOffline) {
                 // MODO OFFLINE: Disparar la escritura sin esperar (fire-and-forget)
                 writePromise.catch(error => {
-                    console.error("Error en escritura offline de cliente:", error);
-                    // Revertir la mutación si falla en segundo plano
-                    setClients(prevClients => prevClients.map(client => 
-                        client.id === clientId ? originalData as Client : client
-                    ));
+                    const isNetworkError = error.code === 'unavailable' || error.message.includes('UNAVAILABLE');
+                    
+                    if (!isNetworkError) {
+                        console.error("Error en escritura offline de cliente:", error);
+                        // Revertir la mutación si falla en segundo plano
+                        setClients(prevClients => prevClients.map(client => 
+                            client.id === clientId ? originalData as Client : client
+                        ));
+                    }
                 });
                 
             } else {
@@ -798,7 +792,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [setClients, isOffline, fetchDataAndStore, clients]);
 
-    // --- Función de Stock Optimista (Sin cambios) ---
+    // --- Función de Stock Optimista (Descuento) ---
     const descontarStockLocalmente = useCallback((items: CartItem[]) => {
         console.log("Descontando stock del estado local (optimista)...");
         const itemsMap = new Map<string, number>();
@@ -810,13 +804,34 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 const cantidadVendida = itemsMap.get(product.id);
                 if (cantidadVendida) {
                     const stockActual = product.stock ?? 0;
-                    const nuevoStock = stockActual - cantidadVendida;
+                    const nuevoStock = stockActual - cantidadVendida; // <-- RESTA
                     return { ...product, stock: nuevoStock };
                 }
                 return product;
             });
         });
-        console.log("Estado local de productos actualizado.");
+        console.log("Estado local de productos actualizado (descontado).");
+    }, []);
+
+    // ✅ NUEVA FUNCIÓN: Función de Stock Optimista (Reintegro/Suma)
+    const reintegrarStockLocalmente = useCallback((items: CartItem[]) => {
+        console.log("Reintegrando stock al estado local (optimista)...");
+        const itemsMap = new Map<string, number>();
+        items.forEach(item => {
+            itemsMap.set(item.id, item.quantity);
+        });
+        setProducts(prevProducts => {
+            return prevProducts.map(product => {
+                const cantidadReintegrada = itemsMap.get(product.id);
+                if (cantidadReintegrada) {
+                    const stockActual = product.stock ?? 0;
+                    const nuevoStock = stockActual + cantidadReintegrada; // <-- SUMA
+                    return { ...product, stock: nuevoStock };
+                }
+                return product;
+            });
+        });
+        console.log("Estado local de productos actualizado (reintegrado).");
     }, []);
 
 
@@ -841,6 +856,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         crearVentaConStock,
         anularVentaConStock,
         descontarStockLocalmente,
+        // ✅ CLAVE: Exportar la función de reintegro
+        reintegrarStockLocalmente, 
+        // ✅ CLAVE: Exportar el setter para uso en componentes
+        setSalesState: setSales,
     };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
