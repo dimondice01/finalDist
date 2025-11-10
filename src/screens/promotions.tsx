@@ -11,10 +11,11 @@ import { PromotionsScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
 import { Promotion, useData } from '../../context/DataContext';
-import { COLORS } from '../../styles/theme';
+// ✅ Importamos SIZES y COLORS
+import { COLORS, SIZES } from '../../styles/theme';
 
 
-// --- ¡NUEVO! Función auxiliar para Estilos e Iconos Dinámicos ---
+// --- Función auxiliar para Estilos e Iconos Dinámicos ---
 const getPromoDetails = (tipo: Promotion['tipo']) => {
     switch (tipo) {
         case 'precio_especial':
@@ -26,7 +27,7 @@ const getPromoDetails = (tipo: Promotion['tipo']) => {
         case 'LLEVA_X_PAGA_Y':
             return { 
                 icon: 'gift' as keyof typeof Feather.glyphMap, 
-                color: COLORS.primary, // Amarillo
+                color: COLORS.primary, // Primario (Verde Esmeralda)
                 label: 'Lleva X, Paga Y' 
             };
         case 'DESCUENTO_POR_CANTIDAD':
@@ -58,28 +59,32 @@ const PromotionsScreen = ({ navigation }: PromotionsScreenProps) => {
     if (isLoading && activePromotions.length === 0) {
         return (
             <View style={styles.loadingContainer}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={StyleSheet.absoluteFill} />
+                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={styles.loaderText}>Cargando promociones...</Text>
             </View>
         );
     }
 
-    // --- ¡NUEVO! RenderItem optimizado con useCallback ---
+    // --- RenderItem optimizado con useCallback ---
     const renderPromoItem = useCallback(({ item }: { item: Promotion }) => {
         // Obtenemos los detalles dinámicos
         const { icon, color, label } = getPromoDetails(item.tipo);
         
         return (
             <View style={styles.promoCard}>
-                <View style={[styles.promoIconContainer, { backgroundColor: `${color}20` }]}>
-                    <Feather name={icon} size={24} color={color} />
+                <View style={[styles.promoIconContainer, { backgroundColor: `${color}20` }]}> 
+                    <Feather name={icon} size={SIZES.h3} color={color} />
                 </View>
                 <View style={styles.promoTextContainer}>
+                    {/* Título: SIZES.body (16) */}
                     <Text style={styles.promoTitle}>{item.nombre}</Text>
+                    {/* Subtítulo: SIZES.caption (14) */}
                     <Text style={[styles.promoSubtitle, { color: color }]}>{label}</Text>
+                    {/* Descripción: SIZES.xsmallText (12) */}
                     <Text style={styles.promoDescription}>
-                        Aplica a {item.productoIds?.length || 0} producto(s)
-                        {item.clienteIds && item.clienteIds.length > 0 ? ` y ${item.clienteIds.length} cliente(s)` : ''}.
+                        <Text>Aplica a {item.productoIds?.length || 0} producto(s)</Text>
+                        {item.clienteIds && item.clienteIds.length > 0 ? <Text> y {item.clienteIds.length} cliente(s)</Text> : <Text></Text>}.
                     </Text>
                 </View>
             </View>
@@ -89,15 +94,19 @@ const PromotionsScreen = ({ navigation }: PromotionsScreenProps) => {
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            {/* Usamos dark-content para el fondo claro */}
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundEnd} /> 
+             {/* Usamos backgroundStart en ambos puntos para un fondo plano y limpio */}
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
             
             {/* --- HEADER MEJORADO --- */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                    <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
+                    {/* Usamos SIZES.large (24) */}
+                    <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>Promociones</Text>
+                {/* Usamos SIZES.h2 (24) o SIZES.h3 (20) para títulos. Usaré H2 para prominencia. */}
+                <Text style={styles.title}>PROMOCIONES ACTIVAS</Text>
                 <View style={styles.headerButton} /> {/* Placeholder para centrar el título */}
             </View>
 
@@ -107,21 +116,22 @@ const PromotionsScreen = ({ navigation }: PromotionsScreenProps) => {
                 contentContainerStyle={styles.listContentContainer}
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
-                        <Feather name="tag" size={48} color={COLORS.textSecondary} />
+                         {/* Usamos SIZES.h1 (32) para iconos grandes */}
+                        <Feather name="tag" size={SIZES.h1} color={COLORS.textSecondary} /> 
                         <Text style={styles.emptyText}>No hay promociones activas en este momento.</Text>
                     </View>
                 }
-                renderItem={renderPromoItem} // Usamos la función memoizada
+                renderItem={renderPromoItem} 
             />
         </View>
     );
 };
 
-// --- ESTILOS MEJORADOS ---
+// --- ESTILOS MEJORADOS (USANDO SIZES SEMÁNTICOS) ---
 const styles = StyleSheet.create({
     container: { 
         flex: 1, 
-        backgroundColor: COLORS.backgroundEnd 
+        backgroundColor: COLORS.backgroundStart // Fondo gris claro principal
     },
     background: { 
         position: 'absolute', 
@@ -133,87 +143,96 @@ const styles = StyleSheet.create({
     loadingContainer: { 
         flex: 1, 
         justifyContent: 'center', 
-        alignItems: 'center' 
+        alignItems: 'center',
+        backgroundColor: COLORS.backgroundStart 
+    },
+    loaderText: {
+        fontSize: SIZES.body,
+        color: COLORS.textSecondary,
+        marginTop: SIZES.medium,
     },
     // --- ESTILO DE HEADER ESTANDARIZADO ---
     header: { 
         flexDirection: 'row', 
         alignItems: 'center', 
         justifyContent: 'space-between', 
-        paddingTop: (StatusBar.currentHeight || 0) + 20,
-        paddingBottom: 20, 
-        paddingHorizontal: 10 // Reducido para que el botón sea más accesible
+        paddingTop: (StatusBar.currentHeight || 0) + SIZES.medium,
+        paddingBottom: SIZES.medium, 
+        paddingHorizontal: SIZES.small, 
+        backgroundColor: COLORS.backgroundEnd, // Fondo blanco para destacarse
+        borderBottomWidth: SIZES.borderWidth,
+        borderColor: COLORS.glassBorder,
     },
     headerButton: { 
-        padding: 10,
-        width: 44, // Ancho fijo para centrar bien el título
+        padding: SIZES.small,
+        width: SIZES.xl, // 32px
         alignItems: 'center',
     },
     title: { 
-        fontSize: 22, // Tamaño más estándar
+        fontSize: SIZES.h3, // 20px
         fontWeight: 'bold', 
-        color: COLORS.textPrimary 
+        color: COLORS.textPrimary,
+        textTransform: 'uppercase', 
     },
     // --- FIN DE HEADER ---
     listContentContainer: { 
-        paddingHorizontal: 20, 
-        paddingTop: 10, 
-        paddingBottom: 40 // Más espacio al final
+        paddingHorizontal: SIZES.large, 
+        paddingTop: SIZES.medium, 
+        paddingBottom: SIZES.xl, 
     },
     emptyContainer: { 
         alignItems: 'center', 
-        paddingTop: 100, // Más centrado
-        gap: 20 // Espacio entre icono y texto
+        paddingTop: SIZES.xl * 2,
+        gap: SIZES.medium, 
     },
     emptyText: { 
-        fontSize: 17, 
+        fontSize: SIZES.body, // 16px
         color: COLORS.textSecondary, 
         textAlign: 'center' 
     },
     // --- ESTILO DE TARJETA MEJORADO ---
     promoCard: {
-        backgroundColor: COLORS.glass,
-        borderRadius: 16, // Más redondeado
-        padding: 16,
-        marginBottom: 15,
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd, // Fondo blanco
+        borderRadius: SIZES.radius, 
+        padding: SIZES.medium, 
+        marginBottom: SIZES.medium, 
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
         flexDirection: 'row',
-        alignItems: 'center', // Alinea icono y texto
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        alignItems: 'center',
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 2,
     },
     promoIconContainer: {
-        width: 50, // Círculo perfecto
-        height: 50,
-        borderRadius: 25, // Círculo perfecto
-        justifyContent: 'center', // Icono centrado
+        width: SIZES.xxl + SIZES.xsmall, // 44px
+        height: SIZES.xxl + SIZES.xsmall,
+        borderRadius: SIZES.radiusSmall, // Cuadrado redondeado (8px)
+        justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 16,
-        // El color de fondo se aplica dinámicamente
+        marginRight: SIZES.medium, 
     },
     promoTextContainer: {
         flex: 1,
     },
-    promoTitle: { // Título de la promo
-        fontSize: 17, // Más legible
-        fontWeight: '600', // Semi-bold
+    promoTitle: { 
+        fontSize: SIZES.body, // 16px
+        fontWeight: '700', 
         color: COLORS.textPrimary,
-        marginBottom: 4, // Espacio
+        marginBottom: SIZES.xsmall / 2, 
     },
-    promoSubtitle: { // Tipo de promo (ej. Precio Especial)
-        fontSize: 14,
+    promoSubtitle: { 
+        fontSize: SIZES.caption, // 14px
         fontWeight: 'bold',
-        // El color se aplica dinámicamente
-        marginBottom: 5,
+        marginBottom: SIZES.xsmall / 2,
+        textTransform: 'uppercase', 
     },
-    promoDescription: { // Descripción (ej. Aplica a 5 productos)
-        fontSize: 13,
+    promoDescription: { 
+        fontSize: SIZES.xsmallText, // 12px
         color: COLORS.textSecondary,
-        lineHeight: 18, // Mejor espaciado de línea
+        lineHeight: SIZES.medium, 
     },
 });
 

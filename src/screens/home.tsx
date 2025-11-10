@@ -12,6 +12,7 @@ import {
     Dimensions // Necesario para el diseño responsivo de la grilla
     ,
 
+
     FlatList,
     RefreshControl,
     ScrollView,

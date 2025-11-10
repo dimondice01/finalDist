@@ -58,6 +58,7 @@ export interface Client {
     zonaId?: string;
     rubroId?: string;
     vendedorAsignadoId?: string;
+    arca?: boolean; // ✅ NUEVO CAMPO: Indica si necesita factura ARCA (Monotributista)
     location?: { latitude: number; longitude: number; } | null;
     fechaCreacion?: any;
 }

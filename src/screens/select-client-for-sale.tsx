@@ -20,7 +20,8 @@ import { SelectClientForSaleScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
 import { Client, useData } from '../../context/DataContext';
-import { COLORS } from '../../styles/theme';
+// ✅ Importamos SIZES y COLORS
+import { COLORS, SIZES } from '../../styles/theme';
 
 // --- Componente Memoizado para el Item de la Lista (Estilos Mejorados) ---
 const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect: (client: Client) => void }) => {
@@ -34,15 +35,18 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
 
     return (
         <TouchableOpacity
-            style={styles.card} // <-- Estilo mejorado
+            style={styles.card} 
             onPress={handlePress}
             activeOpacity={0.8}
         >
+            <Feather name="user" size={SIZES.h3} color={COLORS.textSecondary} style={styles.userIcon} />
             <View style={styles.cardInfo}>
+                {/* Título: SIZES.body (16px) */}
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre || item.nombreCompleto || 'Cliente Sin Nombre'}</Text>
+                {/* Subtítulo: SIZES.caption (14px) */}
                 {item.direccion ? <Text style={styles.cardSubtitle} numberOfLines={1}>{item.direccion}</Text> : null}
             </View>
-            <Feather name="chevron-right" size={24} color={COLORS.primary} />
+            <Feather name="chevron-right" size={SIZES.h3} color={COLORS.primary} />
         </TouchableOpacity>
     );
 });
@@ -73,7 +77,8 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
     // Función de navegación (sin cambios)
     const handleSelectClient = useCallback((client: Client) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        navigation.navigate('CreateSale', { clientId: client.id });
+        // ✅ CORREGIDO: Pasamos solo el clientId (string)
+        navigation.navigate('CreateSale', { clientId: client.id }); 
     }, [navigation]);
 
     // Función renderItem (sin cambios)
@@ -85,7 +90,7 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
     if (isLoading && (!allClients || allClients.length === 0)) {
         return (
             <View style={styles.loadingContainer}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={StyleSheet.absoluteFill} />
+                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
                 <Text style={styles.loadingText}>Cargando clientes...</Text>
             </View>
@@ -94,22 +99,22 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
 
             {/* Header (ESTILOS MEJORADOS) */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                    <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
+                    <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>Seleccionar Cliente</Text>
+                <Text style={styles.title}>SELECCIONAR CLIENTE</Text>
                  <View style={styles.headerButton} />{/* Espaciador */}
             </View>
 
             {/* Barra de Búsqueda (ESTILOS MEJORADOS) */}
             <View style={styles.controlsContainer}>
                 <View style={styles.inputContainer}>
-                    <Feather name="search" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <Feather name="search" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TextInput
                         style={styles.input}
                         placeholder="Buscar por nombre..."
@@ -122,7 +127,7 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
                     />
                     {searchQuery.length > 0 && Platform.OS === 'android' && (
                         <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-                             <Feather name="x" size={18} color={COLORS.textSecondary} />
+                             <Feather name="x" size={SIZES.body} color={COLORS.textSecondary} />
                         </TouchableOpacity>
                     )}
                 </View>
@@ -137,114 +142,131 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
                 ListEmptyComponent={
                     !isLoading ? (
                         <View style={styles.emptyContainer}>
-                            <Feather name="users" size={48} color={COLORS.textSecondary} />
+                            <Feather name="users" size={SIZES.h1} color={COLORS.disabled} />
                             <Text style={styles.emptyText}>
                                 {searchQuery ? 'No se encontraron clientes.' : 'No hay clientes cargados.'}
                             </Text>
                         </View>
                     ) : null
                 }
-                 ListFooterComponent={<View style={{ height: 20 }} />}
-                 initialNumToRender={15}
-                 maxToRenderPerBatch={10}
-                 windowSize={11}
-                 removeClippedSubviews={Platform.OS === 'android'}
-                 keyboardShouldPersistTaps="handled"
+                ListFooterComponent={<View style={{ height: SIZES.medium }} />}
+                initialNumToRender={15}
+                maxToRenderPerBatch={10}
+                windowSize={11}
+                removeClippedSubviews={Platform.OS === 'android'}
+                keyboardShouldPersistTaps="handled"
             />
         </View>
     );
 };
 
-// --- ESTILOS MEJORADOS ---
+// --- ESTILOS MEJORADOS (USANDO SIZES) ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
+    container: { flex: 1, backgroundColor: COLORS.backgroundStart },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    loadingText: { marginTop: 15, color: COLORS.textSecondary, fontSize: 16 },
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
+    loadingText: { marginTop: SIZES.medium, color: COLORS.textSecondary, fontSize: SIZES.body },
+    
     // --- HEADER ESTANDARIZADO ---
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingTop: (StatusBar.currentHeight || 0) + 20,
-        paddingBottom: 20,
-        paddingHorizontal: 10,
+        paddingTop: (StatusBar.currentHeight || 0) + SIZES.medium,
+        paddingBottom: SIZES.medium,
+        paddingHorizontal: SIZES.small,
+        backgroundColor: COLORS.backgroundEnd,
+        borderBottomWidth: SIZES.borderWidth,
+        borderColor: COLORS.glassBorder,
     },
     headerButton: { 
-        padding: 10, 
-        width: 44,
+        padding: SIZES.small, 
+        width: SIZES.xl,
         alignItems: 'center',
     },
     title: {
-        fontSize: 22, // Tamaño estándar
+        fontSize: SIZES.h3,
         fontWeight: 'bold',
         color: COLORS.textPrimary,
         textAlign: 'center',
+        textTransform: 'uppercase',
     },
-    // --- FIN HEADER ---
+    // --- BARRA DE BÚSQUEDA ---
     controlsContainer: { 
-        paddingHorizontal: 20, // Padding estándar
-        marginBottom: 10 
+        paddingHorizontal: SIZES.large, 
+        paddingVertical: SIZES.medium,
+        backgroundColor: COLORS.backgroundStart,
     },
-    // --- INPUT ESTANDARIZADO ---
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        borderRadius: 15, // Más redondeado
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd,
+        borderRadius: SIZES.radius, 
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
-        paddingHorizontal: 15, // Padding estándar
-        height: 52, // Altura estándar
+        paddingHorizontal: SIZES.medium, 
+        height: 52, 
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
     },
-    inputIcon: { marginRight: 10 },
+    inputIcon: { marginRight: SIZES.small },
     input: {
         flex: 1,
         color: COLORS.textPrimary,
-        fontSize: 16,
+        fontSize: SIZES.body,
         height: '100%'
     },
-    clearButton: { padding: 5 },
-    // --- FIN INPUT ---
+    clearButton: { padding: SIZES.xsmall },
+    
+    // --- LISTA Y CARDS ---
     listContentContainer: { 
-        paddingHorizontal: 20, // Padding estándar
-        paddingBottom: 20, 
+        paddingHorizontal: SIZES.large,
+        paddingBottom: SIZES.large, 
         flexGrow: 1 
     },
     emptyContainer: { 
         flex: 1, 
         justifyContent: 'center', 
         alignItems: 'center', 
-        padding: 30, 
-        paddingBottom: 100, // Empuja hacia arriba
-        gap: 20, // Espacio entre icono y texto
+        padding: SIZES.xl, 
+        paddingTop: SIZES.xl * 2, // Empuja hacia abajo
+        gap: SIZES.medium,
     },
     emptyText: { 
-        fontSize: 17, // Más grande
+        fontSize: SIZES.body, 
         color: COLORS.textSecondary, 
         textAlign: 'center' 
     },
-    // --- CARD MEJORADA ---
+    // Tarjeta de Selección
     card: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        paddingVertical: 18, // Más alto
-        paddingHorizontal: 16, // Padding estándar
-        borderRadius: 16, // Más redondeado
-        marginBottom: 10,
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd,
+        paddingVertical: SIZES.medium + SIZES.xsmall, // 20px de padding vertical
+        paddingHorizontal: SIZES.medium, 
+        borderRadius: SIZES.radius, 
+        marginBottom: SIZES.small,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
     },
-    cardInfo: { flex: 1, marginRight: 10 },
+    userIcon: { marginRight: SIZES.medium },
+    cardInfo: { flex: 1, marginRight: SIZES.medium },
     cardTitle: { 
-        fontSize: 17, 
-        fontWeight: '600', 
+        fontSize: SIZES.body, 
+        fontWeight: '700', 
         color: COLORS.textPrimary, 
-        marginBottom: 3 
+        marginBottom: SIZES.xsmall / 2 
     },
     cardSubtitle: { 
-        fontSize: 14, 
+        fontSize: SIZES.caption, 
         color: COLORS.textSecondary 
     },
 });

@@ -1,27 +1,28 @@
+// src/screens/client-list.tsx
+
 import { Feather } from '@expo/vector-icons';
-// Eliminamos la importación de Picker
-import * as Haptics from 'expo-haptics'; // Necesario para el feedback del botón
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Platform, RefreshControl, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'; // Añadimos Modal y FlatList a las importaciones
+import { ActivityIndicator, FlatList, Modal, Platform, RefreshControl, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // --- Navegación ---
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ClientListScreenProps, RootStackParamList } from '../navigation/AppNavigator'; // Importamos tipos necesarios
+import { ClientListScreenProps, RootStackParamList } from '../navigation/AppNavigator';
 
 import { Client, useData } from '../../context/DataContext';
-import { COLORS } from '../../styles/theme';
+// --- Importamos SIZES y COLORS ---
+import { COLORS, SIZES } from '../../styles/theme';
 
 interface Zone {
     id: string;
     nombre: string;
 }
 
-// 1. Definimos un tipo de navegación local para el sub-componente
 type ClientCardNavigationProp = NativeStackNavigationProp<RootStackParamList, 'ClientList'>;
 
-// --- Componente Modal Selector de Zona (Reemplazo del Picker) ---
+// --- Componente Modal Selector de Zona (Rediseñado) ---
 const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: { 
     visible: boolean; 
     onClose: () => void; 
@@ -29,69 +30,64 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
     selectedId: string; 
     onSelect: (id: string) => void; 
 }) => {
-    // Definimos la opción "Todas las Zonas" y la combinamos con las zonas disponibles
     const dataWithAllOption: Zone[] = useMemo(() => [
-        { id: '', nombre: 'Todas las Zonas' },
+        { id: '', nombre: 'Todas' },
         ...zones
     ], [zones]);
 
     const renderItem = useCallback(({ item }: { item: Zone }) => (
         <TouchableOpacity
-            style={styles.modalItem}
+            style={modalStyles.modalItem}
             onPress={() => { onSelect(item.id); onClose(); }}
         >
-            <Text style={styles.modalItemText}>{item.nombre}</Text>
-            {selectedId === item.id && <Feather name="check" size={20} color={COLORS.primary} />}
+            <Text style={modalStyles.modalItemText}>{item.nombre}</Text>
+            {selectedId === item.id && <Feather name="check" size={SIZES.h3} color={COLORS.primary} />}
         </TouchableOpacity>
     ), [selectedId, onSelect, onClose]);
 
     return (
         <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
-            <View style={styles.modalOverlay}>
-                <View style={[styles.modalContent, { maxHeight: '80%', padding: 0 }]}>
-                    <View style={styles.modalHeader}>
-                         <Text style={styles.modalTitle}>Filtrar por Zona</Text>
+            <View style={modalStyles.modalOverlay}>
+                <View style={[modalStyles.modalContent, { maxHeight: '80%', padding: 0 }]}>
+                    <View style={modalStyles.modalHeader}>
+                       <Text style={modalStyles.modalTitle}>Filtrar por Zona</Text>
                     </View>
                     <FlatList
                         data={dataWithAllOption}
                         keyExtractor={(item) => item.id || 'all'}
                         renderItem={renderItem}
-                        ItemSeparatorComponent={() => <View style={styles.separatorModal} />}
+                        ItemSeparatorComponent={() => <View style={modalStyles.separatorModal} />}
                         style={{ flexGrow: 0, width: '100%' }}
-                        contentContainerStyle={{ paddingHorizontal: 20 }}
+                        contentContainerStyle={{ paddingHorizontal: SIZES.medium }}
                     />
-                    <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
-                        <Text style={styles.modalCloseText}>Cerrar</Text>
+                    <TouchableOpacity onPress={onClose} style={modalStyles.modalCloseButton}>
+                        <Text style={modalStyles.modalCloseText}>Cerrar</Text>
                     </TouchableOpacity>
                 </View>
             </View>
         </Modal>
     );
 };
-// --- FIN Componente Modal Selector de Zona ---
 
-
-// --- Componente Memoizado para el Item de la Lista (Migrado) ---
+// --- Componente Memoizado para el Item de la Lista (Rediseñado) ---
 const ClientCard = memo(({ item }: { item: Client }) => {
-    // Usamos useNavigation para acceder a la navegación
     const navigation = useNavigation<ClientCardNavigationProp>();
 
-    // --- DEFENSA: No renderizar si falta item o id ---
     if (!item || !item.id) {
         console.warn("ClientCard recibió un item inválido:", item);
         return null;
     }
 
-    // Navegación al Dashboard (Reemplazo de router.push)
     const goToClientDashboard = useCallback(() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         navigation.navigate('ClientDashboard', { clientId: item.id });
     }, [item.id, navigation]);
 
-    // Navegación a Edición (Reemplazo de router.push)
     const goToEditClient = useCallback((e: any) => {
-        e.stopPropagation(); // Evita que se active el onPress de la tarjeta
+        e.stopPropagation();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         navigation.navigate('EditClient', { client: item });
-    }, [item.id, navigation]);
+    }, [item, navigation]);
 
     return (
         <TouchableOpacity
@@ -99,18 +95,17 @@ const ClientCard = memo(({ item }: { item: Client }) => {
             onPress={goToClientDashboard}
             activeOpacity={0.8}
         >
+            <Feather name="user" size={SIZES.h3} color={COLORS.primary} style={styles.userIcon} />
             <View style={styles.cardInfo}>
-                {/* Fallback por si ambos nombres faltan */}
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre || item.nombreCompleto || 'Cliente Sin Nombre'}</Text>
-                {/* Renderizado condicional más limpio */}
                 {item.direccion ? <Text style={styles.cardSubtitle} numberOfLines={1}>{item.direccion}</Text> : null}
             </View>
             <TouchableOpacity
                 style={styles.editButton}
                 onPress={goToEditClient}
-                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }} // Área de toque más grande
+                hitSlop={{ top: SIZES.medium, bottom: SIZES.medium, left: SIZES.medium, right: SIZES.medium }}
             >
-                <Feather name="edit-2" size={20} color={COLORS.primary} />
+                <Feather name="chevron-right" size={SIZES.h3} color={COLORS.textSecondary} />
             </TouchableOpacity>
         </TouchableOpacity>
     );
@@ -119,33 +114,29 @@ const ClientCard = memo(({ item }: { item: Client }) => {
 
 // 2. Componente principal recibe 'navigation'
 const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
-    // Obtenemos los datos y el estado de carga directamente del contexto
     const { clients: allClients = [], availableZones = [], isLoading: isDataLoading, syncData } = useData();
 
     const [zonaFilter, setZonaFilter] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); // NUEVO ESTADO para el modal
+    const [isZoneModalVisible, setIsZoneModalVisible] = useState(false);
 
-    // Ordenación de Zonas (sin cambios)
     const sortedAvailableZones = useMemo(() => {
         const zones = Array.isArray(availableZones) ? availableZones : [];
         return [...zones]
-            .filter(z => z && z.id) // Defensa anti-crash
+            .filter(z => z && z.id)
             .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     }, [availableZones]);
 
-    // Búsqueda del nombre de la zona seleccionada para mostrar en el botón
     const selectedZoneName = useMemo(() => {
-        if (!zonaFilter) return 'Todas las Zonas';
+        if (!zonaFilter) return 'Zona';
         const selectedZone = sortedAvailableZones.find(z => z.id === zonaFilter);
         return selectedZone ? selectedZone.nombre : 'Seleccionar Zona';
     }, [zonaFilter, sortedAvailableZones]);
 
-    // Filtrado y Ordenación de Clientes (sin cambios)
     const filteredClients = useMemo(() => {
         let clientsToFilter = Array.isArray(allClients) ? allClients : [];
-        clientsToFilter = clientsToFilter.filter(c => c && c.id); // Defensa anti-crash
+        clientsToFilter = clientsToFilter.filter(c => c && c.id);
         if (zonaFilter) {
             clientsToFilter = clientsToFilter.filter(c => c.zonaId === zonaFilter);
         }
@@ -156,26 +147,23 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
                 (c.nombreCompleto?.toLowerCase() || '').includes(lowerQuery)
             );
         }
-        // Ordenar DESPUÉS de filtrar
         clientsToFilter.sort((a, b) =>
             (a.nombre || a.nombreCompleto || '').localeCompare(b.nombre || b.nombreCompleto || '')
         );
         return clientsToFilter;
     }, [zonaFilter, searchQuery, allClients]);
 
-    // Pull-to-Refresh (sin cambios)
     const onRefresh = useCallback(async () => {
-        if (isRefreshing || isDataLoading) return; // Evitar refrescar si ya está en proceso
-        console.log('Pull to refresh triggered...');
+        if (isRefreshing || isDataLoading) return;
         setIsRefreshing(true);
         try {
-            await syncData(); // syncData ya maneja el toast
+            await syncData();
         } catch (error) {
             console.error("Error during pull-to-refresh sync:", error);
         } finally {
             setIsRefreshing(false);
         }
-    }, [syncData, isRefreshing, isDataLoading]); // Agregamos isDataLoading a las dependencias
+    }, [syncData, isRefreshing, isDataLoading]);
 
     // --- Indicador de Carga Simplificado ---
     if (isDataLoading && (!allClients || allClients.length === 0)) {
@@ -188,114 +176,113 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
         );
     }
 
-    // --- Memoizamos la función renderItem ---
     const renderClientItem = useCallback(({ item }: { item: Client }) => <ClientCard item={item} />, []);
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
 
-            {/* Header (MIGRADO) */}
+            {/* Header (Ejecutivo) */}
             <View style={styles.header}>
-                 {/* Reemplazo: router.back() -> navigation.goBack() */}
-                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="arrow-left" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
-                 <Text style={styles.title}>Mis Clientes</Text>
-                 {/* Reemplazo: router.push('/add-client') -> navigation.navigate('AddClient') */}
-                 <TouchableOpacity onPress={() => navigation.navigate('AddClient')} style={styles.headerButton}><Feather name="plus-circle" size={26} color={COLORS.primary} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
+                    <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
+                </TouchableOpacity>
+                <Text style={styles.title}>Clientes</Text>
+                <TouchableOpacity onPress={() => { navigation.navigate('AddClient'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} style={styles.headerButton}>
+                    <Feather name="user-plus" size={SIZES.h3} color={COLORS.primary} />
+                </TouchableOpacity>
             </View>
 
-            {/* Controles (sin cambios) */}
+            {/* Controles (Fila Única Limpia) */}
             <View style={styles.controlsContainer}>
-                {/* TextInput */}
+                {/* TextInput de Búsqueda */}
                 <View style={styles.inputContainer}>
-                     <Feather name="search" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
-                     <TextInput
-                         style={styles.input}
-                         placeholder="Buscar por nombre..."
-                         placeholderTextColor={COLORS.textSecondary}
-                         value={searchQuery}
-                         onChangeText={setSearchQuery}
-                         clearButtonMode="while-editing" // Para iOS
-                         autoCapitalize="none" // Generalmente no se capitaliza al buscar
-                         autoCorrect={false} // Desactivar autocorrección en búsqueda
-                     />
-                     {/* Botón de limpiar para Android */}
-                     {searchQuery.length > 0 && Platform.OS !== 'ios' && (
-                         <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}><Feather name="x" size={18} color={COLORS.textSecondary} /></TouchableOpacity>
-                     )}
+                    <Feather name="search" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Buscar por nombre..."
+                        placeholderTextColor={COLORS.textSecondary}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        clearButtonMode="while-editing"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                    />
+                    {/* Botón de limpiar para Android */}
+                    {searchQuery.length > 0 && Platform.OS !== 'ios' && (
+                        <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}><Feather name="x" size={SIZES.body} color={COLORS.textSecondary} /></TouchableOpacity>
+                    )}
                 </View>
-                {/* REEMPLAZO DEL PICKER: Botón y Modal */}
-                <View style={styles.pickerContainer}>
-                    <Feather name="map-pin" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                
+                {/* REEMPLAZO DEL PICKER: Botón */}
+                <View style={styles.pickerWrapper}>
                     {sortedAvailableZones.length > 0 ? (
                         <TouchableOpacity 
                             style={styles.pickerButton} 
                             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsZoneModalVisible(true); }}
                         >
+                            <Feather name="map-pin" size={SIZES.body} color={COLORS.textSecondary} style={styles.pickerIcon} />
                             <Text style={[styles.pickerButtonText, { color: zonaFilter ? COLORS.textPrimary : COLORS.textSecondary }]}>
                                 {selectedZoneName}
                             </Text>
-                            <Feather name="chevron-down" size={20} color={COLORS.primary} />
+                            <Feather name="chevron-down" size={SIZES.body} color={COLORS.primary} />
                         </TouchableOpacity>
                     ) : (
-                         // Muestra si no hay zonas o si están cargando aún
-                         <Text style={styles.noZonesText}>
-                             {isDataLoading ? 'Cargando zonas...' : 'No hay zonas'}
-                         </Text>
-                     )}
+                        <Text style={styles.noZonesText}>
+                            {isDataLoading ? 'Cargando zonas...' : 'No hay zonas'}
+                        </Text>
+                    )}
                 </View>
             </View>
 
-            {/* Indicador sutil de carga/refresco (mientras se refresca CON datos visibles) */}
+            {/* Indicador sutil de carga/refresco */}
             {(isRefreshing || (isDataLoading && allClients && allClients.length > 0)) && (
-                 <View style={styles.syncingIndicator}>
+                <View style={styles.syncingIndicator}>
                     <ActivityIndicator size="small" color={COLORS.primary} />
                     <Text style={styles.syncingText}>{isRefreshing ? 'Actualizando...' : 'Sincronizando...'}</Text>
-                 </View>
+                </View>
             )}
 
             {/* FlatList Optimizada */}
             <FlatList
-                data={filteredClients} // Ya está memoizado con useMemo
-                renderItem={renderClientItem} // Ya está memoizado con useCallback
-                keyExtractor={(item) => item.id} // Correcto
+                data={filteredClients}
+                renderItem={renderClientItem}
+                keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.listContentContainer}
-                refreshControl={ // Correcto
+                refreshControl={
                     <RefreshControl
                         refreshing={isRefreshing}
                         onRefresh={onRefresh}
-                        colors={[COLORS.primary]} // Color spinner Android
-                        tintColor={COLORS.primary} // Color spinner iOS
+                        colors={[COLORS.primary]}
+                        tintColor={COLORS.primary}
                     />
                 }
-                ListEmptyComponent={ // Correcto, muestra solo si no está cargando
+                ListEmptyComponent={
                     !isDataLoading && !isRefreshing ? (
                         <View style={styles.emptyContainer}>
-                            <Feather name="users" size={48} color={COLORS.textSecondary} />
+                            <Feather name="users" size={SIZES.h1} color={COLORS.disabled} />
                             <Text style={styles.emptyText}>
-                                {searchQuery || zonaFilter ? 'No se encontraron clientes.' : 'Aún no tienes clientes asignados.'}
+                                {searchQuery || zonaFilter ? 'No se encontraron clientes que coincidan.' : 'Aún no tienes clientes asignados.'}
                             </Text>
-                            {/* Botón para agregar cliente si la lista está realmente vacía (MIGRADO) */}
                             { !searchQuery && !zonaFilter && (!allClients || allClients.length === 0) && (
-                                 <TouchableOpacity onPress={() => navigation.navigate('AddClient')} style={styles.emptyButton}>
+                                <TouchableOpacity onPress={() => navigation.navigate('AddClient')} style={styles.emptyButton}>
                                     <Text style={styles.emptyButtonText}>Agregar Mi Primer Cliente</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
-                    ) : null // No muestra nada si está cargando
+                    ) : null
                 }
-                 ListFooterComponent={<View style={{ height: 20 }} />} // Espacio al final
-
-                 // --- Optimizaciones de FlatList ---
-                 initialNumToRender={15} 
-                 maxToRenderPerBatch={10} 
-                 windowSize={11} 
-                 removeClippedSubviews={Platform.OS === 'android'}
-                 keyboardShouldPersistTaps="handled" 
+                ListFooterComponent={<View style={{ height: SIZES.medium }} />}
+                // Optimizaciones de FlatList
+                initialNumToRender={15} 
+                maxToRenderPerBatch={10} 
+                windowSize={11} 
+                removeClippedSubviews={Platform.OS === 'android'}
+                keyboardShouldPersistTaps="handled" 
             />
             
-            {/* NUEVO MODAL DE SELECCIÓN DE ZONA */}
+            {/* MODAL DE SELECCIÓN DE ZONA */}
             <ZoneSelectorModal
                 visible={isZoneModalVisible}
                 onClose={() => setIsZoneModalVisible(false)}
@@ -307,127 +294,175 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
     );
 };
 
-// --- Estilos (Actualizados para el nuevo selector y modal) ---
+// --- Estilos de Componentes Auxiliares (Modal) ---
+const modalStyles = StyleSheet.create({
+    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
+    modalContent: { 
+        width: '85%', 
+        backgroundColor: COLORS.backgroundEnd, 
+        borderRadius: SIZES.radius, 
+        borderWidth: SIZES.borderWidth, 
+        borderColor: COLORS.glassBorder 
+    },
+    modalHeader: { 
+        paddingVertical: SIZES.medium, 
+        borderBottomWidth: SIZES.borderWidth, 
+        borderBottomColor: COLORS.glassBorder, 
+        alignItems: 'center' 
+    },
+    modalTitle: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary },
+    modalItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SIZES.medium },
+    modalItemText: { fontSize: SIZES.body, color: COLORS.textPrimary },
+    separatorModal: { height: SIZES.borderWidth, backgroundColor: COLORS.glassBorder, marginHorizontal: SIZES.small },
+    modalCloseButton: { 
+        marginTop: SIZES.medium, 
+        padding: SIZES.medium, 
+        backgroundColor: COLORS.primary, // Usamos el color primario para el botón de acción
+        borderRadius: SIZES.radius, 
+        alignItems: 'center',
+        marginHorizontal: SIZES.medium,
+        marginBottom: SIZES.medium,
+    },
+    modalCloseText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body },
+});
+
+
+// --- ESTILOS DE PANTALLA (USANDO SIZES) ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
+    container: { flex: 1, backgroundColor: COLORS.backgroundStart }, // Fondo principal es el gris suave
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundEnd },
-    loadingText: { marginTop: 15, color: COLORS.textSecondary, fontSize: 16 },
+    
+    // Carga inicial
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
+    loadingText: { marginTop: SIZES.medium, color: COLORS.textSecondary, fontSize: SIZES.body },
+    
+    // Indicador de Sincronización
     syncingIndicator: {
-        paddingVertical: 5,
+        paddingVertical: SIZES.xsmall,
         alignItems: 'center',
         flexDirection: 'row',
         justifyContent: 'center',
-        backgroundColor: `${COLORS.primary}20`,
-        marginBottom: 5,
+        backgroundColor: COLORS.primary + '20', // Fondo primario sutil
+        marginBottom: SIZES.small,
     },
-    syncingText: { marginLeft: 8, color: COLORS.textSecondary, fontSize: 12 },
+    syncingText: { marginLeft: SIZES.xsmall, color: COLORS.primary, fontSize: SIZES.caption, fontWeight: '500' }, // Color primario
+    
+    // Header
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingTop: (StatusBar.currentHeight || 0) + 10,
-        paddingBottom: 15,
-        paddingHorizontal: 10,
+        paddingTop: (StatusBar.currentHeight || 0) + SIZES.small,
+        paddingBottom: SIZES.medium,
+        paddingHorizontal: SIZES.small,
         backgroundColor: 'transparent',
     },
-    headerButton: { padding: 10 },
+    headerButton: { padding: SIZES.small },
     title: {
-        fontSize: 20,
+        fontSize: SIZES.h2,
         fontWeight: 'bold',
         color: COLORS.textPrimary,
         textAlign: 'center',
         flex: 1,
-        marginHorizontal: 5,
+        marginHorizontal: SIZES.small,
     },
-    controlsContainer: { paddingHorizontal: 15, marginBottom: 10, gap: 10 },
+    
+    // Controles (Filtro y Búsqueda)
+    controlsContainer: { 
+        paddingHorizontal: SIZES.large, 
+        marginBottom: SIZES.medium, 
+        flexDirection: 'row',
+        gap: SIZES.medium,
+        justifyContent: 'space-between',
+    },
     inputContainer: {
+        flex: 2, // Toma más espacio
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        borderRadius: 12,
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd, // Fondo blanco limpio
+        borderRadius: SIZES.radiusSmall,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
-        paddingHorizontal: 12,
-        height: 48,
+        paddingHorizontal: SIZES.small,
+        height: 52, // Altura estándar
     },
-    inputIcon: { marginRight: 8 },
+    inputIcon: { marginRight: SIZES.small },
     input: {
         flex: 1,
         color: COLORS.textPrimary,
-        fontSize: 16,
+        fontSize: SIZES.body,
         height: '100%'
     },
-    clearButton: { padding: 5 },
-    pickerContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        borderRadius: 12,
-        borderWidth: 1,
+    clearButton: { padding: SIZES.xsmall },
+
+    // Picker (Ahora Botón)
+    pickerWrapper: {
+        flex: 1.5, // Toma menos espacio que la búsqueda
+        backgroundColor: COLORS.backgroundEnd, 
+        borderRadius: SIZES.radiusSmall,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
-        paddingLeft: 12,
-        height: 48,
-        position: 'relative',
+        height: 52,
+        justifyContent: 'center',
     },
-    // NUEVOS ESTILOS PARA EL SELECTOR BASADO EN TOUCHABLE
     pickerButton: {
-        flex: 1,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingRight: 12,
+        paddingHorizontal: SIZES.small,
         height: '100%',
     },
+    pickerIcon: { marginRight: SIZES.xsmall },
     pickerButtonText: {
-        fontSize: 16,
-    },
-    // Eliminamos el estilo 'picker'
-    
-    noZonesText: {
+        fontSize: SIZES.body,
         flex: 1,
-        fontSize: 16,
+        textAlign: 'center',
+    },
+    noZonesText: {
+        fontSize: SIZES.caption,
         color: COLORS.textSecondary,
-        paddingVertical: 12,
+        textAlign: 'center',
+        paddingHorizontal: SIZES.small,
         fontStyle: 'italic',
     },
-    // ESTILOS DEL MODAL DE ZONAS
-    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)' },
-    modalContent: { width: '85%', backgroundColor: COLORS.backgroundEnd, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
-    modalHeader: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.glassBorder, marginBottom: 10, alignItems: 'center' },
-    modalTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary },
-    modalItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15 },
-    modalItemText: { fontSize: 16, color: COLORS.textPrimary },
-    separatorModal: { height: 1, backgroundColor: COLORS.glassBorder },
-    modalCloseButton: { marginTop: 15, padding: 12, backgroundColor: COLORS.disabled, borderRadius: 12, alignItems: 'center' },
-    modalCloseText: { color: COLORS.textPrimary, fontWeight: 'bold' },
-
-    listContentContainer: { paddingHorizontal: 15, paddingBottom: 20, flexGrow: 1 },
-    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
-    emptyText: { marginTop: 20, fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 25 },
-    emptyButton: { backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 25, borderRadius: 25, elevation: 2, shadowOpacity: 0.1, shadowRadius: 4 },
-    emptyButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 16 },
+    
+    // Lista de Clientes (FlatList)
+    listContentContainer: { 
+        paddingHorizontal: SIZES.large, 
+        paddingBottom: SIZES.large, 
+        flexGrow: 1 
+    },
+    
+    // Tarjeta de Cliente (Rediseñada)
     card: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: COLORS.glass,
-        paddingVertical: 14,
-        paddingLeft: 16,
-        paddingRight: 8,
-        borderRadius: 12,
-        marginBottom: 10,
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd, // Fondo blanco
+        paddingVertical: SIZES.medium,
+        paddingLeft: SIZES.medium,
+        paddingRight: SIZES.small,
+        borderRadius: SIZES.radius, // Más redondeado
+        marginBottom: SIZES.small,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
-        shadowColor: '#f1f5bcff',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 5,
-        elevation: 2,
+        // Sombra sutil para destacar el item sobre el fondo
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
     },
-    cardInfo: { flex: 1, marginRight: 8 },
-    cardTitle: { fontSize: 17, fontWeight: '600', color: COLORS.textPrimary, marginBottom: 3 },
-    cardSubtitle: { fontSize: 14, color: COLORS.textSecondary },
-    editButton: { padding: 12 },
+    userIcon: { marginRight: SIZES.medium },
+    cardInfo: { flex: 1, marginRight: SIZES.small },
+    cardTitle: { fontSize: SIZES.body, fontWeight: '700', color: COLORS.textPrimary, marginBottom: SIZES.xsmall / 2 },
+    cardSubtitle: { fontSize: SIZES.caption, color: COLORS.textSecondary },
+    editButton: { padding: SIZES.small }, // Usamos chevron-right en lugar de edit
+
+    // Empty State
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SIZES.xl },
+    emptyText: { marginTop: SIZES.medium, fontSize: SIZES.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SIZES.large },
+    emptyButton: { backgroundColor: COLORS.primary, paddingVertical: SIZES.medium, paddingHorizontal: SIZES.large, borderRadius: SIZES.radius, elevation: 2, shadowOpacity: 0.1, shadowRadius: 4 },
+    emptyButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body }, // Color blanco para contraste
 });
 
 export default ClientListScreen;

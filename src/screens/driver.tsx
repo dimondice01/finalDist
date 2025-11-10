@@ -4,9 +4,8 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
 // --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
-// AÑADIMOS: el TIPO Timestamp nativo v9
 import { Timestamp } from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+// --- FIN DE CAMBIOS ---
 
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -17,9 +16,9 @@ import type { DriverScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
 import { Route as DataContextRoute, useData } from '../../context/DataContext';
-// AÑADIMOS: la importación de 'auth' NATIVA
 import { auth } from '../../db/firebase-service';
-import { COLORS } from '../../styles/theme';
+// ✅ Importamos SIZES y COLORS
+import { COLORS, SIZES } from '../../styles/theme';
 
 // --- INTERFACES (Sin cambios) ---
 interface DriverItem {
@@ -67,24 +66,27 @@ const formatDate = (date: Date | null): string => {
     }
 };
 
-// --- Componente Header (Sin cambios) ---
+// --- Componente Header (REDISENADO) ---
 const Header = memo(({ title, onRefresh, isLoading, onLogout }: { title: string, onRefresh: () => void, isLoading: boolean, onLogout: () => void }) => (
     <View style={styles.header}>
-        <TouchableOpacity onPress={onLogout} style={styles.headerButton}>
-            <Feather name="log-out" size={22} color={COLORS.danger || COLORS.warning || COLORS.textSecondary} /> 
+        {/* 1. REFRESH BUTTON (IZQUIERDA) - Aumentado el tamaño del área de toque */}
+        <TouchableOpacity onPress={onRefresh} style={styles.actionButtonLarge} disabled={isLoading}>
+            {isLoading
+                ? <ActivityIndicator color={COLORS.primary} size={SIZES.h3} /> 
+                : <Feather name="refresh-cw" size={SIZES.h3} color={COLORS.primary} />}
         </TouchableOpacity>
         
-        <Text style={styles.title}>{title}</Text>
+        {/* 2. TITLE (CENTRO) */}
+        <Text style={styles.title}>{title.toUpperCase()}</Text>
         
-        <TouchableOpacity onPress={onRefresh} style={styles.headerButton} disabled={isLoading}>
-            {isLoading
-                ? <ActivityIndicator color={COLORS.primary} size="small" />
-                : <Feather name="refresh-cw" size={22} color={COLORS.primary} />}
+        {/* 3. LOGOUT BUTTON (DERECHA) - Aumentado el tamaño del área de toque */}
+        <TouchableOpacity onPress={onLogout} style={styles.actionButtonLarge}>
+            <Feather name="log-out" size={SIZES.h3} color={COLORS.danger} /> 
         </TouchableOpacity>
     </View>
 ));
 
-// --- Componente RouteItem (Sin cambios) ---
+// --- Componente RouteItem (Estilizado y Mejorado) ---
 const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (route: DriverRoute) => void }) => {
     const totalPendiente = useMemo(() => route.facturas.filter(f => f.estadoVisita === 'Pendiente' || f.estadoVisita === 'Pendiente de Entrega').length, [route.facturas]);
     const totalAmount = useMemo(() => route.facturas.reduce((sum, f) => sum + f.totalVenta, 0), [route.facturas]);
@@ -93,11 +95,14 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
     const isArchived = route.estado === 'Archivada';
     const isFinalizada = isCompleted || isArchived;
 
+    // Colores de estado basados en el tema
+    const statusColor = isFinalizada ? COLORS.success : COLORS.primary;
+
     return (
         <TouchableOpacity
             style={[
                 styles.routeCard, 
-                isCompleted && styles.routeCardCompleted,
+                isFinalizada && styles.routeCardFinalized, // Estilo para finalizadas
                 isArchived && styles.routeCardDisabled 
             ]}
             onPress={() => onPress(route)}
@@ -107,7 +112,7 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
             {/* Header de la Card */}
             <View style={styles.routeCardHeader}>
                 <View style={styles.routeCardHeaderLeft}>
-                    <Feather name={isFinalizada ? "check-circle" : "truck"} size={20} color={isFinalizada ? COLORS.success : COLORS.primary} />
+                    <Feather name={isFinalizada ? "check-circle" : "truck"} size={SIZES.h3} color={statusColor} />
                     <Text style={styles.routeName}>{route.nombre || `Ruta ${route.id.substring(0, 6)}`}</Text>
                 </View>
                 <Text style={styles.routeDate}>{formatDate(route.fecha)}</Text>
@@ -116,24 +121,31 @@ const RouteItem = memo(({ route, onPress }: { route: DriverRoute, onPress: (rout
             {/* Detalles (Contenido Principal) */}
             <View style={styles.routeDetails}>
                 <View style={styles.detailItem}>
-                    <Feather name="file-text" size={16} color={COLORS.textSecondary} />
-                    <Text style={styles.detailText}>{route.facturas.length} Facturas</Text>
+                    <Feather name="file-text" size={SIZES.body} color={COLORS.textSecondary} />
+                    <Text style={styles.detailText}><Text style={{fontWeight: 'bold'}}>{route.facturas.length}</Text> Facturas</Text>
                 </View>
                 <View style={styles.detailItem}>
-                    <Feather name="dollar-sign" size={16} color={COLORS.textSecondary} />
-                    <Text style={styles.detailText}>{formatCurrency(totalAmount)}</Text>
+                    <Feather name="dollar-sign" size={SIZES.body} color={COLORS.textSecondary} />
+                    <Text style={styles.detailText}>Total: <Text style={{fontWeight: 'bold'}}>{formatCurrency(totalAmount)}</Text></Text>
                 </View>
-                {!isFinalizada && totalPendiente > 0 && (
+                <View style={styles.detailItem}>
+                    <Feather name="map-pin" size={SIZES.body} color={COLORS.textSecondary} />
+                    <Text style={styles.detailText}>{route.facturas.length} Destinos</Text>
+                </View>
+
+                {totalPendiente > 0 && (
                     <View style={[styles.detailItem, styles.detailItemPending]}>
-                        <Feather name="alert-circle" size={16} color={COLORS.warning} />
-                        <Text style={[styles.detailText, { color: COLORS.warning, fontWeight: 'bold' }]}>{totalPendiente} Pendientes</Text>
+                        <Feather name="alert-circle" size={SIZES.body} color={COLORS.warning} />
+                        <Text style={[styles.detailText, { color: COLORS.warning, fontWeight: 'bold' }]}>
+                            {totalPendiente} Pendientes de Visita
+                        </Text>
                     </View>
                 )}
             </View>
 
-            {/* Footer con Flecha (Posicionada absolutamente) */}
+            {/* Footer con Flecha de Acción */}
             <View style={styles.routeCardFooter}>
-                <Feather name="chevron-right" size={24} color={COLORS.textSecondary} />
+                <Feather name="chevron-right" size={SIZES.h3} color={COLORS.textSecondary} />
             </View>
         </TouchableOpacity>
     );
@@ -160,7 +172,6 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                     style: "destructive",
                     onPress: async () => {
                         try {
-                            // Usamos la instancia nativa
                             await auth.signOut();
                             
                             Toast.show({ type: 'info', text1: 'Sesión cerrada', position: 'bottom' });
@@ -183,10 +194,7 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
             const sourceDate = r.fecha; 
 
             if (sourceDate) {
-                // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
-                // Usamos 'Timestamp' (importado)
-                if (sourceDate instanceof Timestamp) { // <-- CORRECCIÓN 1
-                // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
+                if (sourceDate instanceof Timestamp) { 
                     routeDate = sourceDate.toDate();
                 } else if (sourceDate instanceof Date) { 
                     if (!isNaN(sourceDate.getTime())) { 
@@ -197,12 +205,9 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                 } else if (typeof sourceDate === 'object' && (sourceDate as any).seconds !== undefined && typeof (sourceDate as any).seconds === 'number') {
                     try {
                         if ((sourceDate as any).seconds > 0) {
-                            // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
-                            // Usamos 'Timestamp' (importado)
-                            routeDate = new Timestamp((sourceDate as any).seconds, (sourceDate as any).nanoseconds || 0).toDate(); // <-- CORRECCIÓN 2
-                            // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
+                            routeDate = new Timestamp((sourceDate as any).seconds, (sourceDate as any).nanoseconds || 0).toDate();
                         } else {
-                             console.warn(`[MAPEO ${r.id}] Timestamp con seconds <= 0 encontrado:`, sourceDate);
+                            console.warn(`[MAPEO ${r.id}] Timestamp con seconds <= 0 encontrado:`, sourceDate);
                         }
                     } catch (e) { console.warn(`[MAPEO ${r.id}] Error convirtiendo objeto a Timestamp:`, sourceDate, e); }
                 } else if (typeof sourceDate === 'string') {
@@ -292,11 +297,12 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
         <RouteItem route={item} onPress={handleSelectRoute} />
     ), [handleSelectRoute]);
 
-    // --- Renderizado Principal (Sin cambios) ---
+    // --- Renderizado Principal (Estilizado) ---
     return (
         <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            {/* Usamos dark-content en el fondo claro */}
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundEnd} /> 
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
 
             <Header 
                 title="Mis Rutas" 
@@ -310,13 +316,13 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                     style={[styles.tabButton, selectedTab === 'En Curso' && styles.activeTab]}
                     onPress={() => setSelectedTab('En Curso')}
                 >
-                    <Text style={[styles.tabText, selectedTab === 'En Curso' && styles.activeTabText]}>En Curso</Text>
+                    <Text style={[styles.tabText, selectedTab === 'En Curso' && styles.activeTabText]}>EN CURSO</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={[styles.tabButton, selectedTab === 'Finalizadas' && styles.activeTab]}
                     onPress={() => setSelectedTab('Finalizadas')}
                 >
-                    <Text style={[styles.tabText, selectedTab === 'Finalizadas' && styles.activeTabText]}>Finalizadas</Text>
+                    <Text style={[styles.tabText, selectedTab === 'Finalizadas' && styles.activeTabText]}>FINALIZADAS</Text>
                 </TouchableOpacity>
             </View>
 
@@ -333,7 +339,7 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
                     contentContainerStyle={styles.listContentContainer}
                     ListEmptyComponent={ 
                         <View style={styles.emptyContainer}>
-                            <Feather name={selectedTab === 'En Curso' ? "truck" : "check-square"} size={48} color={COLORS.textSecondary} />
+                            <Feather name={selectedTab === 'En Curso' ? "truck" : "check-square"} size={SIZES.h1} color={COLORS.textSecondary} />
                             <Text style={styles.emptyText}>
                                 {selectedTab === 'En Curso' ? 'No tienes rutas pendientes.' : 'No hay rutas finalizadas.'}
                             </Text>
@@ -351,113 +357,137 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
     );
 };
 
-// --- Estilos (Sin cambios) ---
+// --- Estilos (Ajustados al sistema de diseño) ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
+    container: { flex: 1, backgroundColor: COLORS.backgroundStart },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0, paddingBottom: 15, paddingHorizontal: 10 },
-    headerButton: { padding: 10, width: 44, alignItems: 'center' },
-    title: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
+    // --- HEADER ESTANDARIZADO (AJUSTE VISUAL) ---
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : SIZES.medium,
+        paddingBottom: SIZES.medium, 
+        paddingHorizontal: SIZES.large, // Aumentamos padding horizontal para centrar mejor
+        backgroundColor: COLORS.backgroundEnd,
+        borderBottomWidth: SIZES.borderWidth,
+        borderColor: COLORS.glassBorder,
+    },
+    actionButtonLarge: { 
+        padding: SIZES.small,
+        width: SIZES.xxl, // 40px de ancho
+        height: SIZES.xxl, // 40px de alto
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    title: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
+    // --- TABS ---
     tabContainer: {
         flexDirection: 'row',
         justifyContent: 'space-around',
-        backgroundColor: COLORS.glass,
-        marginHorizontal: 15,
-        borderRadius: 15,
-        padding: 4,
-        marginBottom: 10,
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd, 
+        marginHorizontal: SIZES.large,
+        borderRadius: SIZES.radius,
+        padding: SIZES.xsmall,
+        marginBottom: SIZES.medium,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
     },
-    tabButton: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
-    activeTab: { backgroundColor: COLORS.primary, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 },
-    tabText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: 15 },
-    activeTabText: { color: COLORS.primaryDark, fontWeight: 'bold' },
+    tabButton: { flex: 1, paddingVertical: SIZES.small, borderRadius: SIZES.radiusSmall, alignItems: 'center' },
+    activeTab: { backgroundColor: COLORS.primary, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3 },
+    tabText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: SIZES.body },
+    activeTabText: { color: COLORS.white, fontWeight: 'bold' },
+    // --- LOADER & EMPTY ---
     loaderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    loadingText: { marginTop: 10, color: COLORS.textSecondary },
-    listContentContainer: { paddingHorizontal: 15, paddingBottom: 20 },
+    loadingText: { marginTop: SIZES.small, color: COLORS.textSecondary, fontSize: SIZES.body },
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SIZES.xl, gap: SIZES.medium },
+    emptyText: { fontSize: SIZES.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SIZES.small },
+    refreshButton: { backgroundColor: COLORS.primary, paddingVertical: SIZES.small, paddingHorizontal: SIZES.large, borderRadius: SIZES.radius },
+    refreshButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body },
+    // --- LISTA ---
+    listContentContainer: { paddingHorizontal: SIZES.large, paddingBottom: SIZES.large },
+    // --- ROUTE CARD ---
     routeCard: {
-        backgroundColor: COLORS.glass, 
-        borderRadius: 15, 
-        marginBottom: 15,
-        borderWidth: 1, 
+        backgroundColor: COLORS.backgroundEnd, 
+        borderRadius: SIZES.radius, 
+        marginBottom: SIZES.medium,
+        borderWidth: SIZES.borderWidth, 
         borderColor: COLORS.glassBorder,
-        shadowColor: "#000", 
-        shadowOffset: { width: 0, height: 3, },
-        shadowOpacity: 0.15,
+        shadowColor: COLORS.textPrimary, 
+        shadowOffset: { width: 0, height: 2, },
+        shadowOpacity: 0.05,
         shadowRadius: 5,
         elevation: 4, 
-        overflow: 'hidden', 
+        paddingBottom: SIZES.medium, 
     },
-    routeCardCompleted: { 
-        backgroundColor: 'rgba(253, 234, 234, 0.99)', 
-        borderColor: 'rgba(80, 80, 80, 0.9)',
-    },
-    routeCardDisabled: { 
-        opacity: 0.6,
-        backgroundColor: 'rgba(80, 80, 80, 0.7)', 
-        borderColor: 'rgba(80, 80, 80, 0.9)',
-    },
+    routeCardFinalized: { opacity: 0.8, backgroundColor: COLORS.backgroundEnd }, 
+    routeCardDisabled: { opacity: 0.5 },
     routeCardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 18, 
-        paddingVertical: 14, 
-        borderBottomWidth: 1, 
+        paddingHorizontal: SIZES.medium, 
+        paddingVertical: SIZES.medium, 
+        borderBottomWidth: SIZES.borderWidth, 
         borderBottomColor: COLORS.glassBorder,
-        backgroundColor: 'rgba(0,0,0,0.1)', 
-    },
-    routeCardHeaderLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12, 
+        backgroundColor: COLORS.backgroundStart, 
+        borderTopLeftRadius: SIZES.radius,
+        borderTopRightRadius: SIZES.radius,
     },
     routeName: {
         color: COLORS.textPrimary,
-        fontSize: 17,
+        fontSize: SIZES.body,
         fontWeight: 'bold',
     },
     routeDate: {
         color: COLORS.textSecondary,
-        fontSize: 13,
+        fontSize: SIZES.caption,
         fontWeight: '500',
     },
-    routeDetails: {
-        paddingHorizontal: 18, 
-        paddingTop: 14, 
-        paddingBottom: 10, 
+    routeCardHeaderLeft: {
         flexDirection: 'row',
-        justifyContent: 'flex-start', 
-        gap: 20, 
+        alignItems: 'center',
+        gap: SIZES.small, 
+    },
+    routeDetails: {
+        paddingHorizontal: SIZES.medium, 
+        paddingTop: SIZES.medium, 
+        flexDirection: 'row',
+        justifyContent: 'space-between', 
         flexWrap: 'wrap',
+        gap: SIZES.medium,
     },
     detailItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 7, 
-        paddingVertical: 3,
+        gap: SIZES.xsmall, 
+        paddingVertical: SIZES.xsmall,
+        width: '45%', 
     },
     detailItemPending: { 
-        backgroundColor: 'rgba(255, 193, 7, 0.15)', 
-        paddingHorizontal: 10, 
-        borderRadius: 8, 
+        backgroundColor: COLORS.warning + '15', 
+        paddingHorizontal: SIZES.small, 
+        borderRadius: SIZES.radiusSmall, 
     },
     detailText: {
         color: COLORS.textSecondary,
-        fontSize: 14,
+        fontSize: SIZES.caption,
         fontWeight: '500',
     },
     routeCardFooter: { 
         position: 'absolute',
-        right: 15, 
-        top: '55%', 
-        transform: [{ translateY: -12 }],
+        right: SIZES.medium, 
+        top: '50%', 
+        transform: [{ translateY: -SIZES.h3 / 2 }],
+        padding: SIZES.small,
+        backgroundColor: COLORS.backgroundEnd,
+        borderRadius: SIZES.radius,
     },
-    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30, gap: 15 },
-    emptyText: { fontSize: 17, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20 },
-    refreshButton: { backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 25, borderRadius: 25 },
-    refreshButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', fontSize: 16 },
 });
 
 export default DriverScreen;

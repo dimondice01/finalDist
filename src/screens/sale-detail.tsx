@@ -7,9 +7,7 @@ import {
     addDoc,
     collection,
     doc,
-    FirebaseFirestoreTypes // <-- CORREGIDO: Importamos el TIPO
-    ,
-
+    FirebaseFirestoreTypes,
 
     onSnapshot,
     runTransaction,
@@ -18,6 +16,7 @@ import {
 // --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { useEffect, useMemo, useState } from 'react';
+// ✅ CORREGIDO: Importamos Platform
 import { ActivityIndicator, Alert, FlatList, Modal, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
@@ -27,76 +26,72 @@ import { SaleDetailScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y DB ---
 import { useData } from '../../context/DataContext';
-// Esta 'db' es NATIVA
 import { dbContainer } from '../../db/firebase-service';
-import { COLORS } from '../../styles/theme';
+// ✅ Importamos SIZES y COLORS
+import { COLORS, SIZES } from '../../styles/theme';
 
 // --- INTERFACES ---
 interface SaleItem {
-    nombre: string;
-    quantity: number;
-    precio: number;
-    promoAplicada?: string;
+    nombre: string;
+    quantity: number;
+    precio: number;
+    promoAplicada?: string;
 }
 interface Sale {
-    id: string;
-    clienteId?: string;
-    clienteNombre?: string;
-    // --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
-    // CORREGIDO: Usamos el TIPO importado
-    fecha: FirebaseFirestoreTypes.Timestamp;
-    // --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
-    items: SaleItem[];
-    totalVenta: number;
-    saldoPendiente: number;
-    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada';
-    numeroFactura?: string;
-    vendedorId?: string;
-    vendedorNombre?: string;
-    porcentajeComision?: number;
-    totalComision?: number;
+    id: string;
+    clienteId?: string;
+    clienteNombre?: string;
+    fecha: FirebaseFirestoreTypes.Timestamp;
+    items: SaleItem[];
+    totalVenta: number;
+    saldoPendiente: number;
+    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada';
+    numeroFactura?: string;
+    vendedorId?: string;
+    vendedorNombre?: string;
+    porcentajeComision?: number;
+    totalComision?: number;
 }
-// --- ¡CORRECCIÓN! AÑADIMOS isOffline a las Props ---
 interface CollectDebtModalProps {
-    visible: boolean;
-    onClose: () => void;
-    venta: Sale | null;
-    onPaymentSuccess: () => void;
+    visible: boolean;
+    onClose: () => void;
+    venta: Sale | null;
+    onPaymentSuccess: () => void;
     isOffline: boolean;
 }
 
 interface SaleDetailRouteParams {
-    saleId: string;
+    saleId: string;
 }
 
 const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
 
-// --- Componente CollectDebtModal (CORREGIDO PARA OFFLINE) ---
+// --- Componente CollectDebtModal (ESTILIZADO Y CORREGIDO) ---
 const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline }: CollectDebtModalProps) => {
-    const [montoCobrado, setMontoCobrado] = useState('');
-    const [isSaving, setIsSaving] = useState(false);
-    const [error, setError] = useState('');
+    const [montoCobrado, setMontoCobrado] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const [error, setError] = useState('');
 
-    if (!venta) return null;
+    if (!venta) return null;
 
-    const handleConfirmPayment = async () => {
-        setError('');
-        const cobro = parseFloat(montoCobrado);
-        if (isNaN(cobro) || cobro <= 0) { setError('Por favor, ingresa un monto válido.'); return; }
-        if (cobro > venta.saldoPendiente) { setError(`El monto no puede ser mayor al saldo pendiente de ${formatCurrency(venta.saldoPendiente)}.`); return; }
+    const modalDate = venta.fecha ? venta.fecha.toDate().toLocaleDateString('es-AR') : 'Fecha inválida';
 
-        setIsSaving(true);
+    const handleConfirmPayment = async () => {
+        setError('');
+        const cobro = parseFloat(montoCobrado);
+        if (isNaN(cobro) || cobro <= 0) { setError('Por favor, ingresa un monto válido.'); return; }
+        if (cobro > venta.saldoPendiente) { setError(`El monto no puede ser mayor al saldo pendiente de ${formatCurrency(venta.saldoPendiente)}.`); return; }
+
+        setIsSaving(true);
         
-        // 1. Obtener la DB y hacer la comprobación
-        const db = dbContainer.instance;
-        if (!db) {
-            console.error("CollectDebtModal: DB no está lista, abortando PAGO.");
-            Alert.alert("Error", "La base de datos no está lista. Reinicia la app.");
-            setIsSaving(false);
-            return;
-        }
+        const db = dbContainer.instance;
+        if (!db) {
+            console.error("CollectDebtModal: DB no está lista, abortando PAGO.");
+            Alert.alert("Error", "La base de datos no está lista. Reinicia la app.");
+            setIsSaving(false);
+            return;
+        }
 
-        // 2. Definir la lógica de la transacción (común a ambos modos)
         const performTransaction = async () => {
             await runTransaction(db, async (transaction) => {
                 
@@ -136,16 +131,11 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
             });
         };
 
-        // --- 3. APLICAR LÓGICA OPTIMISTA (isOffline) ---
         if (isOffline) {
-            console.log("Modo Offline: Cobro registrado localmente (Optimista).");
-
-            // Disparar sin await
             performTransaction()
                 .then(() => console.log("Cobro offline enviado a la cola de persistencia."))
                 .catch(err => console.error("Error en cobro offline en segundo plano:", err));
             
-            // Feedback y Desbloqueo Inmediato
             Toast.show({ type: 'success', text1: 'Cobro Guardado (Offline)', text2: 'Se sincronizará al conectar.' });
             if(onPaymentSuccess) onPaymentSuccess();
             onClose();
@@ -156,248 +146,426 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
             return;
         }
 
-        // --- 4. MODO ONLINE (Blocking) ---
-        try {
-            await performTransaction(); // Esperar la confirmación del servidor
-            
-            Toast.show({ type: 'success', text1: '¡Cobro registrado con éxito!' });
-            if(onPaymentSuccess) onPaymentSuccess();
-            onClose();
+        try {
+            await performTransaction();
+            
+            Toast.show({ type: 'success', text1: '¡Cobro registrado con éxito!' });
+            if(onPaymentSuccess) onPaymentSuccess();
+            onClose();
 
-        } catch (err) {
-            console.error("Error en transacción de cobro:", err);
-            setError("No se pudo registrar el cobro. Intenta de nuevo.");
-            Toast.show({type: 'error', text1: 'Error al registrar el cobro'});
-        } finally {
-            setIsSaving(false);
-            setMontoCobrado('');
-        }
-    };
-    
-    // --- RENDER DEL MODAL (Sin cambios) ---
-    return (
-        <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
-            <View style={styles.modalOverlay}><View style={styles.modalContent}><Text style={styles.modalTitle}>Registrar Cobro</Text><Text style={styles.modalSubtitle}>Venta del {venta.fecha.toDate().toLocaleDateString('es-AR')}</Text><Text style={styles.modalDebt}>Saldo actual: {formatCurrency(venta.saldoPendiente)}</Text><TextInput style={styles.input} placeholder="Monto Cobrado" keyboardType="numeric" value={montoCobrado} onChangeText={setMontoCobrado} autoFocus/><View style={styles.modalActions}><TouchableOpacity onPress={onClose} style={styles.modalButtonCancel}><Text style={styles.modalButtonText}>Cancelar</Text></TouchableOpacity><TouchableOpacity onPress={handleConfirmPayment} disabled={isSaving} style={styles.modalButtonConfirm}>{isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Confirmar</Text>}</TouchableOpacity></View></View></View>
-        </Modal>
-    );
+        } catch (err) {
+            console.error("Error en transacción de cobro:", err);
+            setError("No se pudo registrar el cobro. Intenta de nuevo.");
+            Toast.show({type: 'error', text1: 'Error al registrar el cobro'});
+        } finally {
+            setIsSaving(false);
+            setMontoCobrado('');
+        }
+    };
+    
+    return (
+        <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
+            <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalTitle}>Registrar Cobro</Text>
+                    {/* ✅ CORREGIDO: Venta del se envuelve en Text */}
+                    <Text style={styles.modalSubtitle}>Venta del <Text style={{fontWeight: 'bold'}}>{modalDate}</Text></Text> 
+                    
+                    {error ? <Text style={styles.modalError}>{error}</Text> : null}
+
+                    {/* ✅ CORREGIDO: Saldo con componente Text anidado */}
+                    <Text style={styles.modalDebt}>Saldo actual: <Text style={{ color: COLORS.warning }}>{formatCurrency(venta.saldoPendiente)}</Text></Text>
+                    
+                    <TextInput 
+                        style={styles.input} 
+                        placeholder="Monto Cobrado" 
+                        placeholderTextColor={COLORS.textSecondary}
+                        keyboardType="numeric" 
+                        value={montoCobrado} 
+                        onChangeText={setMontoCobrado} 
+                        autoFocus
+                    />
+                    
+                    <View style={styles.modalActions}>
+                        <TouchableOpacity onPress={onClose} style={styles.modalButtonCancel}>
+                            <Text style={styles.modalButtonText}>Cancelar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                            onPress={handleConfirmPayment} 
+                            disabled={isSaving} 
+                            style={styles.modalButtonConfirm}
+                        >
+                            {isSaving ? <ActivityIndicator color={COLORS.primary} /> : <Text style={styles.modalButtonText}>Confirmar</Text>}
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
+    );
 };
 
 // --- Pantalla SaleDetailScreen (ACTUALIZADA PARA isOffline) ---
 const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
-    const route = useRoute();
-    const { saleId } = route.params as SaleDetailRouteParams; 
+    const route = useRoute();
+    const { saleId } = route.params as SaleDetailRouteParams; 
 
-    const [sale, setSale] = useState<Sale | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
-    // --- ¡CORRECCIÓN! OBTENEMOS isOffline ---
-    const { clients, syncData, isOffline } = useData(); 
+    const [sale, setSale] = useState<Sale | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
+    const { clients, syncData, isOffline } = useData(); 
 
-    useEffect(() => {
-        if (!saleId || typeof saleId !== 'string') {
-            setIsLoading(false);
-            return;
-        }
+    useEffect(() => {
+        if (!saleId || typeof saleId !== 'string') {
+            setIsLoading(false);
+            return;
+        }
 
-        // --- INICIO DE CAMBIOS: SDK NATIVO (v9) ---
-        // CORREGIDO: doc
-          const db = dbContainer.instance;
-        if (!db) {
-            // Esto no debería pasar si App.tsx funciona, pero es una guarda de seguridad.
-            console.error("SaleDetailScreen: DB no está lista para el listener.");
-            setIsLoading(false);
-            return; // No hacer nada si la db no está lista
-        }
+        const db = dbContainer.instance;
+        if (!db) {
+            console.error("SaleDetailScreen: DB no está lista para el listener.");
+            setIsLoading(false);
+            return;
+        }
 
-        const saleRef = doc(db, 'ventas', saleId);
-        
-        // CORREGIDO: onSnapshot
-        const unsubscribe = onSnapshot(saleRef, (doc) => {
-            // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
-            if (doc.exists) {
-                setSale({ id: doc.id, ...doc.data() } as Sale);
-            } else {
-                console.error("No se encontró la venta.");
-                setSale(null);
-            }
-            setIsLoading(false);
-        }, (error) => {
-            console.error("Error al cargar la venta:", error);
-            setIsLoading(false);
-        });
-        // --- FIN DE CAMBIOS: SDK NATIVO (v9) ---
+        const saleRef = doc(db, 'ventas', saleId);
+        
+        const unsubscribe = onSnapshot(saleRef, (doc) => {
+            // @ts-ignore
+            if (doc.exists) {
+                setSale({ id: doc.id, ...doc.data() } as Sale);
+            } else {
+                console.error("No se encontró la venta.");
+                setSale(null);
+            }
+            setIsLoading(false);
+        }, (error) => {
+            console.error("Error al cargar la venta:", error);
+            setIsLoading(false);
+        });
 
-        return () => unsubscribe();
-    }, [saleId]);
+        return () => unsubscribe();
+    }, [saleId]);
 
-    const clientName = useMemo(() => {
-        if (!sale) return 'Cliente no especificado';
-        if (sale.clienteNombre) return sale.clienteNombre;
-        const client = clients.find(c => c.id === sale.clienteId);
-        return client?.nombre || 'Cliente no especificado';
-    }, [sale, clients]);
-    
-    const handlePaymentSuccess = () => {
-        syncData();
-        // El listener (onSnapshot) se encarga de actualizar la UI
-    };
+    const clientName = useMemo(() => {
+        if (!sale) return 'Cliente no especificado';
+        if (sale.clienteNombre) return sale.clienteNombre;
+        const client = clients.find(c => c.id === sale.clienteId);
+        return client?.nombre || 'Cliente no especificado';
+    }, [sale, clients]);
+    
+    const handlePaymentSuccess = () => {
+        syncData();
+    };
+    
+    // --- Render Lógica de Carga ---
+    if (isLoading) {
+        return (
+            <View style={styles.loadingContainer}>
+                {/* Usamos backgroundStart en ambos puntos */}
+                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+        );
+    }
 
-    // --- RENDER (Sin cambios lógicos) ---
-    if (isLoading) {
-// ... (omitted loading JSX) ...
-        return (
-            <View style={styles.loadingContainer}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-                <ActivityIndicator size="large" color={COLORS.primary} />
-            </View>
-        );
-    }
+    if (!sale) {
+        return (
+            <View style={styles.container}>
+                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
+                {/* --- HEADER ESTILIZADO --- */}
+                <View style={[styles.header, { backgroundColor: COLORS.backgroundEnd, borderColor: COLORS.glassBorder }]}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
+                        <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.title}>Error</Text>
+                    <View style={styles.headerButton} />
+                </View>
+                <Text style={styles.errorText}>No se pudieron cargar los datos de la venta.</Text>
+            </View>
+        );
+    }
+    
+    const saleDateFormatted = sale.fecha ? sale.fecha.toDate().toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Fecha inválida';
 
-    if (!sale) {
-// ... (omitted error JSX) ...
-        return (
-            <View style={styles.container}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-                {/* --- HEADER MEJORADO --- */}
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                        <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
-                    </TouchableOpacity>
-                    <Text style={styles.title}>Error</Text>
-                    <View style={styles.headerButton} />
-                </View>
-                <Text style={styles.errorText}>No se pudieron cargar los datos de la venta.</Text>
-            </View>
-        );
-    }
-    
-    const saleDateFormatted = sale.fecha ? sale.fecha.toDate().toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Fecha inválida';
+    // Función para obtener el color del estado
+    const getStatusColor = (estado: Sale['estado']) => {
+        switch (estado) {
+            case 'Pagada': return COLORS.success;
+            case 'Adeuda': return COLORS.warning;
+            case 'Anulada': return COLORS.danger;
+            default: return COLORS.textSecondary;
+        }
+    };
+    const statusColor = getStatusColor(sale.estado);
+    const isAdeuda = sale.estado === 'Adeuda' || sale.estado === 'Repartiendo';
+    const isAnulada = sale.estado === 'Anulada';
 
-    return (
-        <View style={styles.container}>
-            <StatusBar barStyle="light-content" />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
-            
-            {/* --- HEADER MEJORADO --- */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                    <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
-                </TouchableOpacity>
-                <Text style={styles.title}>Detalle de Venta</Text>
-                <View style={styles.headerButton} /> {/* Placeholder */}
-            </View>
 
-            <View style={styles.summaryCard}>
-// ... (omitted summary JSX) ...
-                <Text style={styles.clientName}>{clientName}</Text>
-                <Text style={styles.saleDate}>{saleDateFormatted}</Text>
-                <View style={styles.totalRow}><Text style={styles.totalLabel}>Total Venta:</Text><Text style={styles.totalAmount}>{formatCurrency(sale.totalVenta)}</Text></View>
-                <View style={styles.balanceRow}><Text style={styles.balanceLabel}>Saldo Pendiente:</Text><Text style={styles.balanceAmount}>{formatCurrency(sale.saldoPendiente)}</Text></View>
-            </View>
-            
-            <Text style={styles.listHeader}>Productos Vendidos</Text>
+    return (
+        <View style={styles.container}>
+            {/* Usamos dark-content en el fondo claro */}
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
+            
+            {/* --- HEADER ESTILIZADO --- */}
+            <View style={[styles.header, { backgroundColor: COLORS.backgroundEnd, borderColor: COLORS.glassBorder }]}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
+                    <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
+                </TouchableOpacity>
+                <Text style={styles.title}>DETALLE DE VENTA</Text>
+                <View style={styles.headerButton} />
+            </View>
+            
+            <FlatList
+                ListHeaderComponent={
+                    <View style={styles.headerContentContainer}>
+                        {/* Summary Card */}
+                        <View style={[styles.summaryCard, isAnulada && { opacity: 0.5 }]}>
+                            
+                            {/* ✅ CORRECCIÓN: ROW PARA CLIENTE Y PILL - VUELVE AL DISEÑO ORIGINAL PERO ESTILIZADO */}
+                            <View style={styles.clientHeaderRow}>
+                                <Text style={styles.clientName} numberOfLines={1}>{clientName}</Text>
+                                <View style={[styles.statusPillContainer, { borderColor: statusColor, backgroundColor: `${statusColor}20` }]}>
+                                    <Text style={[styles.statusPillText, { color: statusColor }]}>{sale.estado.toUpperCase()}</Text>
+                                </View>
+                            </View>
 
-            <FlatList
-// ... (omitted FlatList JSX) ...
-                data={sale.items}
-                keyExtractor={(item, index) => `${item.nombre}-${index}`}
-                contentContainerStyle={styles.listContentContainer}
-                renderItem={({ item }) => (
-                    <View style={styles.itemCard}>
-                        <View style={styles.itemDetails}>
-                            <Text style={styles.itemName}>{item.nombre}</Text>
-                            <Text style={styles.itemPrice}>{item.quantity} x {formatCurrency(item.precio)}</Text>
-                             {item.promoAplicada && <Text style={styles.promoText}>{item.promoAplicada}</Text>}
-                        </View>
-                        <Text style={styles.itemSubtotal}>{formatCurrency(item.quantity * (item.precio || 0))}</Text>
-                    </View>
-                )}
-            />
-            
-            {sale.estado === 'Adeuda' && (sale.saldoPendiente || 0) > 0 && (
-                 <View style={styles.footer}>
-                     <TouchableOpacity 
-                         style={styles.actionButton}
-                         onPress={() => setIsDebtModalOpen(true)}
-                     >
-                         <Feather name="dollar-sign" size={20} color={COLORS.primaryDark} />
-                         <Text style={styles.actionButtonText}>Registrar Cobro</Text>
-                     </TouchableOpacity>
-                 </View>
-            )}
+                            <Text style={styles.saleDate}>Vendedor: <Text style={{fontWeight: 'bold', color: COLORS.textPrimary}}>{sale.vendedorNombre || 'Tú'}</Text></Text> 
+                            
+                            <Text style={styles.saleDate}>{saleDateFormatted}</Text>
+                            
+                            <View style={[styles.totalRow, styles.totalRowBorder]}>
+                                <Text style={styles.totalLabel}>TOTAL VENTA:</Text>
+                                <Text style={styles.totalAmount}>{formatCurrency(sale.totalVenta)}</Text>
+                            </View>
+                            
+                            <View style={styles.balanceRow}>
+                                <Text style={styles.balanceLabel}>SALDO PENDIENTE:</Text>
+                                <Text style={styles.balanceAmount}>{formatCurrency(sale.saldoPendiente)}</Text>
+                            </View>
 
-            <CollectDebtModal 
-                visible={isDebtModalOpen}
-                onClose={() => setIsDebtModalOpen(false)}
-                venta={sale}
-                onPaymentSuccess={handlePaymentSuccess} 
-                isOffline={isOffline} // <-- ¡CORRECCIÓN AÑADIDA!
-            />
-        </View>
-    );
+                        </View>
+                        
+                        <Text style={styles.listHeader}>PRODUCTOS VENDIDOS</Text>
+                    </View>
+                }
+                data={sale.items}
+                keyExtractor={(item, index) => `${item.nombre}-${index}`}
+                contentContainerStyle={styles.listContentContainer}
+                renderItem={({ item }) => (
+                    <View style={styles.itemCard}>
+                        <View style={styles.itemDetails}>
+                            <Text style={styles.itemName}>{item.nombre}</Text>
+                            {/* ✅ CORREGIDO: Item Price envuelto en Text */}
+                            <Text style={styles.itemPrice}>
+                                <Text>{item.quantity} x </Text><Text>{formatCurrency(item.precio)}</Text>
+                            </Text>
+                            {item.promoAplicada && <Text style={styles.promoText}>{item.promoAplicada}</Text>}
+                        </View>
+                        <Text style={styles.itemSubtotal}>{formatCurrency(item.quantity * (item.precio || 0))}</Text>
+                    </View>
+                )}
+            />
+            
+            {/* --- FOOTER DE ACCIÓN --- */}
+            {isAdeuda && (sale.saldoPendiente || 0) > 0 && (
+                // ✅ CORREGIDO: Usamos paddingBottom: SIZES.medium para Android
+                <View style={[styles.footer, { paddingBottom: SIZES.medium }]}>
+                    <TouchableOpacity 
+                        style={styles.actionButton}
+                        onPress={() => setIsDebtModalOpen(true)}
+                    >
+                        <Feather name="dollar-sign" size={SIZES.h3} color={COLORS.primary} />
+                        <Text style={styles.actionButtonText}>REGISTRAR COBRO</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            <CollectDebtModal 
+                visible={isDebtModalOpen}
+                onClose={() => setIsDebtModalOpen(false)}
+                venta={sale}
+                onPaymentSuccess={handlePaymentSuccess} 
+                isOffline={isOffline} 
+            />
+        </View>
+    );
 };
 
-// --- Estilos (Con Header Mejorado) ---
+// --- Estilos (AJUSTADOS AL TEMA ORIGINAL Y SIZES SEMÁNTICOS) ---
 const styles = StyleSheet.create({
-// ... (Estilos sin cambios) ...
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
-    background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    errorText: { color: COLORS.danger, textAlign: 'center', marginTop: 100, fontSize: 16 },
-    // --- HEADER ESTANDARIZADO ---
-    header: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        paddingTop: (StatusBar.currentHeight || 0) + 20,
-        paddingBottom: 20, 
-        paddingHorizontal: 10
-    },
-    headerButton: { 
-        padding: 10,
-        width: 44,
-        alignItems: 'center',
-    },
-    title: { 
-        fontSize: 22, 
-        fontWeight: 'bold', 
-        color: COLORS.textPrimary 
-    },
-    // --- FIN HEADER ---
-    
-    summaryCard: { backgroundColor: COLORS.glass, margin: 15, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: COLORS.glassBorder },
-    clientName: { color: COLORS.textPrimary, fontSize: 20, fontWeight: 'bold', marginBottom: 5 },
-    saleDate: { color: COLORS.textSecondary, fontSize: 14, marginBottom: 15 },
-    totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopColor: COLORS.glassBorder, borderTopWidth: 1, paddingTop: 15 },
-    totalLabel: { color: COLORS.textSecondary, fontSize: 16 },
-    totalAmount: { color: COLORS.textPrimary, fontSize: 18, fontWeight: 'bold' },
-    balanceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
-    balanceLabel: { color: COLORS.textSecondary, fontSize: 16 },
-    balanceAmount: { color: COLORS.warning, fontSize: 18, fontWeight: 'bold' },
+    container: { flex: 1, backgroundColor: COLORS.backgroundStart },
+    background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
+    errorText: { color: COLORS.danger, textAlign: 'center', marginTop: SIZES.medium * 5, fontSize: SIZES.body },
+    
+    // --- HEADER ESTANDARIZADO ---
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingTop: (StatusBar.currentHeight || 0) + SIZES.small,
+        paddingBottom: SIZES.medium, 
+        paddingHorizontal: SIZES.small,
+        borderBottomWidth: SIZES.borderWidth,
+        borderColor: COLORS.glassBorder,
+        backgroundColor: COLORS.backgroundEnd,
+    },
+    headerButton: { 
+        padding: SIZES.small,
+        width: SIZES.large * 2, 
+        alignItems: 'center',
+    },
+    title: { 
+        fontSize: SIZES.h3, 
+        fontWeight: 'bold', 
+        color: COLORS.textPrimary,
+        textTransform: 'uppercase',
+    },
+    // --- SUMMARY CARD ---
+    headerContentContainer: {
+        paddingHorizontal: SIZES.medium, // 16px
+        paddingBottom: SIZES.small,
+    },
+    summaryCard: { 
+        backgroundColor: COLORS.backgroundEnd, 
+        borderRadius: SIZES.radius, 
+        padding: SIZES.medium, 
+        borderWidth: SIZES.borderWidth, 
+        borderColor: COLORS.glassBorder,
+        marginBottom: SIZES.medium,
+    },
+    clientHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start', 
+        marginBottom: SIZES.small, // Usando SIZES.small (8)
+    },
+    clientName: { 
+        color: COLORS.textPrimary, 
+        fontSize: SIZES.h3, // 20px
+        fontWeight: 'bold', 
+        flex: 1, 
+        paddingRight: SIZES.small, // 10px
+    },
+    saleDate: { color: COLORS.textSecondary, fontSize: SIZES.xsmallText, marginBottom: SIZES.xsmall / 2 },
 
-    listHeader: { fontSize: 16, fontWeight: '600', color: COLORS.textSecondary, paddingHorizontal: 25, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
-    listContentContainer: { paddingHorizontal: 15, paddingBottom: 120 },
-    itemCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.glass, paddingVertical: 15, paddingHorizontal: 20, borderRadius: 10, marginBottom: 10 },
-    itemDetails: { flex: 1 },
-    itemName: { color: COLORS.textPrimary, fontSize: 16, fontWeight: '500' },
-    itemPrice: { color: COLORS.textSecondary, fontSize: 14, marginTop: 4 },
-    promoText: { color: COLORS.success, fontSize: 13, fontStyle: 'italic', marginTop: 4 },
-    itemSubtotal: { color: COLORS.textPrimary, fontSize: 16, fontWeight: 'bold' },
-    
-    footer: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 20, backgroundColor: 'rgba(0, 0, 0, 0.95)', borderTopWidth: 1, borderColor: COLORS.glassBorder, paddingBottom: 40 },
-    actionButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.primary, paddingVertical: 15, borderRadius: 15, gap: 10 },
-    actionButtonText: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold' },
+    totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    totalRowBorder: { borderTopColor: COLORS.glassBorder, borderTopWidth: SIZES.borderWidth, paddingTop: SIZES.medium, marginTop: SIZES.xsmall },
+    totalLabel: { color: COLORS.textSecondary, fontSize: SIZES.body, fontWeight: '500' },
+    totalAmount: { color: COLORS.primary, fontSize: SIZES.h3, fontWeight: 'bold' },
+    
+    balanceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SIZES.xsmall },
+    balanceLabel: { color: COLORS.textSecondary, fontSize: SIZES.body, fontWeight: '500' },
+    balanceAmount: { color: COLORS.warning, fontSize: SIZES.h3, fontWeight: 'bold' },
 
-    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
-    modalContent: { width: '90%', backgroundColor: COLORS.backgroundStart, borderRadius: 20, padding: 25, borderWidth: 1, borderColor: COLORS.glassBorder },
-    modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
-    modalSubtitle: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 15 },
-    modalDebt: { fontSize: 18, fontWeight: '600', color: COLORS.warning, textAlign: 'center', marginBottom: 20 },
-    input: { backgroundColor: COLORS.glass, color: COLORS.textPrimary, paddingHorizontal: 15, paddingVertical: 12, borderRadius: 10, fontSize: 18, textAlign: 'center', borderWidth: 1, borderColor: COLORS.glassBorder },
-    modalActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 25, gap: 10 },
-    modalButtonCancel: { flex: 1, padding: 15, borderRadius: 12, backgroundColor: COLORS.disabled },
-    modalButtonConfirm: { flex: 1, padding: 15, borderRadius: 12, backgroundColor: COLORS.success },
-    modalButtonText: { color: COLORS.primaryDark, fontWeight: 'bold', textAlign: 'center', fontSize: 16 },
+    statusPillContainer: {
+        borderRadius: SIZES.small,
+        paddingHorizontal: SIZES.small,
+        paddingVertical: SIZES.xsmall,
+        borderWidth: SIZES.borderWidth,
+        maxWidth: '40%', // Limitar el ancho
+    },
+    statusPillText: {
+        fontSize: SIZES.xsmallText, // 12px
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+    },
+
+    // --- LISTA DE PRODUCTOS ---
+    listHeader: { 
+        fontSize: SIZES.body, 
+        fontWeight: '600', 
+        color: COLORS.textSecondary, 
+        paddingHorizontal: SIZES.medium, 
+        marginBottom: SIZES.small, 
+        textTransform: 'uppercase', 
+        letterSpacing: 0.5,
+    },
+    listContentContainer: { 
+        paddingHorizontal: SIZES.medium, 
+        paddingBottom: SIZES.medium * 8 // Espacio para el footer fijo
+    },
+    itemCard: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        backgroundColor: COLORS.cardBackground, 
+        paddingVertical: SIZES.medium, 
+        paddingHorizontal: SIZES.medium, 
+        borderRadius: SIZES.small, 
+        marginBottom: SIZES.small,
+        borderWidth: SIZES.borderWidth, 
+        borderColor: COLORS.glassBorder,
+    },
+    itemDetails: { flex: 1 },
+    itemName: { color: COLORS.textPrimary, fontSize: SIZES.body, fontWeight: '500' },
+    itemPrice: { color: COLORS.textSecondary, fontSize: SIZES.xsmallText, marginTop: SIZES.xsmall / 2 },
+    promoText: { color: COLORS.success, fontSize: SIZES.xsmallText, fontStyle: 'italic', marginTop: SIZES.xsmall / 2 },
+    itemSubtotal: { color: COLORS.textPrimary, fontSize: SIZES.body, fontWeight: 'bold' },
+    
+    // --- FOOTER DE ACCIÓN ---
+    footer: { 
+        position: 'absolute', 
+        bottom: 0, 
+        left: 0, 
+        right: 0, 
+        paddingHorizontal: SIZES.medium, 
+        paddingVertical: SIZES.small, 
+        backgroundColor: COLORS.backgroundEnd, 
+        borderTopWidth: SIZES.borderWidth * 2,
+        borderColor: COLORS.primary,
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+        elevation: 10,
+    },
+    actionButton: { 
+        flexDirection: 'row', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        backgroundColor: COLORS.primary, 
+        paddingVertical: SIZES.medium, 
+        borderRadius: SIZES.radius, 
+        gap: SIZES.small,
+        height: 56,
+    },
+    actionButtonText: { 
+        color: COLORS.primary, 
+        fontSize: SIZES.h3, 
+        fontWeight: 'bold',
+    },
+
+    // --- MODAL DE COBRO ---
+    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
+    modalContent: { 
+        width: '85%', 
+        backgroundColor: COLORS.backgroundStart, 
+        borderRadius: SIZES.radius, 
+        padding: SIZES.large, 
+        borderWidth: SIZES.borderWidth, 
+        borderColor: COLORS.glassBorder 
+    },
+    modalTitle: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
+    modalSubtitle: { fontSize: SIZES.xsmallText, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SIZES.small },
+    modalDebt: { fontSize: SIZES.h3, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center', marginBottom: SIZES.medium * 1.5, marginTop: SIZES.small }, 
+    modalError: { fontSize: SIZES.xsmallText, color: COLORS.danger, textAlign: 'center', marginBottom: SIZES.small },
+    input: { 
+        backgroundColor: COLORS.cardBackground, 
+        color: COLORS.textPrimary, 
+        paddingHorizontal: SIZES.medium, 
+        paddingVertical: SIZES.small, 
+        borderRadius: SIZES.small, 
+        fontSize: SIZES.h3, 
+        textAlign: 'center', 
+        borderWidth: SIZES.borderWidth, 
+        borderColor: COLORS.glassBorder 
+    },
+    modalActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: SIZES.medium, gap: SIZES.small },
+    modalButtonCancel: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, backgroundColor: COLORS.disabled, borderWidth: SIZES.borderWidth, borderColor: COLORS.textSecondary },
+    modalButtonConfirm: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, backgroundColor: COLORS.success }, 
+    modalButtonText: { color: COLORS.primary, fontWeight: 'bold', textAlign: 'center', fontSize: SIZES.body },
 });
 
 export default SaleDetailScreen;
