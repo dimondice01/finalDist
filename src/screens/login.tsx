@@ -17,14 +17,14 @@ import {
     View
 } from 'react-native';
 
+// --- Importamos SIZES y COLORS del tema centralizado ---
+import { COLORS, SIZES } from '../../styles/theme';
+
 // --- Contexto y DB ---
 import { auth } from '../../db/firebase-service'; // Importa la instancia NATIVA
 
 // --- Navegación ---
 import { LoginScreenProps } from '../navigation/AppNavigator';
-
-// --- Estilos ---
-import { COLORS } from '../../styles/theme';
 
 const LoginScreen = ({ navigation }: LoginScreenProps) => { 
     const [email, setEmail] = useState('');
@@ -74,8 +74,11 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             keyboardVerticalOffset={Platform.OS === "ios" ? 0 : -100} 
         >
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundEnd} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            {/* STATUS BAR: Estilo oscuro para un look más moderno en el fondo claro */}
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            
+            {/* GRADIENTE: Usamos el mismo color para ambos puntos para un fondo plano y limpio (Gray-50) */}
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
             
             {/* --- CONTENIDO CENTRADO --- */}
             <View style={styles.contentContainer}>
@@ -88,7 +91,8 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
                 
                 <View style={styles.formContainer}>
                     <View style={styles.inputContainer}>
-                        <Feather name="mail" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                        {/* Ícono usando textSecondary para ser sutil */}
+                        <Feather name="mail" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
                         <TextInput
                             style={styles.input}
                             placeholder="Email"
@@ -102,7 +106,8 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
                         />
                     </View>
                     <View style={styles.inputContainer}>
-                        <Feather name="lock" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
+                        {/* Ícono usando textSecondary para ser sutil */}
+                        <Feather name="lock" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
                         <TextInput
                             style={styles.input}
                             placeholder="Contraseña"
@@ -116,10 +121,15 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
                             onSubmitEditing={handleLogin}
                         />
                     </View>
-                    <TouchableOpacity style={[styles.button, loading && styles.buttonDisabled]} onPress={handleLogin} disabled={loading}>
+                    <TouchableOpacity 
+                        style={[styles.button, loading && styles.buttonDisabled]} 
+                        onPress={handleLogin} 
+                        disabled={loading}
+                    >
                         {loading ? (
                             <>
-                                <ActivityIndicator size="small" color={COLORS.primaryDark} />
+                                {/* Nota: Para un buen UX, el spinner debe ser BLANCO en el botón primary (verde oscuro) */}
+                                <ActivityIndicator size="small" color={COLORS.white} /> 
                                 <Text style={styles.buttonTextLoading}>{loadingMessage}</Text>
                             </>
                         ) : (
@@ -132,11 +142,12 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
     );
 };
 
-// --- ESTILOS MEJORADOS ---
+// --- ESTILOS MEJORADOS USANDO SIZES y la nueva paleta de COLORS ---
 const styles = StyleSheet.create({
     container: { 
         flex: 1, 
-        backgroundColor: COLORS.white, // Color base por si el gradiente falla
+        // Usamos backgroundEnd por si el gradiente es desactivado, aunque backgroundStart es el color principal
+        backgroundColor: COLORS.backgroundStart, 
     },
     background: { 
         position: 'absolute', 
@@ -149,25 +160,25 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center', // Centra todo el contenido
         alignItems: 'center',
-        paddingHorizontal: 25, // Padding horizontal
+        paddingHorizontal: SIZES.large, // Usa la escala de 8 puntos
     },
     logo: { 
-        width: 180, // Más pequeño
-        height: 80, // Más pequeño
+        width: 180, 
+        height: 80, 
         resizeMode: 'contain', 
-        marginBottom: 20, // Espacio reducido
+        marginBottom: SIZES.xl, // Espacio estandarizado
     },
     title: { 
-        fontSize: 40, // Más pequeño y legible
+        fontSize: SIZES.h1, // Usa h1 para el título principal
         fontWeight: 'bold', 
         color: COLORS.textPrimary, 
-        marginBottom: 8, // Menos espacio
+        marginBottom: SIZES.small, // 8 puntos de espacio
     },
     subtitle: { 
-        fontSize: 17, // Ligeramente más pequeño
+        fontSize: SIZES.body, // Usa body para el texto estándar
         color: COLORS.textSecondary, 
-        marginBottom: 40, // Mantiene el espacio
-        lineHeight: 24, // Mejora legibilidad
+        marginBottom: SIZES.xl, // Espacio estandarizado antes del formulario
+        lineHeight: SIZES.large, // Mejora la legibilidad (24)
     },
     formContainer: { 
         width: '100%' 
@@ -175,33 +186,33 @@ const styles = StyleSheet.create({
     inputContainer: { 
         flexDirection: 'row', 
         alignItems: 'center', 
-        backgroundColor: COLORS.glass, 
-        borderRadius: 15, // Más redondeado
-        borderWidth: 1, 
-        borderColor: COLORS.glassBorder, 
-        marginBottom: 15, 
-        paddingHorizontal: 15, 
-        height: 52, // Más estándar
+        backgroundColor: COLORS.backgroundEnd, // Fondo blanco limpio para inputs
+        borderRadius: SIZES.radius, // 12 puntos de radio
+        borderWidth: SIZES.borderWidth, 
+        borderColor: COLORS.glassBorder, // Borde gris suave
+        marginBottom: SIZES.medium, // 16 puntos de espacio
+        paddingHorizontal: SIZES.medium, // 16 puntos de padding interno
+        height: 52, // Altura estándar (aprox. 52, que es un múltiplo de 8 si contamos padding)
     },
     inputIcon: { 
-        marginRight: 10 
+        marginRight: SIZES.small // 8 puntos de espacio
     },
     input: { 
         flex: 1, 
         color: COLORS.textPrimary, 
-        fontSize: 16, 
+        fontSize: SIZES.body, 
         height: '100%', 
     },
     button: { 
         flexDirection: 'row', 
         justifyContent: 'center', 
         alignItems: 'center', 
-        backgroundColor: COLORS.primary, 
-        padding: 15, 
-        borderRadius: 15, // Más redondeado
-        marginTop: 20, // Más espacio antes del botón
+        backgroundColor: COLORS.primary, // Verde Esmeralda
+        padding: SIZES.medium, // 16 puntos
+        borderRadius: SIZES.radius, // 12 puntos
+        marginTop: SIZES.large, // 24 puntos de margen superior
         height: 52, // Misma altura que inputs
-        // Sombra sutil
+        // Sombra de marca sutil para un efecto "elevado" (UX: hace el botón más clickeable)
         shadowColor: COLORS.primary,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
@@ -210,19 +221,19 @@ const styles = StyleSheet.create({
     },
     buttonDisabled: {
         backgroundColor: COLORS.disabled,
-        shadowOpacity: 0, // Sin sombra si está deshabilitado
+        shadowOpacity: 0, 
         elevation: 0,
     },
     buttonText: { 
-        color: COLORS.primaryDark, 
-        fontSize: 18, 
+        color: COLORS.white, // Blanco para alto contraste
+        fontSize: SIZES.body, 
         fontWeight: 'bold', 
     },
     buttonTextLoading: { 
-        color: COLORS.primaryDark, 
-        fontSize: 18, 
+        color: COLORS.white, // Blanco para alto contraste
+        fontSize: SIZES.body, 
         fontWeight: 'bold', 
-        marginLeft: 12, // Espacio del spinner
+        marginLeft: SIZES.small, // Espacio del spinner
     },
 });
 

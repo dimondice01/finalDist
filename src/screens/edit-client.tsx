@@ -5,7 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 // 🔥 CAMBIO: Ya no necesitamos useEffect
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Toast from 'react-native-toast-message';
 
@@ -138,6 +138,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
         barrio: client?.barrio || '',
         localidad: client?.localidad || '',
         zonaId: client?.zonaId || '',
+        arca: client?.arca || false,
         // --- ¡NUEVO! ---
         rubroId: client?.rubroId || '', // Añadimos rubroId al estado
     });
@@ -242,6 +243,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
             barrio: formData.barrio || '',
             localidad: formData.localidad || '',
             direccion: formData.direccion || '',
+            arca: formData.arca,
             rubroId: formData.rubroId || '', // Aseguramos que rubroId esté
         };
 
@@ -446,6 +448,17 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                         autoCapitalize='none'
                     />
                 </View>
+                   {/* ✅ NUEVO CAMPO: Facturación ARCA */}
+                <View style={[styles.inputContainer, styles.arcaSwitchContainer]}>
+                    <Feather name="book-open" size={20} color={COLORS.primary} style={styles.inputIcon} />
+                    <Text style={styles.arcaLabel}>Cliente requiere Factura ARCA</Text>
+                    <Switch
+                        trackColor={{ false: COLORS.textSecondary, true: COLORS.primary }}
+                        thumbColor={formData.arca ? COLORS.primaryDark : COLORS.textPrimary}
+                        onValueChange={(val) => setFormData(prev => ({ ...prev, arca: val }))} // <-- Setear directamente el booleano
+                        value={formData.arca}
+                    />
+                </View>
 
             </ScrollView>
 
@@ -552,6 +565,18 @@ const styles = StyleSheet.create({
     separatorModal: { height: 1, backgroundColor: COLORS.glassBorder },
     modalCloseButton: { marginTop: 15, padding: 12, backgroundColor: COLORS.disabled, borderRadius: 12, alignItems: 'center', width: '100%' },
     modalCloseText: { color: COLORS.primaryDark, fontWeight: 'bold' },
+arcaSwitchContainer: {
+        justifyContent: 'space-between',
+        paddingRight: 15,
+        borderWidth: 1,
+        borderColor: COLORS.glassBorder,
+        marginBottom: 15,
+    },
+    arcaLabel: {
+        flex: 1,
+        color: COLORS.textPrimary,
+        fontSize: 16,
+    },
     locationButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}20`, marginBottom: 10, marginTop: 5 },
     locationButtonText: { color: COLORS.primary, fontSize: 16, fontWeight: 'bold' },
     coordsText: { color: COLORS.textSecondary, textAlign: 'center', marginBottom: 20, fontSize: 14, fontStyle: 'italic' },

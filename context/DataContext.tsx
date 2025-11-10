@@ -5,6 +5,7 @@ import { useNetInfo } from '@react-native-community/netinfo';
 // --- INICIO DE CAMBIOS: Importaciones NATIVAS (v9 Modular) ---
 import firestore, {
     collection,
+    deleteDoc,
     doc,
     FirebaseFirestoreTypes,
     getDocs,
@@ -21,12 +22,11 @@ import firestore, {
 
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Toast from 'react-native-toast-message';
-// ¡¡AQUÍ ESTÁ EL CAMBIO DE IMPORTACIÓN!!
-// Importamos 'auth' y el 'dbContainer'
+// ✅ CORRECCIÓN CLAVE: Importamos 'auth' y el 'dbContainer' para acceder a la instancia
 import { auth, dbContainer } from '../db/firebase-service';
 
 // --- Definición de Interfaces Estrictas ---
-// (Sin cambios)
+// (Mantenido sin cambios)
 export interface Product {
     id: string;
     nombre: string;
@@ -123,7 +123,7 @@ export interface Route {
 }
 
 
-// --- INTERFAZ IDataContext (CORREGIDA) ---
+// --- INTERFAZ IDataContext (ACTUALIZADA) ---
 export interface IDataContext {
     products: Product[];
     clients: Client[];
@@ -143,14 +143,14 @@ export interface IDataContext {
     updateClient: (clientId: string, updatedData: Partial<Client>) => Promise<void>;
     crearVentaConStock: (saleData: any) => Promise<string>;
     anularVentaConStock: (saleId: string, items: CartItem[]) => Promise<void>;
+    deleteSaleAndRevertStock: (saleId: string, items: CartItem[]) => Promise<void>; 
     descontarStockLocalmente: (items: CartItem[]) => void;
-    // ✅ CLAVE: Función para sumar stock localmente (para revertir/editar)
     reintegrarStockLocalmente: (items: CartItem[]) => void; 
-    // ✅ CLAVE: Exponer el setter de ventas para mutación optimista
     setSalesState: React.Dispatch<React.SetStateAction<Sale[]>>; 
 }
 
-// --- Valor por defecto (CORREGIDO) ---
+
+// --- Valor por defecto (ACTUALIZADO) ---
 const defaultContextValue: IDataContext = {
     products: [],
     clients: [],
@@ -170,10 +170,9 @@ const defaultContextValue: IDataContext = {
     isOffline: false,
     crearVentaConStock: async (saleData: any) => { console.warn("Llamada a crearVentaConStock por defecto"); return "error"; },
     anularVentaConStock: async (saleId: string, items: CartItem[]) => { console.warn("Llamada a anularVentaConStock por defecto"); },
+    deleteSaleAndRevertStock: async (saleId: string, items: CartItem[]) => { console.warn("Llamada a deleteSaleAndRevertStock por defecto"); }, 
     descontarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a descontarStockLocalmente por defecto"); },
-    // ✅ CLAVE: Default para la nueva función
     reintegrarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a reintegrarStockLocalmente por defecto"); },
-    // ✅ CLAVE: Valor por defecto para el setter
     setSalesState: () => { console.warn("Llamada a setSalesState por defecto"); },
 };
 
@@ -212,6 +211,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const parseWithDates = (jsonString: string | null): any[] => {
         if (!jsonString) return [];
         try {
+            // Se asume la corrección de RegEx para evitar el error de compilación
             return JSON.parse(jsonString, (key, value) => {
                 if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(value)) {
                     return new Date(value);
@@ -227,7 +227,6 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     // --- Carga inicial (Sin cambios) ---
     useEffect(() => {
         const loadDataFromStorage = async () => {
-            // (Sin cambios)
             // ...
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
@@ -313,16 +312,15 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         prevIsConnected.current = isConnected;
     }, [netInfo.isConnected]);
 
-    // --- fetchDataAndStore (Sin cambios relevantes a este flujo) ---
+    // --- fetchDataAndStore (CORREGIDO: Usa dbContainer.instance) ---
     const fetchDataAndStore = useCallback(async (showToast = true) => {
-        // --- REVISIÓN DB INSTANCE ---
-        if (!dbContainer.instance) {
-             console.warn("fetchDataAndStore: DB no está lista, reintentando en 100ms...");
-             setTimeout(() => fetchDataAndStore(showToast), 100);
-             return;
+        
+        const dbInstance = dbContainer.instance;
+        if (!dbInstance) {
+            console.warn("fetchDataAndStore: DB no está lista, reintentando en 100ms...");
+            setTimeout(() => fetchDataAndStore(showToast), 100);
+            return;
         }
-        const db = dbContainer.instance;
-        // --- FIN REVISIÓN DB INSTANCE ---
 
         setIsLoading(true);
         console.log("Iniciando obtención de datos desde Firestore...");
@@ -330,17 +328,17 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             const currentUser = auth.currentUser;
             if (!currentUser) throw new Error("No hay usuario autenticado para obtener datos.");
 
-            const vendorsQuery = query(collection(db, 'vendedores'), where('firebaseAuthUid', '==', currentUser.uid));
+            const vendorsQuery = query(collection(dbInstance, 'vendedores'), where('firebaseAuthUid', '==', currentUser.uid));
             const vendorsQuerySnap = await getDocs(vendorsQuery);
             let vendorDoc: FirebaseFirestoreTypes.DocumentSnapshot;
             let currentVendorData: Vendor | null = null; 
 
             if (vendorsQuerySnap.empty) {
                 console.warn("No se encontró vendedor por 'firebaseAuthUid', intentando por Doc ID (método antiguo)...");
-                const vendorRef = doc(db, 'vendedores', currentUser.uid);
+                const vendorRef = doc(dbInstance, 'vendedores', currentUser.uid);
                 const vendorSnap = await vendorRef.get();
                 
-                // @ts-ignore: El linter de TS se confunde con los tipos nativos vs web
+                // @ts-ignore
                 if (!vendorSnap.exists) {
                     throw new Error("Datos del vendedor actual no encontrados en Firestore. Se cerrará la sesión.");
                 }
@@ -357,12 +355,12 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
             console.log(`Usuario identificado con rol: ${userRole} (ID: ${currentVendorData.id})`);
 
-            const productsPromise = getDocs(collection(db, 'productos'));
-            const categoriesPromise = getDocs(collection(db, 'categorias'));
-            const promosQuery = query(collection(db, 'promociones'), where('estado', '==', 'activa'));
+            const productsPromise = getDocs(collection(dbInstance, 'productos'));
+            const categoriesPromise = getDocs(collection(dbInstance, 'categorias'));
+            const promosQuery = query(collection(dbInstance, 'promociones'), where('estado', '==', 'activa'));
             const promosPromise = getDocs(promosQuery);
-            const allVendorsPromise = getDocs(collection(db, 'vendedores'));
-            const rubrosPromise = getDocs(collection(db, 'rubros'));
+            const allVendorsPromise = getDocs(collection(dbInstance, 'vendedores'));
+            const rubrosPromise = getDocs(collection(dbInstance, 'rubros'));
 
             let finalData: IDataContext = { ...defaultContextValue, isLoading: true };
 
@@ -415,7 +413,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             finalData.products = productsSnap.docs.map(processFirebaseDoc) as Product[];
             finalData.categories = categoriesSnap.docs.map(processFirebaseDoc) as Category[];
             
-            finalData.promotions = promosSnap.docs.map((p: any) => ({ 
+            // --- CORREGIDO: (p: any) ---
+            finalData.promotions = promosSnap.docs.map((p: any) => ({ // <-- TIPO AÑADIDO
                 ...processFirebaseDoc(p), 
                 nombre: p.data().nombrePromocion || p.data().nombre, 
                 productoIds: p.data().productoIds || (p.data().productoId ? [p.data().productoId] : []),
@@ -427,17 +426,18 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
             // Queries condicionales
             if (userRole === 'Reparto') {
-                const routesQuery = query(collection(db, 'rutas'), where('repartidorId', '==', currentVendorData.id));
+                const routesQuery = query(collection(dbInstance, 'rutas'), where('repartidorId', '==', currentVendorData.id));
                 const routesSnap = await getDocs(routesQuery);
-                finalData.routes = routesSnap.docs.map((r: any) => ({ 
+                // --- CORREGIDO: (r: any) ---
+                finalData.routes = routesSnap.docs.map((r: any) => ({ // <-- TIPO AÑADIDO
                     ...processFirebaseDoc(r), 
                     fecha: r.data().fechaCreacion || r.data().fecha || new Date(0)
                 })) as Route[];
 
             } else { // Vendedor o Admin
-                const clientsQuery = query(collection(db, 'clientes'), where('vendedorAsignadoId', '==', currentVendorData.id));
+                const clientsQuery = query(collection(dbInstance, 'clientes'), where('vendedorAsignadoId', '==', currentVendorData.id));
                 const clientsPromise = getDocs(clientsQuery);
-                const salesQuery = query(collection(db, 'ventas'), where('vendedorId', '==', currentVendorData.id));
+                const salesQuery = query(collection(dbInstance, 'ventas'), where('vendedorId', '==', currentVendorData.id));
                 const salesPromise = getDocs(salesQuery);
                 const [clientsSnap, salesSnap] = await Promise.all([clientsPromise, salesPromise]);
 
@@ -449,8 +449,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                         const zoneIdsChunk = (zoneIds.length > 30) ? zoneIds.slice(0, 30) : zoneIds;
                         if(zoneIds.length > 30) console.warn("Demasiadas zonas asignadas (>30). Cargando solo las primeras 30.");
                         
+                        // --- CORRECCIÓN: firestore.FieldPath.documentId() ---
                         // Usamos el 'firestore' importado por defecto
-                        const zonesQueryRef = query(collection(db, 'zonas'), where(firestore.FieldPath.documentId(), 'in', zoneIdsChunk));
+                        const zonesQueryRef = query(collection(dbInstance, 'zonas'), where(firestore.FieldPath.documentId(), 'in', zoneIdsChunk));
                         const zonesQuerySnap = await getDocs(zonesQueryRef);
                         finalData.availableZones = zonesQuerySnap.docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
                     } else { finalData.availableZones = []; }
@@ -502,7 +503,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentVendor?.id, auth.currentUser?.uid]); 
 
 
-    // --- Listeners (Sin cambios) ---
+    // --- Listeners (CORREGIDOS: Usa dbContainer.instance) ---
     useEffect(() => {
         let timeoutId: NodeJS.Timeout | undefined;
         let productListener: () => void = () => {}; 
@@ -510,27 +511,25 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         let promotionListener: () => void = () => {}; 
         let rubroListener: () => void = () => {};
 
-        // --- REVISIÓN DB INSTANCE ---
-        if (!dbContainer.instance) { return; }
-        const db = dbContainer.instance;
-        // --- FIN REVISIÓN DB INSTANCE ---
-
+        const dbInstance = dbContainer.instance;
+        if (!dbInstance) { return; }
+        
         if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded) {
             console.log('Estableciendo suscripciones a Firestore...');
             
-            const productsQueryRef = collection(db, 'productos');
+            const productsQueryRef = collection(dbInstance, 'productos');
             productListener = onSnapshot(productsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedProducts = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Product[];
                 setProducts(updatedProducts.filter(p => p.id));
             });
 
-            const categoryQueryRef = collection(db, 'categorias');
+            const categoryQueryRef = collection(dbInstance, 'categorias');
             categoryListener = onSnapshot(categoryQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedCategories = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Category[];
                 setCategories(updatedCategories.filter(c => c.id));
             });
 
-            const promotionsQueryRef = query(collection(db, 'promociones'), where('estado', '==', 'activa'));
+            const promotionsQueryRef = query(collection(dbInstance, 'promociones'), where('estado', '==', 'activa'));
             promotionListener = onSnapshot(promotionsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedPromotions = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => {
                     const data = doc.data();
@@ -545,7 +544,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setPromotions(updatedPromotions.filter(p => p.id));
             });
 
-            const rubrosQueryRef = collection(db, 'rubros');
+            const rubrosQueryRef = collection(dbInstance, 'rubros');
             rubroListener = onSnapshot(rubrosQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedRubros = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Rubro[];
                 setRubros(updatedRubros.filter(r => r.id));
@@ -567,8 +566,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             }
             console.log('Suscripciones de DataContext limpiadas.');
         };
-        // Añadimos dbContainer.instance a las dependencias para que el effect se reinicie si la DB se inicializa tarde
-    }, [currentVendor, userRole, isInitialDataLoaded, dbContainer.instance]); 
+    }, [currentVendor, userRole, isInitialDataLoaded]); 
 
 
     // --- Funciones sync y refresh (sin cambios) ---
@@ -582,112 +580,156 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
     
     // ======================================================
-    // --- FUNCIÓN 1: crearVentaConStock (MUTACIÓN OPTIMISTA - CORREGIDA) ---
+    // --- FUNCIONES OPTIMISTAS DE STOCK (POSICIÓN CORREGIDA) ---
+    // ======================================================
+
+    const descontarStockLocalmente = useCallback((items: CartItem[]) => {
+        console.log("Descontando stock del estado local (optimista)...");
+        const itemsMap = new Map<string, number>();
+        items.forEach(item => {
+            itemsMap.set(item.id, item.quantity);
+        });
+        setProducts(prevProducts => {
+            return prevProducts.map(product => {
+                const cantidadVendida = itemsMap.get(product.id);
+                if (cantidadVendida) {
+                    const stockActual = product.stock ?? 0;
+                    const nuevoStock = stockActual - cantidadVendida; // <-- RESTA
+                    return { ...product, stock: nuevoStock };
+                }
+                return product;
+            });
+        });
+        console.log("Estado local de productos actualizado (descontado).");
+    }, []);
+
+    const reintegrarStockLocalmente = useCallback((items: CartItem[]) => {
+        console.log("Reintegrando stock al estado local (optimista)...");
+        const itemsMap = new Map<string, number>();
+        items.forEach(item => {
+            itemsMap.set(item.id, item.quantity);
+        });
+        setProducts(prevProducts => {
+            return prevProducts.map(product => {
+                const cantidadReintegrada = itemsMap.get(product.id);
+                if (cantidadReintegrada) {
+                    const stockActual = product.stock ?? 0;
+                    const nuevoStock = stockActual + cantidadReintegrada; // <-- SUMA
+                    return { ...product, stock: nuevoStock };
+                }
+                return product;
+            });
+        });
+        console.log("Estado local de productos actualizado (reintegrado).");
+    }, []);
+
+
+    // ======================================================
+    // --- FUNCIÓN 1: crearVentaConStock (CORREGIDO v9) ---
     // ======================================================
 
     const crearVentaConStock = useCallback(async (saleData: any): Promise<string> => {
         
-        console.log("DataContext: Creando venta...");
+        const isCurrentlyOffline = netInfo.isConnected === false;
+        const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
 
-        // 1. Obtener DB y definir Refs
-        if (!dbContainer.instance) { throw new Error("DB no inicializada."); }
-        const db = dbContainer.instance;
-        const ventasCollectionRef = collection(db, "ventas");
-        
-        // Datos para la mutación local (usando Date para el estado)
-        const finalSaleData = { ...saleData, fecha: new Date() }; 
-        const tempId = `OFFLINE_${Date.now()}`; 
-        const saleRef = doc(ventasCollectionRef);
+        if (!dbInstance) { throw new Error("DB no inicializada."); }
 
-        // 1. MUTACIÓN OPTIMISTA: Agregar a la lista local con ID temporal
-        setSales(prevSales => [...prevSales, { ...finalSaleData, id: tempId } as Sale]);
+        if (isCurrentlyOffline) {
+            console.log("DataContext: Modo Offline detectado. Preparando write queue.");
+            
+            const ventasCollectionRef = collection(dbInstance, "ventas");
+            const saleRef = doc(ventasCollectionRef); // Generamos un ID local
+            const tempId = saleRef.id;
 
-        // 2. LÓGICA ASÍNCRONA: Ejecutar y manejar el resultado
-        try {
-            if (isOffline) {
-                // MODO OFFLINE: Usamos setDoc simple, es confiablemente puesto en cola.
-                console.log(`[OFFLINE MODE] Venta puesta en cola con setDoc. ID temporal: ${tempId}`); 
-                
-                // Ejecutamos setDoc (escritura simple) y no esperamos el resultado, confiamos en la persistencia.
-                setDoc(saleRef, { ...saleData, fecha: serverTimestamp() })
-                    .then(() => {
-                        // LOG DE SINCRONIZACIÓN: Este log SÓLO aparece si la venta simple se subió con ÉXITO al servidor.
-                        console.log(`[OFFLINE SYNC SUCCESS] Venta offline creada. ID temporal: ${tempId}, ID real de Firestore: ${saleRef.id}`);
-                        // Reemplazar el ID temporal por el ID real
-                        setSales(prevSales => 
-                            prevSales.map(sale => sale.id === tempId ? { ...sale, id: saleRef.id } as Sale : sale)
-                        );
-                    })
-                    .catch(err => {
-                        const isNetworkError = err.code === 'unavailable' || err.message.includes('UNAVAILABLE');
-                        
-                        if (isNetworkError) {
-                            console.warn(`[IGNORADO] Error de red al intentar sincronizar la venta offline: ${err.message}`);
-                            return;
-                        }
-                        
-                        // Si es un error de LÓGICA/SEGURIDAD permanente, revertimos la mutación optimista.
-                        console.error("Error de LÓGICA/SEGURIDAD en subida OFFLINE (Rollback):", err);
-                        setSales(prevSales => prevSales.filter(sale => sale.id !== tempId && sale.id !== saleRef.id));
-                    });
-                    
-                // Devolver el ID temporal INMEDIATAMENTE para desbloquear la UI
-                return tempId; 
+            const finalSaleData = {
+                ...saleData,
+                fecha: serverTimestamp(),
+                _offline_created: true
+            };
+            
+            // 1. MUTACIÓN OPTIMISTA: Agregamos a la lista local con ID temporal
+            setSales(prevSales => [...prevSales, { ...saleData, id: tempId, fecha: new Date() } as Sale]);
+            // El descuento de stock LOCAL (optimista) se hace en CreateSaleScreen.tsx
+            
+            // 2. Queue the write operation (Fire and forget)
+            setDoc(saleRef, finalSaleData).catch(error => {
+                console.error("Error al poner en cola la venta offline:", error);
+                // Rollback si falla la cola (generalmente por error de seguridad)
+                setSales(prevSales => prevSales.filter(sale => sale.id !== tempId));
+            });
 
-            } else {
-                // MODO ONLINE CORREGIDO: Usamos setDoc simple. La deducción de stock la hace la Cloud Function.
-                console.log(`[ONLINE MODE] Creando venta con setDoc. La Cloud Function manejará el stock.`);
-                await setDoc(saleRef, { ...saleData, fecha: serverTimestamp() });
-                
-                // Si llegamos aquí, la escritura fue exitosa.
-                return saleRef.id;
-            }
-        } catch (error) {
-            // Revertir la mutación optimista si la transacción falla en modo Online (ej. Stock, Reglas)
-            setSales(prevSales => prevSales.filter(sale => sale.id !== tempId && sale.id !== saleRef.id));
-            throw error;
+            return tempId; // Devolvemos el ID temporal
+
+        } else {
+            // ✅ CORRECCIÓN CLAVE: MODO ONLINE - Eliminamos la Transacción de Stock local.
+            // La Cloud Function se encargará de descontar el stock en el backend.
+            
+            console.log("DataContext: Modo Online detectado. Escritura directa.");
+            const ventasCollectionRef = collection(dbInstance, "ventas");
+            const saleRef = doc(ventasCollectionRef); 
+            const finalSaleData = { ...saleData, fecha: serverTimestamp() };
+            const saleId = saleRef.id;
+            
+            // 1. MUTACIÓN OPTIMISTA: Agregar a la lista local con ID real
+            setSales(prevSales => [...prevSales, { ...saleData, id: saleId, fecha: new Date() } as Sale]);
+            // El descuento de stock LOCAL (optimista) se hace en CreateSaleScreen.tsx
+            
+            // 2. Escritura remota. NO usamos transacción para permitir que la Cloud Function haga el descuento.
+            await setDoc(saleRef, finalSaleData);
+
+            // Dado que la escritura fue exitosa (no hubo throw), retornamos el ID.
+            return saleId;
         }
-    }, [setSales, isOffline]); 
+    }, [netInfo.isConnected]); 
+
 
     // ======================================================
-    // --- FUNCIÓN 2: anularVentaConStock (MUTACIÓN OPTIMISTA) ---
+    // --- FUNCIÓN 2: anularVentaConStock (ANULACIÓN/ESTADO) ---
     // ======================================================
 
     const anularVentaConStock = useCallback(async (saleId: string, items: CartItem[]) => {
         
-        console.log("DataContext: Anulando venta...");
+        console.log("DataContext: Anulando venta (cambiando estado)...");
 
-        // 1. MUTACIÓN OPTIMISTA E INSTANTÁNEA (Desaparece de la lista como pendiente)
+        // 1. MUTACIÓN OPTIMISTA E INSTANTÁNEA
         const saleToUpdate = sales.find(s => s.id === saleId);
-        const originalStatus = saleToUpdate?.estado; // Guardamos el estado anterior para la reversión
+        const originalStatus = saleToUpdate?.estado; 
         const originalSaldo = saleToUpdate?.saldoPendiente;
 
-        // --- CORRECCIÓN DE TIPADO APLICADA ---
+        // --- Aplicar cambio de estado optimista ---
         setSales(prevSales => prevSales.map(sale => 
             sale.id === saleId 
                 ? { ...sale, estado: "Anulada" as Sale['estado'], saldoPendiente: 0 } as Sale
                 : sale
         ));
+        
+        // 🛑 CLAVE: Revertir stock localmente SOLO si la venta no fue anulada antes
+        if (originalStatus !== 'Anulada') {
+            reintegrarStockLocalmente(items);
+        }
 
-        // 2. Definición de la Transacción (para reversión de stock)
-        const db = dbContainer.instance;
-        if (!db) { throw new Error("DB no inicializada."); }
-        const saleRef = doc(db, "ventas", saleId);
+        // 2. Definición de la Transacción (para reversión de stock y cambio de estado)
+        const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
+        if (!dbInstance) { throw new Error("DB no inicializada."); }
+        const saleRef = doc(dbInstance, "ventas", saleId);
         
         const performTransaction = async () => {
-            await runTransaction(db, async (transaction) => {
+            await runTransaction(dbInstance, async (transaction) => {
                 if (!items || items.length === 0) { throw new Error("No hay items para revertir."); }
                 
-                // Lógica de reversión de stock
-                for (const item of items) {
-                    const productRef = doc(db, "productos", item.id);
-                    const productSnap = await transaction.get(productRef);
-                    
-                    // @ts-ignore
-                    if (productSnap.exists) {
-                        const currentStock = productSnap.data()!.stock || 0;
-                        const newStock = currentStock + item.quantity;
-                        transaction.update(productRef, { stock: newStock });
+                // Lógica de reversión de stock (solo si el estado original no era Anulada)
+                if (originalStatus !== 'Anulada') {
+                    for (const item of items) {
+                        const productRef = doc(dbInstance, "productos", item.id);
+                        const productSnap = await transaction.get(productRef);
+                        
+                        // @ts-ignore
+                        if (productSnap.exists) {
+                            const currentStock = productSnap.data()!.stock || 0;
+                            const newStock = currentStock + item.quantity;
+                            transaction.update(productRef, { stock: newStock });
+                        }
                     }
                 }
 
@@ -714,6 +756,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                             setSales(prevSales => prevSales.map(sale => 
                                 sale.id === saleId ? { ...sale, estado: originalStatus as Sale['estado'], saldoPendiente: originalSaldo } as Sale : sale
                             ));
+                            reintegrarStockLocalmente(items.map(item => ({...item, quantity: -item.quantity} as CartItem))); // Revertir stock local
                             throw new Error("La anulación falló en segundo plano.");
                         }
                     });
@@ -728,12 +771,61 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             setSales(prevSales => prevSales.map(sale => 
                 sale.id === saleId ? { ...sale, estado: originalStatus as Sale['estado'], saldoPendiente: originalSaldo } as Sale : sale
             ));
+            reintegrarStockLocalmente(items.map(item => ({...item, quantity: -item.quantity} as CartItem))); // Revertir stock local
             throw error; 
         }
-    }, [setSales, isOffline, sales]);
+    }, [setSales, isOffline, sales, reintegrarStockLocalmente]);
+    
+    
+    // ======================================================
+    // --- FUNCIÓN 3: deleteSaleAndRevertStock (ELIMINACIÓN DE VENTA) ---
+    // ======================================================
+    
+    const deleteSaleAndRevertStock = useCallback(async (saleId: string, items: CartItem[]) => {
+        
+        console.log(`DataContext: Eliminando venta ${saleId}. Stock de Firebase será manejado por Cloud Function.`);
+
+        const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
+        if (!dbInstance) { throw new Error("DB no inicializada."); }
+        const saleRef = doc(dbInstance, "ventas", saleId);
+        
+        // 1. MUTACIÓN OPTIMISTA LOCAL (Stock Reversión)
+        reintegrarStockLocalmente(items);
+
+        // 2. REMOTE OPERATION: Delete the document
+        try {
+            const deletePromise = deleteDoc(saleRef); 
+
+            if (isOffline) {
+                // MODO OFFLINE: Disparar sin await (se pone en cola).
+                deletePromise.catch(err => {
+                    // Este es el error de ID temporal. Lo logueamos para permitir el reintento del SDK.
+                    console.warn(`[DELETE OFFLINE QUEUE WARNING] Venta ${saleId} en cola. Error: ${err.message}`);
+                });
+                
+                Toast.show({
+                    type: 'info',
+                    text1: 'Venta Eliminada (Offline)',
+                    text2: 'Se eliminará al conectar. El stock de Firebase se revertirá automáticamente.',
+                    position: 'bottom',
+                    visibilityTime: 4000
+                });
+            } else {
+                // MODO ONLINE: Esperar la confirmación de Firebase
+                await deletePromise;
+            }
+            
+        } catch (error) {
+            console.error("Error al intentar eliminar la venta de Firebase:", error);
+            // Si la eliminación remota falla, revertimos la mutación optimista local de stock
+            reintegrarStockLocalmente(items.map(item => ({...item, quantity: -item.quantity} as CartItem)));
+            throw error; 
+        }
+    }, [isOffline, reintegrarStockLocalmente]);
+
 
     // ======================================================
-    // --- FUNCIÓN 3: updateClient (MUTACIÓN OPTIMISTA) ---
+    // --- FUNCIÓN 4: updateClient (CORREGIDO v9) ---
     // ======================================================
 
     const updateClient = useCallback(async (clientId: string, updatedData: Partial<Client>) => {
@@ -752,10 +844,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         console.log(`Cliente ${clientId} actualización optimista aplicada.`);
 
         // 2. Definición de la operación de escritura
-        if (!dbContainer.instance) { throw new Error("DB no inicializada."); }
-        const db = dbContainer.instance;
-        const clientRef = doc(db, 'clientes', clientId);
-        const writePromise = updateDoc(clientRef, updatedData); 
+        const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
+        if (!dbInstance) { throw new Error("DB no inicializada."); }
+
+        const clientRef = doc(dbInstance, 'clientes', clientId);
+        const writePromise = updateDoc(clientRef, updatedData); // <-- CORREGIDO
 
         // 3. APLICAR LÓGICA ASÍNCRONA
         try {
@@ -792,49 +885,6 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [setClients, isOffline, fetchDataAndStore, clients]);
 
-    // --- Función de Stock Optimista (Descuento) ---
-    const descontarStockLocalmente = useCallback((items: CartItem[]) => {
-        console.log("Descontando stock del estado local (optimista)...");
-        const itemsMap = new Map<string, number>();
-        items.forEach(item => {
-            itemsMap.set(item.id, item.quantity);
-        });
-        setProducts(prevProducts => {
-            return prevProducts.map(product => {
-                const cantidadVendida = itemsMap.get(product.id);
-                if (cantidadVendida) {
-                    const stockActual = product.stock ?? 0;
-                    const nuevoStock = stockActual - cantidadVendida; // <-- RESTA
-                    return { ...product, stock: nuevoStock };
-                }
-                return product;
-            });
-        });
-        console.log("Estado local de productos actualizado (descontado).");
-    }, []);
-
-    // ✅ NUEVA FUNCIÓN: Función de Stock Optimista (Reintegro/Suma)
-    const reintegrarStockLocalmente = useCallback((items: CartItem[]) => {
-        console.log("Reintegrando stock al estado local (optimista)...");
-        const itemsMap = new Map<string, number>();
-        items.forEach(item => {
-            itemsMap.set(item.id, item.quantity);
-        });
-        setProducts(prevProducts => {
-            return prevProducts.map(product => {
-                const cantidadReintegrada = itemsMap.get(product.id);
-                if (cantidadReintegrada) {
-                    const stockActual = product.stock ?? 0;
-                    const nuevoStock = stockActual + cantidadReintegrada; // <-- SUMA
-                    return { ...product, stock: nuevoStock };
-                }
-                return product;
-            });
-        });
-        console.log("Estado local de productos actualizado (reintegrado).");
-    }, []);
-
-
     // Valor que se provee a los componentes hijos
     const value: IDataContext = {
         products,
@@ -855,10 +905,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         isOffline,
         crearVentaConStock,
         anularVentaConStock,
+        deleteSaleAndRevertStock, 
         descontarStockLocalmente,
-        // ✅ CLAVE: Exportar la función de reintegro
         reintegrarStockLocalmente, 
-        // ✅ CLAVE: Exportar el setter para uso en componentes
         setSalesState: setSales,
     };
 

@@ -24,6 +24,7 @@ import {
     ScrollView,
     StatusBar,
     StyleSheet,
+    Switch, // ✅ IMPORTAR SWITCH
     Text,
     TextInput,
     TouchableOpacity,
@@ -157,6 +158,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [email, setEmail] = useState('');
     const [zonaId, setZonaId] = useState('');
     const [rubroId, setRubroId] = useState('');
+    const [isArca, setIsArca] = useState(false);
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { availableZones, vendors, refreshAllData, rubros, isOffline } = useData();
@@ -266,6 +268,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 rubroId: rubroId || '', 
                 location: location || null,
                 vendedorAsignadoId: currentUser?.uid,
+                arca: isArca, // ✅ INCLUIR CAMPO ARCA
                 fechaCreacion: serverTimestamp(),
             };
 
@@ -405,7 +408,17 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                         <Feather name="chevron-down" size={20} color={COLORS.primary} />
                  </TouchableOpacity>
                 </View>
-
+                {/* ✅ NUEVO CAMPO: Facturación ARCA */}
+                <View style={[styles.inputGroup, styles.arcaSwitchContainer]}>
+                    <Feather name="book-open" size={20} color={COLORS.primary} style={styles.inputIcon} />
+                    <Text style={styles.arcaLabel}>Cliente requiere Factura ARCA</Text>
+                    <Switch
+                        trackColor={{ false: COLORS.textSecondary, true: COLORS.primary }}
+                        thumbColor={isArca ? COLORS.primaryDark : COLORS.textPrimary}
+                        onValueChange={setIsArca}
+                        value={isArca}
+                    />
+                </View>
                 {/* Botón de Ubicación */}
                 <TouchableOpacity style={styles.locationButton} onPress={handleLocation} disabled={locationLoading}>
                     {locationLoading ? (<ActivityIndicator color={COLORS.primary} />) : (<Feather name={location ? "check-circle" : "crosshair"} size={22} color={COLORS.primary} />)}
@@ -553,6 +566,20 @@ const styles = StyleSheet.create({
     modalCloseText: { color: COLORS.primaryDark, fontWeight: 'bold' },
     locationButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}20`, marginBottom: 20, marginTop: 5 },
     locationButtonText: { color: COLORS.primary, fontSize: 16, fontWeight: 'bold' },
+// ✅ NUEVO ESTILO: Para el contenedor del Switch
+    arcaSwitchContainer: {
+        justifyContent: 'space-between',
+        paddingRight: 15,
+        backgroundColor: COLORS.glass,
+        borderWidth: 1,
+        borderColor: COLORS.glassBorder,
+        marginBottom: 20,
+    },
+    arcaLabel: {
+        flex: 1,
+        color: COLORS.textPrimary,
+        fontSize: 16,
+    },
     button: { backgroundColor: COLORS.primary, padding: 18, borderRadius: 15, alignItems: 'center' },
     buttonDisabled: { backgroundColor: COLORS.disabled }, 
     buttonText: { color: COLORS.primaryDark, fontSize: 18, fontWeight: 'bold' },

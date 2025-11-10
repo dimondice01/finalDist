@@ -1,16 +1,17 @@
 // src/screens/home.tsx
+
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
-// Importamos el Timestamp de v9
 import { Timestamp } from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS ---
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions // Necesario para el diseño responsivo de la grilla
+    ,
+
     FlatList,
     RefreshControl,
     ScrollView,
@@ -26,26 +27,39 @@ import { HomeScreenProps } from '../navigation/AppNavigator';
 
 // --- Contextos y DB ---
 import { Sale, useData, Vendor } from '../../context/DataContext';
-// Esta 'auth' es NATIVA
 import { auth } from '../../db/firebase-service';
-import { COLORS } from '../../styles/theme';
 
-// --- ¡NUEVO! Función de Estilos para los "Pills" de Estado ---
+// --- Estilos: Importamos el tema centralizado ---
+import { COLORS, SIZES } from '../../styles/theme';
+
+const { width } = Dimensions.get('window');
+const GRID_CARD_WIDTH = (width - SIZES.large * 3) / 2; // Dos tarjetas por fila con espaciado
+
+// --- INTERFACES AÑADIDAS PARA EVITAR ERRORES DE TIPADO ---
+interface ToolCardProps {
+    icon: keyof typeof Feather.glyphMap;
+    title: string;
+    color: string;
+    onPress: () => void;
+}
+// --------------------------------------------------------
+
+
+// --- Función de Estilos para los "Pills" de Estado (Optimizada con SIZES) ---
 const getStatusStyles = (status: Sale['estado']) => {
     switch (status) {
         case 'Pagada':
-            return { bg: 'rgba(22, 163, 74, 0.15)', text: COLORS.success };
+            return { bg: 'rgba(20, 184, 166, 0.15)', text: COLORS.success, icon: 'check-circle' as const };
         case 'Adeuda':
-            return { bg: 'rgba(234, 179, 8, 0.15)', text: COLORS.warning };
+            return { bg: 'rgba(251, 191, 36, 0.15)', text: COLORS.warning, icon: 'alert-triangle' as const };
         case 'Pendiente de Entrega':
-            return { bg: 'rgba(107, 114, 128, 0.15)', text: COLORS.textSecondary };
+            return { bg: 'rgba(107, 114, 128, 0.15)', text: COLORS.textSecondary, icon: 'truck' as const };
         case 'Anulada':
-            return { bg: 'rgba(239, 68, 68, 0.15)', text: COLORS.danger };
+            return { bg: 'rgba(239, 68, 68, 0.15)', text: COLORS.danger, icon: 'x-circle' as const };
         default:
-            return { bg: 'rgba(107, 114, 128, 0.15)', text: COLORS.textSecondary };
+            return { bg: 'rgba(107, 114, 128, 0.15)', text: COLORS.textSecondary, icon: 'circle' as const };
     }
 };
-// --- Fin de la nueva función ---
 
 const HomeScreen = ({ navigation }: HomeScreenProps) => { 
     const { 
@@ -64,7 +78,8 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid || v.id === currentUser.uid);
     }, [vendors]);
 
-    // --- Obtener últimas 5 ventas (CORREGIDO v9) ---
+    // Lógica de ventas recientes, logout y formato sin tocar
+    // [CÓDIGO DE LÓGICA DE VENTAS Y LOGOUT SIN CAMBIOS]
     const recentSales = useMemo(() => {
         const getDate = (sale: Sale) => {
             const fecha = sale.fecha;
@@ -72,7 +87,6 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             if (fecha instanceof Date) {
                 return fecha.getTime();
             }
-            // --- CORREGIDO: Usamos el Timestamp importado ---
             if (fecha instanceof Timestamp) {
                 return fecha.toMillis();
             }
@@ -86,7 +100,6 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             .slice(0, 5);
     }, [sales]);
 
-    // --- onRefresh (Sin cambios) ---
     const onRefresh = useCallback(async () => {
         setIsRefreshing(true);
         try {
@@ -99,7 +112,6 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
         }
     }, [refreshAllData]);
 
-    // --- handleLogout (Limpio, sin importación web) ---
     const handleLogout = async () => {
         Alert.alert(
             "Cerrar Sesión",
@@ -112,7 +124,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                     onPress: async () => {
                         setIsLoggingOut(true);
                         try {
-                            await auth.signOut(); // Usa la instancia nativa
+                            await auth.signOut();
                         } catch (error) {
                             console.error("Error al cerrar sesión:", error);
                             Alert.alert("Error", "No se pudo cerrar la sesión.");
@@ -123,9 +135,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             ]
         );
     };
-    // --- FIN de handleLogout ---
 
-    // --- Funciones auxiliares de formato (CORREGIDO v9) ---
     const formatCurrency = (value: number) => {
         return `$${value.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     };
@@ -135,7 +145,6 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             let d: Date;
             if (date instanceof Date) {
                 d = date;
-            // --- CORREGIDO: Usamos el Timestamp importado ---
             } else if (date instanceof Timestamp) {
                 d = date.toDate();
             } else {
@@ -149,23 +158,23 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             return "Fecha errónea";
         }
     };
-
-    // --- RENDERIZADO ---
+    // ...
 
     if (isDataLoading || isLoggingOut) { 
         return (
             <View style={styles.fullScreenLoader}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
                 <Text style={styles.loadingText}>{isLoggingOut ? 'Cerrando sesión...' : 'Cargando datos...'}</Text>
             </View>
         );
     }
-
+    
+    // --- RENDERIZADO CON ESTILOS DE VANGUARDIA ---
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.backgroundStart} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={styles.background} />
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
             
             <ScrollView
                 showsVerticalScrollIndicator={false}
@@ -179,7 +188,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                     />
                 }
             >
-                {/* --- HEADER --- */}
+                {/* --- HEADER MEJORADO Y LIMPIO --- */}
                 <View style={styles.header}>
                     <View style={styles.headerTextContainer}>
                         <Text style={styles.greeting}>Hola,</Text>
@@ -188,81 +197,57 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                         </Text>
                     </View>
                     <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-                        <Feather name="log-out" size={22} color={COLORS.danger} />
-                    </TouchableOpacity>
-                </View>
-                
-                {/* --- Tarjeta de Acciones Principales --- */}
-                <Text style={styles.sectionTitle}>Acciones Principales</Text>
-                <View style={styles.primaryActionsCard}>
-                    {/* Botón Mis Clientes */}
-                    <TouchableOpacity 
-                        style={styles.primaryButton} 
-                        onPress={() => navigation.navigate('ClientList')}
-                    >
-                        <Feather name="users" size={26} color={COLORS.primary} />
-                        <View style={styles.primaryButtonTextContainer}>
-                            <Text style={styles.primaryButtonTitle}>Mis Clientes</Text>
-                            <Text style={styles.primaryButtonSubtitle}>Gestionar cartera y ventas</Text>
-                        </View>
-                        <Feather name="chevron-right" size={24} color={COLORS.textSecondary} />
-                    </TouchableOpacity>
-
-                    {/* Divisor */}
-                    <View style={styles.divider} />
-
-                    {/* Botón Crear Venta */}
-                    <TouchableOpacity 
-                        style={styles.primaryButton} 
-                        onPress={() => navigation.navigate('SelectClientForSale')}
-                    >
-                        <Feather name="plus-circle" size={26} color={COLORS.primary} />
-                        <View style={styles.primaryButtonTextContainer}>
-                            <Text style={styles.primaryButtonTitle}>Crear Venta</Text>
-                            <Text style={styles.primaryButtonSubtitle}>Iniciar un pedido rápido</Text>
-                        </View>
-                        <Feather name="chevron-right" size={24} color={COLORS.textSecondary} />
+                        <Feather name="log-out" size={SIZES.h3} color={COLORS.danger} />
                     </TouchableOpacity>
                 </View>
 
-                {/* --- Herramientas (Menú de Círculos) --- */}
-                <Text style={styles.sectionTitle}>Herramientas</Text>
-                <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.toolsContainer}
+                {/* --- DASHBOARD / MIS CLIENTES CARD (Tarjeta Primaria de Alto Contraste) --- */}
+                <Text style={styles.sectionTitle}>Mi Cartera</Text>
+                <TouchableOpacity 
+                    style={styles.clientCard} 
+                    onPress={() => navigation.navigate('ClientList')}
                 >
-                    <TouchableOpacity style={styles.toolButton} onPress={() => navigation.navigate('AddClient')}>
-                        <View style={styles.toolIconCircle}>
-                            <Feather name="user-plus" size={24} color={COLORS.primary} />
+                    <View style={styles.clientCardContent}>
+                        <Feather name="briefcase" size={SIZES.h2} color={COLORS.primary} />
+                        <View style={styles.clientCardText}>
+                            <Text style={styles.clientCardTitle}>Mis Clientes</Text>
+                            <Text style={styles.clientCardSubtitle}>Gestiona tus Clientes.</Text>
                         </View>
-                        <Text style={styles.toolText}>Nuevo Cliente</Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity style={styles.toolButton} onPress={() => navigation.navigate('ClientMap')}>
-                        <View style={styles.toolIconCircle}>
-                            <Feather name="map-pin" size={24} color={COLORS.primary} />
-                        </View>
-                        <Text style={styles.toolText}>Mapa</Text>
-                    </TouchableOpacity>
+                        <Feather name="chevron-right" size={SIZES.h3} color={COLORS.textSecondary} />
+                    </View>
+                </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.toolButton} onPress={() => navigation.navigate('Reports')}>
-                        <View style={styles.toolIconCircle}>
-                            <Feather name="bar-chart-2" size={24} color={COLORS.primary} />
-                        </View>
-                        <Text style={styles.toolText}>Reportes</Text>
-                    </TouchableOpacity>
+                {/* --- HERRAMIENTAS (Grilla 2x2 de Alto Impacto) --- */}
+                <Text style={styles.sectionTitle}>Herramientas Rápidas</Text>
+                <View style={styles.toolsGrid}>
+                    {/* CORREGIDO: Las ToolCard ahora usan el nuevo diseño de alto impacto */}
+                    <ToolCard 
+                        icon="user-plus" 
+                        title="Nuevo Cliente" 
+                        color={COLORS.primary}
+                        onPress={() => navigation.navigate('AddClient')} 
+                    />
+                    <ToolCard 
+                        icon="map-pin" 
+                        title="Ruta/Mapa" 
+                        color={COLORS.secondary}
+                        onPress={() => navigation.navigate('ClientMap')} 
+                    />
+                    <ToolCard 
+                        icon="bar-chart-2" 
+                        title="Reportes" 
+                        color={COLORS.accent}
+                        onPress={() => navigation.navigate('Reports')} 
+                    />
+                    <ToolCard 
+                        icon="gift" 
+                        title="Promociones" 
+                        color={COLORS.warning}
+                        onPress={() => navigation.navigate('Promotions')} 
+                    />
+                </View>
 
-                    <TouchableOpacity style={styles.toolButton} onPress={() => navigation.navigate('Promotions')}>
-                        <View style={styles.toolIconCircle}>
-                            <Feather name="gift" size={24} color={COLORS.primary} />
-                        </View>
-                        <Text style={styles.toolText}>Promos</Text>
-                    </TouchableOpacity>
-                </ScrollView>
-
-
-                {/* --- VENTAS RECIENTES (Menos invasivo) --- */}
+                {/* --- VENTAS RECIENTES (Horizontal Scroll) --- */}
                 <Text style={styles.sectionTitle}>Actividad Reciente</Text>
                 <FlatList
                     horizontal
@@ -272,11 +257,11 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                     contentContainerStyle={styles.recentSalesList}
                     ListEmptyComponent={
                         <View style={styles.emptyRecent}>
+                            <Feather name="tag" size={SIZES.h2} color={COLORS.textSecondary} style={{ marginBottom: SIZES.small }} />
                             <Text style={styles.emptyRecentText}>No hay ventas recientes.</Text>
                         </View>
                     }
                     renderItem={({ item }) => {
-                        // --- ¡NUEVO! Usamos la función de estilos ---
                         const statusStyle = getStatusStyles(item.estado);
                         
                         return (
@@ -285,8 +270,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                                 onPress={() => navigation.navigate('SaleDetail', { saleId: item.id , clientName : item.clientName })}
                             >
                                 <View style={styles.recentSaleHeader}>
-                                    <Text style={styles.recentSaleDate}>{formatDate(item.fecha)}</Text>
-                                    {/* --- ¡NUEVO! "Pill" de estado --- */}
+                                    <Feather name={statusStyle.icon} size={SIZES.h3} color={statusStyle.text} />
                                     <View style={[styles.recentSaleStatusPill, { backgroundColor: statusStyle.bg }]}>
                                         <Text style={[styles.recentSaleStatusText, { color: statusStyle.text }]}>
                                             {item.estado}
@@ -295,208 +279,292 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                                 </View>
                                 <Text style={styles.recentSaleClient} numberOfLines={1}>{item.clientName}</Text>
                                 <Text style={styles.recentSaleTotal}>{formatCurrency(item.totalVenta)}</Text>
+                                <Text style={styles.recentSaleDate}>Fecha: {formatDate(item.fecha)}</Text>
                             </TouchableOpacity>
                         )
                     }}
                 />
+                
+                {/* Espacio para el FAB */}
+                <View style={{ height: 100 }} /> 
 
             </ScrollView>
+            
+            {/* --- FAB (Floating Action Button) - La CTA más importante --- */}
+            <TouchableOpacity 
+                style={styles.fab} 
+                onPress={() => navigation.navigate('SelectClientForSale')}
+                activeOpacity={0.9}
+            >
+                <Feather name="shopping-bag" size={SIZES.h2} color={COLORS.white} />
+                <Text style={styles.fabText}>Nueva Venta</Text>
+            </TouchableOpacity>
+
         </View>
     );
 };
 
-// --- Estilos (¡Mejorados!) ---
+// --- Componente auxiliar ToolCard (REDESIGNADO: Alto Impacto) ---
+interface ToolCardProps {
+    icon: keyof typeof Feather.glyphMap;
+    title: string;
+    color: string;
+    onPress: () => void;
+}
+
+const ToolCard = ({ icon, title, color, onPress }: ToolCardProps) => (
+    <TouchableOpacity style={[toolStyles.card, { borderColor: color + '30' }]} onPress={onPress}>
+        {/* Ícono grande y prominente */}
+        <Feather name={icon} size={SIZES.h2} color={color} style={toolStyles.icon} />
+        
+        {/* Texto con jerarquía */}
+        <View style={toolStyles.textWrapper}>
+            <Text style={toolStyles.title} numberOfLines={1}>{title}</Text>
+            <Feather name="chevron-right" size={SIZES.body} color={COLORS.textSecondary} style={toolStyles.arrow} />
+        </View>
+    </TouchableOpacity>
+);
+
+const toolStyles = StyleSheet.create({
+    card: {
+        width: GRID_CARD_WIDTH, // Usamos la constante calculada
+        backgroundColor: COLORS.backgroundEnd,
+        borderRadius: SIZES.radius, // Más redondeado
+        padding: SIZES.medium,
+        borderWidth: 2, // Borde más grueso para sensación de calidad
+        height: 120, // Altura más cómoda
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        // Sombra sutil para efecto de elevación (Minimalista y profesional)
+        shadowColor: COLORS.textPrimary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    icon: {
+        marginBottom: SIZES.small, // Espacio después del ícono
+    },
+    textWrapper: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    title: {
+        fontSize: SIZES.body,
+        fontWeight: 'bold',
+        color: COLORS.textPrimary,
+        flex: 1,
+    },
+    arrow: {
+        marginLeft: SIZES.small,
+        opacity: 0.6,
+    }
+});
+
+
+// --- ESTILOS MEJORADOS DE PANTALLA ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundEnd },
+    container: { flex: 1, backgroundColor: COLORS.backgroundStart }, // Usamos backgroundStart como fondo principal
     background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
+    
+    // LOADER
     fullScreenLoader: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: COLORS.backgroundStart,
     },
     loadingText: {
-        marginTop: 15,
+        marginTop: SIZES.medium,
         color: COLORS.textSecondary,
-        fontSize: 16
+        fontSize: SIZES.body
     },
+    
+    // SCROLL
     scrollContent: {
-        paddingBottom: 40,
-        paddingTop: (StatusBar.currentHeight || 0) + 20, // Más espacio arriba
+        paddingBottom: SIZES.xl,
     },
+    
+    // HEADER
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 25, // Más padding
-        marginBottom: 20, // Espacio antes del primer título
+        paddingHorizontal: SIZES.large,
+        paddingTop: (StatusBar.currentHeight || 0) + SIZES.medium,
+        marginBottom: SIZES.xl,
     },
     headerTextContainer: {
-        flex: 1, // Permite que el texto se trunque si es necesario
+        flex: 1, 
     },
     greeting: {
-        fontSize: 20, // Un poco más pequeño
-        fontWeight: '300', // Más liviano
-        color: COLORS.textPrimary, // Más contraste
+        fontSize: SIZES.body,
+        fontWeight: '500',
+        color: COLORS.textSecondary,
     },
     userName: {
-        fontSize: 32, // Más grande
+        fontSize: SIZES.h1, // 32 puntos - Nombre muy destacado
         fontWeight: 'bold',
         color: COLORS.textPrimary,
-        maxWidth: 300, // Límite más grande
+        maxWidth: '90%', 
     },
     logoutButton: {
-        padding: 12,
-        backgroundColor: 'rgba(239, 68, 68, 0.1)', // Fondo sutil rojo
-        borderRadius: 16, // Más redondeado
-        marginLeft: 10, // Espacio del texto
-    },
-    sectionTitle: {
-        fontSize: 16, // Más pequeño y profesional
-        fontWeight: '600',
-        color: COLORS.textSecondary, // Menos énfasis
-        paddingHorizontal: 25,
-        marginBottom: 15,
-        marginTop: 20, // Espacio consistente entre secciones
-        textTransform: 'uppercase', // Estilo pro
-        letterSpacing: 0.5, // Estilo pro
+        padding: SIZES.small,
+        backgroundColor: COLORS.danger + '10', // Fondo muy sutil
+        borderRadius: SIZES.radiusSmall,
+        marginLeft: SIZES.medium,
     },
     
-    primaryActionsCard: {
-        backgroundColor: COLORS.glass,
-        marginHorizontal: 25, // Alineado con padding
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: COLORS.glassBorder,
-        paddingHorizontal: 5, // Padding interno
-        paddingVertical: 10,
-        marginBottom: 25,
+    // SECCIONES
+    sectionTitle: {
+        fontSize: SIZES.caption,
+        fontWeight: '700',
+        color: COLORS.textSecondary, 
+        paddingHorizontal: SIZES.large,
+        marginBottom: SIZES.medium,
+        marginTop: SIZES.large,
+        textTransform: 'uppercase', 
+        letterSpacing: 0.8, 
     },
-    primaryButton: {
+    
+    // DASHBOARD CARD (Mi Cartera)
+    clientCard: {
+        backgroundColor: COLORS.backgroundEnd,
+        marginHorizontal: SIZES.large, 
+        borderRadius: SIZES.radius,
+        borderWidth: SIZES.borderWidth,
+        borderColor: COLORS.glassBorder,
+        marginBottom: SIZES.large,
+        padding: SIZES.medium,
+        shadowColor: COLORS.primary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
+        elevation: 1,
+    },
+    clientCardContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 18, // Más espaciado vertical
-        paddingHorizontal: 15, // Padding interno
     },
-    primaryButtonTextContainer: {
+    clientCardText: {
         flex: 1,
-        marginLeft: 15,
-        marginRight: 10,
+        marginLeft: SIZES.medium,
+        marginRight: SIZES.small,
     },
-    primaryButtonTitle: {
-        fontSize: 17,
-        fontWeight: '600',
-        color: COLORS.textPrimary,
+    clientCardTitle: {
+        fontSize: SIZES.h3,
+        fontWeight: '700',
+        color: COLORS.primary,
     },
-    primaryButtonSubtitle: {
-        fontSize: 14,
+    clientCardSubtitle: {
+        fontSize: SIZES.caption,
         color: COLORS.textSecondary,
-        marginTop: 2,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: COLORS.glassBorder,
-        marginHorizontal: 15, // Alineado con padding de botones
+        marginTop: SIZES.xsmall,
     },
 
-    toolsContainer: {
-        paddingLeft: 25, // Alineado
-        paddingRight: 15, // Espacio al final
-        paddingBottom: 10,
-        marginBottom: 15,
-        gap: 20, // Espacio uniforme entre botones
+    // GRID DE HERRAMIENTAS
+    toolsGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        marginHorizontal: SIZES.large,
+        gap: SIZES.medium, // Espacio uniforme
+        marginBottom: SIZES.large,
     },
-    toolButton: {
-        alignItems: 'center',
-        width: 75, // Ancho fijo
-    },
-    toolIconCircle: {
-        width: 60, // Ligeramente más pequeño
-        height: 60,
-        borderRadius: 30, 
-        backgroundColor: COLORS.glass,
-        borderWidth: 1,
-        borderColor: COLORS.glassBorder,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 10, // Más espacio
-    },
-    toolText: {
-        color: COLORS.textSecondary,
-        fontSize: 13,
-        fontWeight: '500',
-        textAlign: 'center',
-    },
-
+    
+    // VENTAS RECIENTES (Horizontal Scroll)
     recentSalesList: {
-        paddingLeft: 25, // Alineado
-        paddingRight: 15, 
-        paddingBottom: 20
+        paddingHorizontal: SIZES.large, 
+        paddingBottom: SIZES.large
     },
     emptyRecent: {
-        width: 240, // Mismo ancho que las tarjetas
-        height: 120, // Alto similar
-        padding: 20,
+        width: 256,
+        height: 150, 
+        padding: SIZES.large,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: COLORS.glass,
-        borderRadius: 15,
-        borderWidth: 1,
+        backgroundColor: COLORS.backgroundEnd,
+        borderRadius: SIZES.radius,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
     },
     emptyRecentText: {
         color: COLORS.textSecondary,
-        fontStyle: 'italic'
+        fontStyle: 'italic',
+        fontSize: SIZES.caption,
     },
     recentSaleCard: {
-        width: 240, // Más ancho
-        height: 120, // Alto fijo para consistencia
-        backgroundColor: COLORS.glass,
-        borderRadius: 15,
-        borderWidth: 1,
+        width: 180, // Más compacto
+        height: 150, 
+        backgroundColor: COLORS.backgroundEnd,
+        borderRadius: SIZES.radiusSmall,
+        borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
-        padding: 15, // Más padding
-        marginRight: 10,
-        justifyContent: 'space-between', // Distribuye el contenido
+        padding: SIZES.medium,
+        marginRight: SIZES.medium,
+        justifyContent: 'space-between',
     },
     recentSaleHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
+        alignItems: 'flex-start',
     },
     recentSaleDate: {
         color: COLORS.textSecondary,
-        fontSize: 13, // Un poco más grande
+        fontSize: SIZES.xsmallText,
+        fontWeight: '500',
     },
-    // --- ESTILO ANTIGUO (Solo texto) ---
-    // recentSaleStatus: {
-    //     fontSize: 12,
-    //     fontWeight: 'bold',
-    // },
-    // --- ¡NUEVO ESTILO "PILL"! ---
     recentSaleStatusPill: {
-        borderRadius: 10,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        overflow: 'hidden', // Para que el border-radius funcione en Text (Android)
+        borderRadius: SIZES.radiusSmall,
+        paddingHorizontal: SIZES.xsmall,
+        paddingVertical: SIZES.xsmall / 2,
+        overflow: 'hidden', 
+        maxWidth: 90,
     },
     recentSaleStatusText: {
-        fontSize: 11,
+        fontSize: SIZES.xsmallText,
         fontWeight: 'bold',
         textTransform: 'uppercase',
     },
-    // --- FIN ESTILO NUEVO ---
     recentSaleClient: {
         color: COLORS.textPrimary,
-        fontSize: 16, // Más grande
-        fontWeight: '600',
+        fontSize: SIZES.body,
+        fontWeight: '700',
+        marginTop: SIZES.small,
     },
     recentSaleTotal: {
         color: COLORS.primary,
-        fontSize: 19, // Más grande
+        fontSize: SIZES.h3,
         fontWeight: 'bold',
-        textAlign: 'right',
-        marginTop: 5,
+        marginTop: SIZES.xsmall,
+    },
+
+    // FAB (Floating Action Button)
+    fab: {
+        position: 'absolute',
+        bottom: SIZES.large,
+        right: SIZES.large,
+        left: SIZES.large, // FAB ancho para mayor accesibilidad
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: COLORS.primary, // Color principal para el CTA
+        paddingVertical: SIZES.medium,
+        paddingHorizontal: SIZES.large,
+        borderRadius: SIZES.radius,
+        shadowColor: COLORS.primary,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.4,
+        shadowRadius: 10,
+        elevation: 10,
+    },
+    fabText: {
+        color: COLORS.white,
+        fontSize: SIZES.h3,
+        fontWeight: 'bold',
+        marginLeft: SIZES.small,
     },
 });
 
