@@ -1,6 +1,7 @@
 // src/screens/client-list.tsx
 
 import { Feather } from '@expo/vector-icons';
+// Eliminamos la importación de Picker
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { memo, useCallback, useMemo, useState } from 'react';
@@ -12,7 +13,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ClientListScreenProps, RootStackParamList } from '../navigation/AppNavigator';
 
 import { Client, useData } from '../../context/DataContext';
-// --- Importamos SIZES y COLORS ---
+// ✅ Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
 
 interface Zone {
@@ -20,9 +21,11 @@ interface Zone {
     nombre: string;
 }
 
+// 1. Definimos un tipo de navegación local para el sub-componente
 type ClientCardNavigationProp = NativeStackNavigationProp<RootStackParamList, 'ClientList'>;
 
 // --- Componente Modal Selector de Zona (Rediseñado) ---
+// ... (Componente omitido por ser auxiliar, sin cambios en estilos)
 const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: { 
     visible: boolean; 
     onClose: () => void; 
@@ -30,8 +33,9 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
     selectedId: string; 
     onSelect: (id: string) => void; 
 }) => {
+    // ... (Lógica de modal sin cambios) ...
     const dataWithAllOption: Zone[] = useMemo(() => [
-        { id: '', nombre: 'Todas' },
+        { id: '', nombre: 'Todas las Zonas' },
         ...zones
     ], [zones]);
 
@@ -50,7 +54,7 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
             <View style={modalStyles.modalOverlay}>
                 <View style={[modalStyles.modalContent, { maxHeight: '80%', padding: 0 }]}>
                     <View style={modalStyles.modalHeader}>
-                       <Text style={modalStyles.modalTitle}>Filtrar por Zona</Text>
+                       <Text style={modalStyles.modalTitle}>FILTRAR POR ZONA</Text>
                     </View>
                     <FlatList
                         data={dataWithAllOption}
@@ -69,7 +73,8 @@ const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
     );
 };
 
-// --- Componente Memoizado para el Item de la Lista (Rediseñado) ---
+
+// --- Componente Memoizado para el Item de la Lista (CORREGIDO: Solo pasa ID) ---
 const ClientCard = memo(({ item }: { item: Client }) => {
     const navigation = useNavigation<ClientCardNavigationProp>();
 
@@ -83,11 +88,12 @@ const ClientCard = memo(({ item }: { item: Client }) => {
         navigation.navigate('ClientDashboard', { clientId: item.id });
     }, [item.id, navigation]);
 
+    // ✅ CORREGIDO: En lugar de { client: item }, pasamos { clientId: item.id }
     const goToEditClient = useCallback((e: any) => {
         e.stopPropagation();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        navigation.navigate('EditClient', { client: item });
-    }, [item, navigation]);
+        navigation.navigate('EditClient', { clientId: item.id }); 
+    }, [item.id, navigation]);
 
     return (
         <TouchableOpacity
@@ -105,7 +111,8 @@ const ClientCard = memo(({ item }: { item: Client }) => {
                 onPress={goToEditClient}
                 hitSlop={{ top: SIZES.medium, bottom: SIZES.medium, left: SIZES.medium, right: SIZES.medium }}
             >
-                <Feather name="chevron-right" size={SIZES.h3} color={COLORS.textSecondary} />
+                {/* Cambiamos el icono a un 'edit' para más claridad de acción */}
+                <Feather name="edit-2" size={SIZES.h3} color={COLORS.textSecondary} />
             </TouchableOpacity>
         </TouchableOpacity>
     );
@@ -121,6 +128,8 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false);
 
+    // ... (Lógica de filtrado y ordenación sin cambios) ...
+
     const sortedAvailableZones = useMemo(() => {
         const zones = Array.isArray(availableZones) ? availableZones : [];
         return [...zones]
@@ -129,7 +138,7 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
     }, [availableZones]);
 
     const selectedZoneName = useMemo(() => {
-        if (!zonaFilter) return 'Zona';
+        if (!zonaFilter) return 'Todas las Zonas';
         const selectedZone = sortedAvailableZones.find(z => z.id === zonaFilter);
         return selectedZone ? selectedZone.nombre : 'Seleccionar Zona';
     }, [zonaFilter, sortedAvailableZones]);
@@ -169,7 +178,7 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
     if (isDataLoading && (!allClients || allClients.length === 0)) {
         return (
             <View style={styles.loadingContainer}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={StyleSheet.absoluteFill} />
+                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
                 <Text style={styles.loadingText}>Cargando clientes...</Text>
             </View>
@@ -188,8 +197,9 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>Clientes</Text>
-                <TouchableOpacity onPress={() => { navigation.navigate('AddClient'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} style={styles.headerButton}>
+                <Text style={styles.title}>Mi Cartera</Text>
+                {/* ✅ CORREGIDO: El botón de agregar cliente ahora navega SÓLO con el nombre de la pantalla */}
+                <TouchableOpacity onPress={() => navigation.navigate('AddClient')} style={styles.headerButton}>
                     <Feather name="user-plus" size={SIZES.h3} color={COLORS.primary} />
                 </TouchableOpacity>
             </View>
@@ -198,7 +208,7 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
             <View style={styles.controlsContainer}>
                 {/* TextInput de Búsqueda */}
                 <View style={styles.inputContainer}>
-                    <Feather name="search" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <Feather name="search" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
                     <TextInput
                         style={styles.input}
                         placeholder="Buscar por nombre..."
@@ -222,7 +232,7 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
                             style={styles.pickerButton} 
                             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsZoneModalVisible(true); }}
                         >
-                            <Feather name="map-pin" size={SIZES.body} color={COLORS.textSecondary} style={styles.pickerIcon} />
+                            <Feather name="map-pin" size={SIZES.body} color={COLORS.primary} style={styles.pickerIcon} />
                             <Text style={[styles.pickerButtonText, { color: zonaFilter ? COLORS.textPrimary : COLORS.textSecondary }]}>
                                 {selectedZoneName}
                             </Text>
@@ -274,7 +284,6 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
                     ) : null
                 }
                 ListFooterComponent={<View style={{ height: SIZES.medium }} />}
-                // Optimizaciones de FlatList
                 initialNumToRender={15} 
                 maxToRenderPerBatch={10} 
                 windowSize={11} 
@@ -310,20 +319,20 @@ const modalStyles = StyleSheet.create({
         borderBottomColor: COLORS.glassBorder, 
         alignItems: 'center' 
     },
-    modalTitle: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary },
+    modalTitle: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary, textTransform: 'uppercase' },
     modalItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SIZES.medium },
     modalItemText: { fontSize: SIZES.body, color: COLORS.textPrimary },
     separatorModal: { height: SIZES.borderWidth, backgroundColor: COLORS.glassBorder, marginHorizontal: SIZES.small },
     modalCloseButton: { 
-        marginTop: SIZES.medium, 
+        marginTop: SIZES.large, 
         padding: SIZES.medium, 
-        backgroundColor: COLORS.primary, // Usamos el color primario para el botón de acción
+        backgroundColor: COLORS.primary,
         borderRadius: SIZES.radius, 
         alignItems: 'center',
         marginHorizontal: SIZES.medium,
         marginBottom: SIZES.medium,
     },
-    modalCloseText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body },
+    modalCloseText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
 });
 
 
@@ -342,10 +351,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         flexDirection: 'row',
         justifyContent: 'center',
-        backgroundColor: COLORS.primary + '20', // Fondo primario sutil
+        backgroundColor: COLORS.primary + '20',
         marginBottom: SIZES.small,
     },
-    syncingText: { marginLeft: SIZES.xsmall, color: COLORS.primary, fontSize: SIZES.caption, fontWeight: '500' }, // Color primario
+    syncingText: { marginLeft: SIZES.xsmall, color: COLORS.primary, fontSize: SIZES.caption, fontWeight: '500' },
     
     // Header
     header: {
@@ -357,7 +366,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: SIZES.small,
         backgroundColor: 'transparent',
     },
-    headerButton: { padding: SIZES.small },
+    headerButton: { padding: SIZES.small, width: 48 },
     title: {
         fontSize: SIZES.h2,
         fontWeight: 'bold',
@@ -380,7 +389,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: COLORS.backgroundEnd, // Fondo blanco limpio
-        borderRadius: SIZES.radiusSmall,
+        borderRadius: SIZES.radius,
         borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
         paddingHorizontal: SIZES.small,
@@ -399,7 +408,7 @@ const styles = StyleSheet.create({
     pickerWrapper: {
         flex: 1.5, // Toma menos espacio que la búsqueda
         backgroundColor: COLORS.backgroundEnd, 
-        borderRadius: SIZES.radiusSmall,
+        borderRadius: SIZES.radius,
         borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
         height: 52,
@@ -456,13 +465,13 @@ const styles = StyleSheet.create({
     cardInfo: { flex: 1, marginRight: SIZES.small },
     cardTitle: { fontSize: SIZES.body, fontWeight: '700', color: COLORS.textPrimary, marginBottom: SIZES.xsmall / 2 },
     cardSubtitle: { fontSize: SIZES.caption, color: COLORS.textSecondary },
-    editButton: { padding: SIZES.small }, // Usamos chevron-right en lugar de edit
+    editButton: { padding: SIZES.small, color: COLORS.textPrimary }, 
 
     // Empty State
     emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SIZES.xl },
     emptyText: { marginTop: SIZES.medium, fontSize: SIZES.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SIZES.large },
     emptyButton: { backgroundColor: COLORS.primary, paddingVertical: SIZES.medium, paddingHorizontal: SIZES.large, borderRadius: SIZES.radius, elevation: 2, shadowOpacity: 0.1, shadowRadius: 4 },
-    emptyButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body }, // Color blanco para contraste
+    emptyButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body },
 });
 
 export default ClientListScreen;

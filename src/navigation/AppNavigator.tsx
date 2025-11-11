@@ -48,7 +48,7 @@ export type RootStackParamList = {
     ClientDebts: { clientId: string, clientName: string }; 
     SaleDetail: { saleId: string; clientName: string }; 
     AddClient: undefined;
-    EditClient: { client: Client}; 
+    EditClient: { clientId: string}; 
     SelectClientForSale: undefined;
     CreateSale: {
         clientId: string;

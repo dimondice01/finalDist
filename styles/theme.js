@@ -1,38 +1,38 @@
-// Paleta de colores: Verde Esmeralda (Éxito) con Base de Grises Cálidos (Profesionalismo y UX).
-// Escalado de 8 Puntos (8-Point Grid) para todos los SIZES.
+// Paleta de colores: Base Gris Cálido (Cálido/Neutro) con Teal Profundo (Contraste Frío/Marca).
+// Estética: Elegante, Profesional, Contraste de Temperatura.
+// Estandarización de SIZES con 8-Point Grid.
 
 export const COLORS = {
-  // --- FONDOS BASE (Limpios, Cálidos, Suaves) ---
-  // Ideal para modos Claro/Gris tenue.
-  backgroundStart: '#F9FAFB', // Gris extra-claro (Gray-50) - Fondo Principal de Pantalla
-  backgroundEnd: '#FFFFFF',   // Blanco Puro - Para tarjetas y componentes elevados (Efecto de "profundidad")
+  // --- FONDOS BASE (Cálidos, Suaves y Neutros) ---
+  // Un gris muy claro con un matiz beige, muy cómodo para la vista.
+  backgroundStart: '#F9F7F5', // Gris Cálido Muy Claro (Near Beige) - Fondo Principal
+  backgroundEnd: '#FFFFFF',   // Blanco Puro - Para tarjetas y componentes elevados (Limpieza)
   
-  // --- COLOR PRINCIPAL (Verde Esmeralda para Foco y Éxito) ---
-  primary: '#059669',       // Esmeralda Profundo (Tailwind 'emerald-600') - Base de Marca y CTAs principales
-  secondary:  "#047857",    // Esmeralda Más Oscuro (Tailwind 'emerald-700') - Detalles activos y fondos de barra.
+  // --- COLOR PRINCIPAL (Teal Profundo para profesionalismo) ---
+  primary: '#008080',         // Teal Profundo / Petróleo (Deep Teal) - Base de Marca y CTAs
+  secondary:  "#006666",      // Teal más oscuro y serio
   
-  // Acento/Highlighter: Un color frío y contrastante para íconos o estados muy activos (ej: notificaciones).
-  accent: '#06B6D4',         // Azul Cian (Tailwind 'cyan-500') - Máximo Contraste 
+  // Acento/Highlighter: Un Coral Cálido para inyectar un punto focal vibrante.
+  accent: '#FF6B6B',          // Coral/Salmón Brillante - Máximo Contraste de Acción
   
-  // --- TEXTO (Alto Contraste y Legibilidad) ---
-  textPrimary: '#1F2937',    // Gris Oscuro Caliente (Gray-800) - Lectura principal
-  textSecondary: '#6B7280',   // Gris medio (Gray-500) - Subtítulos, información secundaria
+  // --- TEXTO (Alto Contraste Cálido) ---
+  textPrimary: '#333333',     // Gris Carbón Cálido (Charcoal) - Lectura principal
+  textSecondary: '#757575',   // Gris medio cálido - Subtítulos, información secundaria
   
   // Blanco 
   white: '#FFFFFF',
   
   // --- COMPONENTES ---
-  // Superposiciones modernas: ligeramente gris y transparente.
-  cardBackground: '#FFFFFF', // Fondo de tarjetas/contenedores (Usamos backgroundEnd, pero alias para claridad)
-  cardOverlay: 'rgba(243, 244, 246, 0.9)', // Gris muy claro semi-transparente
-  glassBorder: '#E5E7EB', // Borde gris muy suave (Gray-200) - Delimitación sutil
+  cardBackground: '#FFFFFF', 
+  cardOverlay: 'rgba(240, 240, 240, 0.9)', // Gris muy claro semi-transparente
+  glassBorder: '#DEDEDE',     // Borde gris claro y sutil
   
-  // --- COLORES DE ESTADO (Standard y Accesibles) ---
-  success: '#10B981',       // Verde (Manteniendo el estándar claro)
-  warning: '#F59E0B',       // Ámbar/Naranja
-  danger: '#EF4444',        // Rojo
-  error: '#EF4444',         // Alias para 'danger'
-  disabled: '#E5E7EB',      // Gris (Gray-200) para elementos inactivos
+  // --- COLORES DE ESTADO (Coherentes y accesibles) ---
+  success: '#4CAF50',         // Verde
+  warning: '#FFC107',         // Amarillo/Ámbar
+  danger: '#F44336',          // Rojo
+  error: '#F44336',           // Alias para 'danger'
+  disabled: '#E8E8E8',        // Gris claro para elementos inactivos
 };
 
 
@@ -46,18 +46,18 @@ export const SIZES = {
   xl: 32,
   xxl: 40,
 
-  // Tamaños de Fuente (Escala modular para jerarquía, ajustado a la escala de 8 puntos si es posible)
-  h1: 32,    // Extra Grande para títulos de pantalla
-  h2: 24,    // Grande para subtítulos importantes
-  h3: 20,    // Medio-Grande para encabezados de sección
-  body: 16,  // Estándar para cuerpo de texto y párrafos
-  caption: 14, // Pequeño para notas y metadatos
-  xsmallText: 12, // Extra Pequeño para etiquetas discretas
+  // Tamaños de Fuente (Escala modular para jerarquía)
+  h1: 32,    
+  h2: 24,    
+  h3: 20,    
+  body: 16,  
+  caption: 14, 
+  xsmallText: 12, 
   
   // Bordes y Radios
-  radius: 12, // Radio estándar, esquinas ligeramente redondeadas
-  radiusSmall: 8, // Radio para botones y elementos pequeños
-  borderWidth: 1, // Grosor de borde estándar
+  radius: 12, 
+  radiusSmall: 8, 
+  borderWidth: 1, 
 };
 
 // --- FONT (Placeholder listo para fuentes personalizadas) ---

@@ -39,7 +39,7 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
             onPress={handlePress}
             activeOpacity={0.8}
         >
-            <Feather name="user" size={SIZES.h3} color={COLORS.textSecondary} style={styles.userIcon} />
+            <Feather name="user" size={SIZES.h3} color={COLORS.primary} style={styles.userIcon} />
             <View style={styles.cardInfo}>
                 {/* Título: SIZES.body (16px) */}
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre || item.nombreCompleto || 'Cliente Sin Nombre'}</Text>
@@ -114,7 +114,7 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
             {/* Barra de Búsqueda (ESTILOS MEJORADOS) */}
             <View style={styles.controlsContainer}>
                 <View style={styles.inputContainer}>
-                    <Feather name="search" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <Feather name="search" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
                     <TextInput
                         style={styles.input}
                         placeholder="Buscar por nombre..."
