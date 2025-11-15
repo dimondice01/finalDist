@@ -59,7 +59,7 @@ const { width } = Dimensions.get('window');
 const INITIAL_LOAD_COUNT = 25;
 const LOAD_MORE_STEP = 25;
 
-// Interface para la venta que guardaremos (Sin cambios)
+// Interface para la venta que guardaremos (ACTUALIZADA con campos AFIP - PUNTO 2)
 interface SaleDataToSave {
     clienteId: string;
     clienteNombre: string;
@@ -76,6 +76,20 @@ interface SaleDataToSave {
     totalDescuentoPromociones: number;
     observaciones: string; 
     tipo: 'venta' | 'reposicion' | 'devolucion';
+    
+    // ✅ INICIO CAMPOS AFIP (COPIADOS DEL CLIENTE)
+    tipoDocumento: string; // copiado del cliente
+    numeroDocumento: string; // copiado del cliente
+    facturaAfip: boolean; // BOOLEANO: requiereFacturaAfip del cliente
+    
+    // ✅ CAMPOS AFIP (PARA USO DEL BACKEND)
+    afipEstado: "pendiente" | "enviado" | "aprobado" | "error"; 
+    afipNumeroComprobante: number | null;
+    afipCAE: string | null;
+    afipFechaVtoCAE: string | null; // Guardado como string (YYYYMMDD) o null
+    afipPuntoVenta: number | null;
+    afipResultado: string | null;
+    // ✅ FIN CAMPOS AFIP
 }
 
 
@@ -288,9 +302,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }, [currentUser, vendors]);
 
     // ✅ CORREGIDO: El cliente siempre se obtiene del contexto usando el clientId (serializable).
+    // NOTA: Se añade casting para incluir los nuevos campos de AFIP/Cliente.
     const client = useMemo(() => {
         if (!clientId || !clients) return null;
-        return clients.find((c: Client) => c.id === clientId);
+        // Se añade un casting para acceder a los nuevos campos de AFIP/Cliente
+        return clients.find((c: Client) => c.id === clientId) as (Client & { tipoDocumento: string, numeroDocumento: string, requiereFacturaAfip: boolean }) | undefined;
     }, [clientId, clients]);
 
     const selectedCategoryName = useMemo(() => {
@@ -514,6 +530,13 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setIsSubmitting(true);
         Haptics.notificationAsync('success' as any); // ✅ CORREGIDO: Usamos string literal
 
+        // ✅ INICIO LÓGICA AFIP: Traer datos del cliente (Punto 3)
+        // Se asume que client ya tiene estos campos gracias al casting en useMemo
+        const clienteTipoDocumento = client.tipoDocumento || 'SC'; 
+        const clienteNumeroDocumento = client.numeroDocumento || '';
+        const requiereFacturaAfip = client.requiereFacturaAfip || false;
+        // ✅ FIN LÓGICA AFIP
+        
         const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { 
             clienteId: client.id,
             clienteNombre: client.nombre,
@@ -528,7 +551,20 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             totalDescuentoPromociones: totalDescuentoPromociones,
             observaciones: originalSale?.observaciones || '',
             tipo: 'venta', 
-            ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {})
+            ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {}),
+
+            // ✅ INICIO CAMPOS AFIP (Punto 2)
+            tipoDocumento: clienteTipoDocumento,
+            numeroDocumento: clienteNumeroDocumento,
+            facturaAfip: requiereFacturaAfip, // BOOLEANO
+
+            afipEstado: "pendiente", // Estado inicial para Cloud Function
+            afipNumeroComprobante: null,
+            afipCAE: null,
+            afipFechaVtoCAE: null,
+            afipPuntoVenta: null,
+            afipResultado: null,
+            // ✅ FIN CAMPOS AFIP
         };
 
         try {

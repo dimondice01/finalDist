@@ -58,7 +58,14 @@ export interface Client {
     zonaId?: string;
     rubroId?: string;
     vendedorAsignadoId?: string;
-    arca?: boolean; // ✅ NUEVO CAMPO: Indica si necesita factura ARCA (Monotributista)
+    
+    // ✅ INICIO CAMBIOS AFIP (Punto 1: Clientes)
+    arca?: boolean; // Se mantiene por retrocompatibilidad
+    requiereFacturaAfip?: boolean; // Nuevo campo unificado para Facturación
+    tipoDocumento?: string; // DNI, CUIT, CUIL, PAS, SC
+    numeroDocumento?: string;
+    // ✅ FIN CAMBIOS AFIP
+    
     location?: { latitude: number; longitude: number; } | null;
     fechaCreacion?: any;
 }
@@ -107,6 +114,20 @@ export interface Sale {
     estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada';
     tipo: 'venta' | 'reposicion' | "devolucion";
     fecha: { seconds: number } | Date;
+    
+    // ✅ INICIO CAMBIOS AFIP (Punto 2: Ventas)
+    tipoDocumento?: string;
+    numeroDocumento?: string;
+    facturaAfip?: boolean; 
+
+    afipEstado?: 'pendiente' | 'enviado' | 'aprobado' | 'error' | string;
+    afipNumeroComprobante?: number | null;
+    afipCAE?: string | null;
+    afipFechaVtoCAE?: string | null; 
+    afipPuntoVenta?: number | null;
+    afipResultado?: string | null;
+    // ✅ FIN CAMBIOS AFIP
+    
     saldoPendiente: number;
     paymentMethod?: 'contado' | 'cuenta_corriente';
     numeroFactura?: string;
@@ -398,6 +419,18 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     estado: rawData.estado === 'Pendiente de Pago' ? 'Pendiente de Entrega' : (rawData.estado || rawData.status || 'Pendiente de Entrega'), 
                     tipo: rawData.tipo || 'venta',
                     fecha: rawData.fecha || rawData.saleDate || new Date(0), 
+                    
+                    // ✅ AÑADIDO: Campos de Facturación AFIP
+                    tipoDocumento: rawData.tipoDocumento,
+                    numeroDocumento: rawData.numeroDocumento,
+                    facturaAfip: rawData.facturaAfip, 
+                    afipEstado: rawData.afipEstado,
+                    afipNumeroComprobante: rawData.afipNumeroComprobante,
+                    afipCAE: rawData.afipCAE,
+                    afipFechaVtoCAE: rawData.afipFechaVtoCAE,
+                    afipPuntoVenta: rawData.afipPuntoVenta,
+                    afipResultado: rawData.afipResultado,
+                    
                     saldoPendiente: rawData.saldoPendiente ?? 0,
                     paymentMethod: rawData.paymentMethod,
                     totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 

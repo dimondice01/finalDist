@@ -45,6 +45,61 @@ import { COLORS, SIZES } from '../../styles/theme';
 
 interface LocationCoords { latitude: number; longitude: number; }
 
+// --- CONSTANTES AFIP (NUEVO) ---
+type DocumentType = 'DNI' | 'CUIT' | 'CUIL' | 'PAS' | 'SC';
+const DOCUMENT_TYPES: { id: DocumentType; nombre: string; }[] = [
+    { id: 'SC', nombre: 'Consumidor Final (SC)' },
+    { id: 'DNI', nombre: 'DNI' },
+    { id: 'CUIT', nombre: 'CUIT' },
+    { id: 'CUIL', nombre: 'CUIL' },
+    { id: 'PAS', nombre: 'Pasaporte' },
+];
+// --- FIN CONSTANTES AFIP ---
+
+
+// --- Componente Modal Selector de Tipo de Documento (NUEVO) ---
+const DocumentTypeSelectorModal = ({ visible, onClose, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    selectedId: DocumentType;
+    onSelect: (id: DocumentType) => void;
+}) => {
+    const renderItem = useCallback(({ item }: { item: { id: DocumentType, nombre: string } }) => (
+        <TouchableOpacity
+            style={modalStyles.modalItem}
+            onPress={() => { onSelect(item.id); onClose(); }}
+        >
+            <Text style={[modalStyles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
+            {selectedId === item.id && <Feather name="check" size={SIZES.h3} color={COLORS.primary} />}
+        </TouchableOpacity>
+    ), [selectedId, onSelect, onClose]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.modalOverlay}>
+                <View style={[modalStyles.modalContent, { maxHeight: '80%', padding: 0 }]}>
+                    <View style={modalStyles.modalHeader}>
+                        <Text style={modalStyles.modalTitle}>TIPO DE DOCUMENTO *</Text>
+                    </View>
+                    <FlatList
+                        data={DOCUMENT_TYPES}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderItem}
+                        ItemSeparatorComponent={() => <View style={modalStyles.separatorModal} />}
+                        style={{ flexGrow: 0, width: '100%' }}
+                        contentContainerStyle={{ paddingHorizontal: SIZES.medium }}
+                    />
+                    <TouchableOpacity onPress={onClose} style={modalStyles.modalCloseButton}>
+                        <Text style={modalStyles.modalCloseText}>Cerrar</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+};
+// --- FIN Componente Modal Selector de Tipo de Documento ---
+
+
 // --- Componente Modal Selector de Zona (Estilizado) ---
 const ZoneSelectorModal = ({ visible, onClose, zones, selectedId, onSelect }: {
     visible: boolean;
@@ -144,7 +199,7 @@ const RubroSelectorModal = ({ visible, onClose, rubros, selectedId, onSelect }: 
 
 
 const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
-    // --- Estados (Sin cambios) ---
+    // --- Estados (ACTUALIZADOS para incluir AFIP) ---
     const [nombre, setNombre] = useState('');
     const [direccion, setDireccion] = useState('');
     const [barrio, setBarrio] = useState('');
@@ -153,7 +208,13 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [email, setEmail] = useState('');
     const [zonaId, setZonaId] = useState('');
     const [rubroId, setRubroId] = useState('');
-    const [isArca, setIsArca] = useState(false);
+    const [isArca, setIsArca] = useState(false); // Facturación ARCA -> requiereFacturaAfip
+    
+    // ✅ NUEVOS ESTADOS AFIP
+    const [tipoDocumento, setTipoDocumento] = useState<DocumentType>('SC'); 
+    const [numeroDocumento, setNumeroDocumento] = useState('');
+    const [isDocumentTypeModalVisible, setIsDocumentTypeModalVisible] = useState(false);
+
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { availableZones, vendors, refreshAllData, rubros, isOffline } = useData();
@@ -169,7 +230,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); 
     const [isRubroModalVisible, setIsRubroModalVisible] = useState(false);
 
-    // --- Memos (Sin cambios) ---
+    // --- Memos (ACTUALIZADO para incluir Documento) ---
     const currentVendedor = useMemo(() => {
         if (!currentUser || !vendors) return null;
         return vendors.find((v: any) => v.firebaseAuthUid === currentUser.uid);
@@ -198,6 +259,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         const selectedRubro = safeRubros.find(r => r.id === rubroId);
         return selectedRubro ? selectedRubro.nombre : 'Seleccionar Rubro (Opcional)';
     }, [rubroId, rubros]);
+
+    const selectedDocumentTypeName = useMemo(() => {
+        const selectedType = DOCUMENT_TYPES.find(d => d.id === tipoDocumento);
+        return selectedType ? selectedType.nombre : 'Seleccionar Tipo Doc *';
+    }, [tipoDocumento]);
+    // --- FIN Memos ---
 
     // --- Callbacks (handleLocation, handleConfirmLocation sin cambios) ---
     const handleLocation = useCallback(async () => {
@@ -228,12 +295,18 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         setMapModalVisible(false);
     }, []);
 
-    // --- handleSubmit (MODIFICADO CON SDK v9 y dbContainer) ---
+    // --- handleSubmit (MODIFICADO para incluir CAMPOS AFIP y Validación) ---
     const handleSubmit = useCallback(async () => {
         if (!nombre.trim() || !zonaId) {
             Alert.alert('Datos Incompletos', 'El nombre y la zona son obligatorios.');
             return;
         }
+        // ✅ NUEVA VALIDACIÓN AFIP (Punto 1: validación)
+        if (isArca && (tipoDocumento === 'SC' || !numeroDocumento.trim())) {
+            Alert.alert('Datos Incompletos AFIP', 'Para facturación ARCA, debe seleccionar un Tipo de Documento válido (no SC) e ingresar el Número de Documento/CUIT.');
+            return;
+        }
+
         if (isSubmitting) return;
 
         setIsSubmitting(true);
@@ -247,7 +320,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             return;
         }
 
+        // ✅ LÓGICA AFIP: Si no requiere factura, forzamos SC/vacío
+        const finalTipoDocumento = isArca ? tipoDocumento : 'SC';
+        const finalNumeroDocumento = isArca ? numeroDocumento.trim() : '';
+
         try {
+            // ✅ DATOS DEL CLIENTE CON CAMPOS AFIP (Punto 1: campos nuevos)
             const newClientData = {
                 nombre: nombre.trim(),
                 nombreCompleto: nombre.trim(),
@@ -260,7 +338,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 rubroId: rubroId || '', 
                 location: location || null,
                 vendedorAsignadoId: currentUser?.uid,
-                arca: isArca, 
+                
+                requiereFacturaAfip: isArca, // ✅ Reemplaza/Aclara el campo 'arca' original
+                tipoDocumento: finalTipoDocumento, // ✅ Nuevo campo
+                numeroDocumento: finalNumeroDocumento, // ✅ Nuevo campo
+                // NOTA: El campo 'arca' original ha sido efectivamente reemplazado/renombrado en la lógica por requiereFacturaAfip
+
                 fechaCreacion: serverTimestamp(),
             };
 
@@ -297,7 +380,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         }
     }, [
         nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, 
-        location, currentUser, isSubmitting, refreshAllData, navigation, isOffline, isArca
+        location, currentUser, isSubmitting, refreshAllData, navigation, isOffline, isArca,
+        tipoDocumento, numeroDocumento // ✅ NUEVAS DEPENDENCIAS
     ]);
 // --- FIN de handleSubmit ---
 
@@ -392,7 +476,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     </TouchableOpacity>
                 </View>
                 
-                {/* CAMPO: Facturación ARCA */}
+                {/* CAMPO: Facturación ARCA / requiereFacturaAfip */}
                 <View style={[styles.inputGroup, styles.arcaSwitchContainer]}>
                     <Feather name="book-open" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
                     <Text style={styles.arcaLabel}>Cliente requiere Factura ARCA</Text>
@@ -403,6 +487,38 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                         value={isArca}
                     />
                 </View>
+
+                {/* ✅ NUEVOS CAMPOS AFIP (CONDICIONALES a isArca) */}
+                {isArca && (
+                    <>
+                        {/* Selector Tipo Documento */}
+                        <View style={styles.pickerContainer}>
+                            <Feather name="file-text" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TouchableOpacity
+                                style={styles.pickerButton}
+                                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsDocumentTypeModalVisible(true); }}
+                            >
+                                <Text style={[styles.pickerButtonText, { color: tipoDocumento !== 'SC' ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                                    {selectedDocumentTypeName}
+                                </Text>
+                                <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
+                            </TouchableOpacity>
+                        </View>
+                        
+                        {/* Input Número Documento */}
+                        <View style={styles.inputGroup}>
+                            <Feather name="hash" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TextInput 
+                                style={styles.input} 
+                                placeholder="Número Documento/CUIT *" 
+                                placeholderTextColor={COLORS.textSecondary} 
+                                value={numeroDocumento} 
+                                onChangeText={setNumeroDocumento} 
+                                keyboardType={tipoDocumento === 'CUIT' || tipoDocumento === 'CUIL' ? 'number-pad' : 'default'}
+                            />
+                        </View>
+                    </>
+                )}
                 
                 {/* Botón de Ubicación */}
                 <TouchableOpacity style={styles.locationButton} onPress={handleLocation} disabled={locationLoading}>
@@ -412,7 +528,11 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 </TouchableOpacity>
 
                 {/* Botón de Guardar */}
-                <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId) && styles.buttonDisabled]} onPress={handleSubmit} disabled={isSubmitting || !nombre.trim() || !zonaId}>
+                {/* VALIDACION AÑADIDA: El botón se deshabilita si es ARCA y faltan datos de documento */}
+                <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId || (isArca && (tipoDocumento === 'SC' || !numeroDocumento.trim()))) && styles.buttonDisabled]} 
+                    onPress={handleSubmit} 
+                    disabled={isSubmitting || !nombre.trim() || !zonaId || (isArca && (tipoDocumento === 'SC' || !numeroDocumento.trim()))}
+                >
                     {isSubmitting ? (<ActivityIndicator color={COLORS.white} />) 
                     : (<Text style={styles.buttonText}>{isOffline ? 'GUARDAR (OFFLINE)' : 'GUARDAR CLIENTE'}</Text>)}
                 </TouchableOpacity>
@@ -475,6 +595,14 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 rubros={rubrosOrdenados}
                 selectedId={rubroId}
                 onSelect={setRubroId}
+            />
+            
+            {/* ✅ Modal de Tipo de Documento */}
+            <DocumentTypeSelectorModal
+                visible={isDocumentTypeModalVisible}
+                onClose={() => setIsDocumentTypeModalVisible(false)}
+                selectedId={tipoDocumento}
+                onSelect={setTipoDocumento}
             />
         </KeyboardAvoidingView>
     );

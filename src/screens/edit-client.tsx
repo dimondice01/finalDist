@@ -13,11 +13,23 @@ import Toast from 'react-native-toast-message';
 import { EditClientScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Tipos --
-import { Rubro, useData, Zone } from '../../context/DataContext';
+import { Client, Rubro, useData, Zone } from '../../context/DataContext'; // ✅ CORREGIDO: Se añadió Client
 // ✅ Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
 
 interface LocationCoords { latitude: number; longitude: number; }
+
+// --- CONSTANTES AFIP (AÑADIDO) ---
+type DocumentType = 'DNI' | 'CUIT' | 'CUIL' | 'PAS' | 'SC';
+const DOCUMENT_TYPES: { id: DocumentType; nombre: string; }[] = [
+    { id: 'SC', nombre: 'Consumidor Final (SC)' },
+    { id: 'DNI', nombre: 'DNI' },
+    { id: 'CUIT', nombre: 'CUIT' },
+    { id: 'CUIL', nombre: 'CUIL' },
+    { id: 'PAS', nombre: 'Pasaporte' },
+];
+// --- FIN CONSTANTES AFIP ---
+
 
 // --- Estilos de Modal (Auxiliar para no repetir) ---
 const modalStyles = StyleSheet.create({
@@ -50,6 +62,49 @@ const modalStyles = StyleSheet.create({
     },
     modalCloseText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
 });
+
+
+// --- Componente Modal Selector de Tipo de Documento (AÑADIDO) ---
+const DocumentTypeSelectorModal = React.memo(({ visible, onClose, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    selectedId: DocumentType;
+    onSelect: (id: DocumentType) => void;
+}) => {
+    const renderItem = useCallback(({ item }: { item: { id: DocumentType, nombre: string } }) => (
+        <TouchableOpacity
+            style={modalStyles.modalItem}
+            onPress={() => { onSelect(item.id); onClose(); }}
+        >
+            <Text style={[modalStyles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
+            {selectedId === item.id && <Feather name="check" size={SIZES.h3} color={COLORS.primary} />}
+        </TouchableOpacity>
+    ), [selectedId, onSelect, onClose]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.modalOverlay}>
+                <View style={[modalStyles.modalContent, { maxHeight: '80%', padding: 0 }]}>
+                    <View style={modalStyles.modalHeader}>
+                        <Text style={modalStyles.modalTitle}>TIPO DE DOCUMENTO *</Text>
+                    </View>
+                    <FlatList
+                        data={DOCUMENT_TYPES}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderItem}
+                        ItemSeparatorComponent={() => <View style={modalStyles.separatorModal} />}
+                        style={{ flexGrow: 0, width: '100%' }}
+                        contentContainerStyle={{ paddingHorizontal: SIZES.medium }}
+                    />
+                    <TouchableOpacity onPress={onClose} style={modalStyles.modalCloseButton}>
+                        <Text style={modalStyles.modalCloseText}>Cerrar</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+});
+// --- FIN Componente Modal Selector de Tipo de Documento ---
 
 
 // --- Componente Modal Selector de Zona (Estilizado) ---
@@ -159,8 +214,9 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     // Obtenemos los datos y el cliente del contexto
     const { clients, zones, rubros, updateClient, isOffline } = useData();
 
-    // ✅ CORREGIDO: Buscamos el cliente por ID
-    const initialClient = useMemo(() => clients.find(c => c.id === clientId), [clients, clientId]);
+    // ✅ CORREGIDO: Buscamos el cliente por ID y aplicamos un tipo para los nuevos campos
+    // Se asume que el cliente en el contexto ya tiene los campos de AFIP/Cliente, pero los forzamos para el tipado.
+    const initialClient = useMemo(() => clients.find(c => c.id === clientId) as (Client & { requiereFacturaAfip?: boolean, tipoDocumento?: DocumentType, numeroDocumento?: string }) | undefined, [clients, clientId]);
 
     // 🔥 CAÍDA DE SEGURIDAD: Si no encontramos el cliente, salimos inmediatamente.
     if (!initialClient) {
@@ -176,7 +232,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
         );
     }
     
-    // --- Estados Iniciales ---
+    // --- Estados Iniciales (ACTUALIZADOS con campos AFIP) ---
     const [formData, setFormData] = useState({
         nombre: initialClient.nombre || '',
         nombreCompleto: initialClient.nombreCompleto || '',
@@ -187,7 +243,11 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
         localidad: initialClient.localidad || '',
         zonaId: initialClient.zonaId || '',
         rubroId: initialClient.rubroId || '',
-        isArca: initialClient.arca || false, // Asumiendo que existe el campo 'arca' en Client
+        // AFIP: Se carga el campo 'requiereFacturaAfip' si existe, sino se usa el antiguo 'arca' o false.
+        isArca: initialClient.requiereFacturaAfip !== undefined ? initialClient.requiereFacturaAfip : (initialClient.arca || false), 
+        // AFIP: Nuevos campos
+        tipoDocumento: initialClient.tipoDocumento || 'SC' as DocumentType,
+        numeroDocumento: initialClient.numeroDocumento || '',
     });
 
     // Estados para UI
@@ -195,6 +255,8 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false);
     const [isRubroModalVisible, setIsRubroModalVisible] = useState(false);
     const [isMapModalVisible, setIsMapModalVisible] = useState(false);
+    // ✅ ESTADO PARA MODAL DE DOCUMENTO
+    const [isDocumentTypeModalVisible, setIsDocumentTypeModalVisible] = useState(false);
     
     // 🔥 Ubicación: Inicializamos con la ubicación existente
     const [location, setLocation] = useState<LocationCoords | null>(
@@ -208,8 +270,11 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     }));
     // Fin Estados
     
-    const handleInputChange = (field: keyof typeof formData, value: string | boolean) => {
-        setFormData(prev => ({ ...prev, [field]: value }));
+    const handleInputChange = (field: keyof typeof formData, value: string | boolean | DocumentType) => {
+        setFormData(prev => ({ 
+            ...prev, 
+            [field]: value 
+        }));
     };
 
     const zonasDelVendedor = useMemo(() => {
@@ -230,6 +295,13 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
         const selectedRubro = rubrosOrdenados.find(r => r.id === formData.rubroId);
         return selectedRubro ? selectedRubro.nombre : 'Seleccionar Rubro (Opcional)';
     }, [formData.rubroId, rubrosOrdenados]);
+
+    // ✅ MEMO PARA TIPO DE DOCUMENTO
+    const selectedDocumentTypeName = useMemo(() => {
+        const selectedType = DOCUMENT_TYPES.find(d => d.id === formData.tipoDocumento);
+        return selectedType ? selectedType.nombre : 'Seleccionar Tipo Doc *';
+    }, [formData.tipoDocumento]);
+    // FIN Memos
 
     const handleLocationPress = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -263,7 +335,7 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
     };
 
 
-    // --- Lógica de Guardado (CORREGIDA PARA OFFLINE) ---
+    // --- Lógica de Guardado (ACTUALIZADA con validación y campos AFIP) ---
     const handleSave = async () => {
         if (!formData.nombre) {
             Alert.alert("Campo Requerido", "El nombre del cliente es obligatorio.");
@@ -273,14 +345,24 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
             Alert.alert("Campo Requerido", "La zona es obligatoria.");
             return;
         }
+        // ✅ NUEVA VALIDACIÓN AFIP
+        if (formData.isArca && (formData.tipoDocumento === 'SC' || !formData.numeroDocumento.trim())) {
+            Alert.alert('Datos Incompletos AFIP', 'Para facturación ARCA, debe seleccionar un Tipo de Documento válido (no SC) e ingresar el Número de Documento/CUIT.');
+            return;
+        }
 
         setIsSubmitting(true);
         Haptics.notificationAsync('success' as any); // ✅ CORREGIDO
 
+        // ✅ LÓGICA AFIP: Limpieza si no requiere factura
+        const finalTipoDocumento = formData.isArca ? formData.tipoDocumento : 'SC';
+        const finalNumeroDocumento = formData.isArca ? formData.numeroDocumento.trim() : '';
+
         const updatedClientData = {
             ...formData, 
             location: location, 
-            // Normalizamos campos
+            
+            // Normalizamos/Actualizamos campos
             nombreCompleto: formData.nombreCompleto || formData.nombre,
             telefono: formData.telefono || '',
             email: formData.email || '',
@@ -288,7 +370,13 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
             localidad: formData.localidad || '',
             direccion: formData.direccion || '',
             rubroId: formData.rubroId || '',
-            arca: formData.isArca,
+            
+            // ✅ CAMPOS AFIP (Punto 1)
+            requiereFacturaAfip: formData.isArca, // Nuevo campo unificado
+            tipoDocumento: finalTipoDocumento,
+            numeroDocumento: finalNumeroDocumento,
+            // Mantenemos 'arca' por si el contexto o la app de escritorio lo siguen leyendo
+            arca: formData.isArca, 
         };
 
         try {
@@ -396,7 +484,39 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                     />
                 </View>
 
-
+                {/* ✅ CAMPOS AFIP (CONDICIONALES) */}
+                {formData.isArca && (
+                    <>
+                        <Text style={[styles.sectionTitle, { marginTop: SIZES.small }]}>DATOS TRIBUTARIOS (AFIP)</Text>
+                        {/* Selector Tipo Documento */}
+                        <View style={styles.pickerContainer}>
+                            <Feather name="file-text" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TouchableOpacity
+                                style={styles.pickerButton}
+                                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsDocumentTypeModalVisible(true); }}
+                            >
+                                <Text style={[styles.pickerButtonText, { color: formData.tipoDocumento !== 'SC' ? COLORS.textPrimary : COLORS.textSecondary }]}>
+                                    {selectedDocumentTypeName}
+                                </Text>
+                                <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
+                            </TouchableOpacity>
+                        </View>
+                        
+                        {/* Input Número Documento */}
+                        <View style={styles.inputContainer}>
+                            <Feather name="hash" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TextInput 
+                                style={styles.input} 
+                                placeholder="Número Documento/CUIT *" 
+                                placeholderTextColor={COLORS.textSecondary} 
+                                value={formData.numeroDocumento} 
+                                onChangeText={(val) => handleInputChange('numeroDocumento', val)}
+                                keyboardType={formData.tipoDocumento === 'CUIT' || formData.tipoDocumento === 'CUIL' ? 'number-pad' : 'default'}
+                            />
+                        </View>
+                    </>
+                )}
+                
                 <Text style={styles.sectionTitle}>CONTACTO Y UBICACIÓN</Text>
                 
                 {/* Dirección */}
@@ -478,10 +598,11 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
             </ScrollView>
 
             <View style={styles.footer}>
+                {/* VALIDACION AÑADIDA: El botón se deshabilita si es ARCA y faltan datos de documento */}
                 <TouchableOpacity
-                    style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                    style={[styles.button, (isSubmitting || !formData.nombre || !formData.zonaId || (formData.isArca && (formData.tipoDocumento === 'SC' || !formData.numeroDocumento.trim()))) && styles.buttonDisabled]}
                     onPress={handleSave}
-                    disabled={isSubmitting || !formData.nombre || !formData.zonaId}
+                    disabled={isSubmitting || !formData.nombre || !formData.zonaId || (formData.isArca && (formData.tipoDocumento === 'SC' || !formData.numeroDocumento.trim()))}
                 >
                     {isSubmitting ? (
                         <ActivityIndicator color={COLORS.white} />
@@ -509,6 +630,15 @@ const EditClientScreen = ({ navigation, route }: EditClientScreenProps) => {
                 selectedId={formData.rubroId}
                 onSelect={(id) => handleInputChange('rubroId', id)}
             />
+
+            {/* ✅ Modal de Tipo de Documento */}
+            <DocumentTypeSelectorModal
+                visible={isDocumentTypeModalVisible}
+                onClose={() => setIsDocumentTypeModalVisible(false)}
+                selectedId={formData.tipoDocumento}
+                onSelect={(id) => handleInputChange('tipoDocumento', id)}
+            />
+
 
             {/* Modal de Mapa */}
             <Modal visible={isMapModalVisible} animationType="slide" onRequestClose={() => setIsMapModalVisible(false)}>
