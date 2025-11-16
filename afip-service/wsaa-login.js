@@ -8,8 +8,8 @@ const forge = require("node-forge");
     console.log("🔐 Leyendo certificados originales...");
 
     // CARGAR CRT + KEY ORIGINALES
-  const certPem = fs.readFileSync("cert-from-firebase.pem", "utf8");
-const keyPem = fs.readFileSync("key-from-firebase.key", "utf8");
+  const certPem = fs.readFileSync("certificado-afip.crt", "utf8");
+const keyPem = fs.readFileSync("tuClave.key", "utf8");
 
     // Parse PEM → objetos forge válidos
     const certObj = forge.pki.certificateFromPem(certPem);
@@ -51,7 +51,7 @@ const keyPem = fs.readFileSync("key-from-firebase.key", "utf8");
     console.log("📡 Llamando a WSAA...");
 
     const WSAA_WSDL =
-      "https://wsaa.afip.gov.ar/ws/services/LoginCms?WSDL";
+      "https://wsaahomo.afip.gov.ar/ws/services/LoginCms?WSDL";
 
     const client = await soap.createClientAsync(WSAA_WSDL);
 

@@ -1,62 +1,69 @@
-// wsaa-test.js
+const fs = require("fs");
 const soap = require("soap");
 const xmlbuilder = require("xmlbuilder");
 const forge = require("node-forge");
 
-// PEGÁ TUS BASE64 DE FIREBASE AQUÍ TEMPORALMENTE
-const CERT_B64 = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tDQpNSUlEU3pDQ0FqT2dBd0lCQWdJSUdZN3ZjRldSMGhVd0RRWUpLb1pJaHZjTkFRRU5CUUF3T0RFYU1CZ0dBMVVFQXd3UlEyOXRjSFYwDQpZV1J2Y21WeklGUmxjM1F4RFRBTEJnTlZCQW9NQkVGR1NWQXhDekFKQmdOVkJBWVRBa0ZTTUI0WERUSTFNVEV4TVRJd01qTXhNVm9YDQpEVEkzTVRFeE1USXdNak14TVZvd01URVVNQklHQTFVRUF3d0xURUZNVEVGV1JWUkZVMVF4R1RBWEJnTlZCQVVURUVOVlNWUWdNamN5DQpOemcyTVRJNU16SXdnZ0VpTUEwR0NTcUdTSWIzRFFFQkFRVUFBNElCRHdBd2dnRUtBb0lCQVFEUmhlYVg1SU0rTkE2TlY0MWFuMkdqDQpnaWhoVHl2L1hvK21QejhnTG5GTGt4L2Q2aVhlUDFpbFNzVFBXbEFFcTJiRlVBektRR1NJVE1OeUJ1bnZKSlhwclNhWlhRRE0xWm1RDQptUW9FeFVCUkxoRjhBTFVnR1JWRlJXUzk2U2ZVcVgxZmxadXZ1dHdpRFBES1lkRjVQdnBMWm44dEJnNFNsMlRkZ29qdnJWaGs1Ym9zDQpCem1mbS8yYURla2dJWFNaRjR1UlhzWCsveXpnWHgwQ0REejEvTFdQSEhkdUEvR3o2UkVMMXBoN3FIbjVVOEZaU3BuNytSQk9jcXBnDQpqa1BBK2trWG9ib09FMEtvR2d1TUlVV1VEd1Zqc2QxUFJQUEFxWmNpU2JyQlVLZnhFZ0wvUnNCczA5V1pYV21SaFV4ZXVtU0pURWhxDQpxS1FGMzcyUlZhUnlCOFI5QWdNQkFBR2pZREJlTUF3R0ExVWRFd0VCL3dRQ01BQXdId1lEVlIwakJCZ3dGb0FVczdMVC8vM3B1dDdlDQpqYThSSVp6V0lIM3lUMjh3SFFZRFZSME9CQllFRk9MVVhXZTZwZVRubkpSTWxCaExFTk1MK0ppR01BNEdBMVVkRHdFQi93UUVBd0lGDQo0REFOQmdrcWhraUc5dzBCQVEwRkFBT0NBUUVBaTB6OXNwQzA4bmtVN3pQUEIvSGo2N1NraUVPVzMwclhQT3hWZDRJK3RvYXBhQURoDQo0REQwVlo3bGRkL0tPTkhNV2o0WHFnclZaQSs4UkhPRCtjTXFTMGN6Y1JwNys5OWR6MTYvaWpqem5QRDczSk12NTduR2d5eUtaMnlIDQpZVkhQcmt2ZU04RjA4SVowbVU3dlI4dmllbkZTS2FkRHp1b1A5Si9wU29SdklGanBDR3hLR04wem5sNFBVeVdDVWliUFM3TzBzbDBDDQpRaGJxdUZzWWZOTnNXb2hzVXhwL3RPSk5PVTgzNWJnZDNrUjczRDFGRW43MXBONmFoSVZrbmcrZkVHRzZuTlkyTXo4dXJGM04xK2YrDQpOSTg3WS95ZnJMbFpEL2tPWXY5R0txSVd4V2dGUnpSeXkrTzJFQTRHSjhIaThpUHlOdWd3ZXVLSm9LYnp6b0h4NHc9PQ0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQ==";
-const KEY_B64 = "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tDQpNSUlFdkFJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLWXdnZ1NpQWdFQUFvSUJBUURSaGVhWDVJTStOQTZODQpWNDFhbjJHamdpaGhUeXYvWG8rbVB6OGdMbkZMa3gvZDZpWGVQMWlsU3NUUFdsQUVxMmJGVUF6S1FHU0lUTU55DQpCdW52SkpYcHJTYVpYUURNMVptUW1Rb0V4VUJSTGhGOEFMVWdHUlZGUldTOTZTZlVxWDFmbFp1dnV0d2lEUERLDQpZZEY1UHZwTFpuOHRCZzRTbDJUZGdvanZyVmhrNWJvc0J6bWZtLzJhRGVrZ0lYU1pGNHVSWHNYKy95emdYeDBDDQpERHoxL0xXUEhIZHVBL0d6NlJFTDFwaDdxSG41VThGWlNwbjcrUkJPY3FwZ2prUEEra2tYb2JvT0UwS29HZ3VNDQpJVVdVRHdWanNkMVBSUFBBcVpjaVNickJVS2Z4RWdML1JzQnMwOVdaWFdtUmhVeGV1bVNKVEVocXFLUUYzNzJSDQpWYVJ5QjhSOUFnTUJBQUVDZ2dFQUNJUG9JTUUxUWtoc1ZQczdiL1R0UzI5bFE3c3JmeGZ4UDZEdmFGZnEyOWJ4DQpZeHY2aVFOTEQ0Q3Y2ZnR5S0JadE9WU3RDR1ZBa0xlSjgrN3JBQUNkSlIrWDQ0Qy9vUk9IUjdTb2p4UVRMcGx3DQpOWGx6NHdlUjhUeEdRVitoOGtjbkpNVFlUSGFNTHNnVzJ5ckprQ05xbWJqakwwbkJOYWs0ZkxZcTZZN0NlbXMyDQozaUJhemZYTzZUQlVRQWN4TXBsWUQwcXFLTmdCMTIrY3V5eDgwLzhhQ3ExY3BXTDBsNlIwdDdsd2ZYY2ZySkFaDQoyNnN0eXNEbEdhNVliSUdqMGZrVkVrMWt1S3JlV0xZc0xubm4yMG1NeTRjdlBTdzlBZjhWeU5WTHFBWVVzaW9aDQo2VzE2akw4VU1LWjdQbmcxcmxUY1VWRkc2Y2xxa1J3N2NiMG4rTm9zNHdLQmdRRDI3c1BiWEEvN1hYKyt2NGs3DQo4ekRSVmlLYTN5OUJnYkREVTBoRGxVYmQ4c1VwTGNnTXV4SXBvUklJTGIxSXJYU1h3cFZuTDhERis2Nkp5ZlFEDQpkVkVuaVFDTW1CWXViOUhwa3FoVFNXT2ZBT1A1ZFFLZFV5ZmZEbWRsRDJKNlZsbkpvRVVNbTVaaFNCb0lKTWJ1DQp2YmNtQlBqVEg0K1BFWU9CbFFJLzVObnhmd0tCZ1FEWk4zbVZUcGJWZnVZcDlXS0ZGREF4QS9LbFZTTzJqNEx3DQpVR2lSeEt6Ky9aNG9wWHIrMFR4ZHF3MlcvbE5GVVhmTW50TnVHMDNKTDhrcHlBd1JKQVhnZjd3N1AxYk0yTzlKDQpGQ0svaGwyS0lnWjV3WnVvaU9QcnN1V3pJcVpEZnF4OXFFM2dBaG9LMjdMNnJ2aUFGUGhxd3FXZEZCYktCL0JYDQpTT3RINko0UUF3S0JnRlF3UTRaZWRQUjJoRDg4ZmtWNlBJS2lvMW02RGhwL1pReXpNRWdhZFBibTltRjd3bURVDQp4dlI2ZmZOYjVOVUtqbDNQY2JDa2owenc2aWtBT2JtVUhmOGtycE5BcHc5ZUFHdHFIUW1JVS9hNkR2L1Y3UFpHDQppNmw0OTdkMDcxWldhblpidGk3K1BOOGQvZ0lZeDlwTnhFdXFGa3VrendVd0syM2FwOUd3N0wxeEFvR0FmcHQyDQpFNCsrSE95ZFRVR0l6aGFKVEZpSHV0UllQNVdBZFgvNG8xWW1tMjNLSE5qdlNzMDhTVUJsYUdnT3N5MmNEVGxaDQo5U2lXK3pnT0lYdEhoVW9nM3N5MU16ZGs2WHRjWlpVRjkrcGlaUndWK0N2Z0JhamNhRXBhMWtIUTlUQkZhK3lJDQpqNVBLQ0NBc1B5OXpDbnl1bXRPZlltSU9NbTNVS1p3SC8xN1htbThDZ1lCdzZ4ODhveHJ0VERpMGlWUjhjMWhmDQpuTkNCMWIvSnFLaTdXVHprRjc1NSsrbFdUbjJRbmhyK2xKcjZqY2RQU3VBa2QxT3Uzbnc0L1lHQjRxUTN4dkluDQova2dwSFV1emVPdG03SUMxUDNYU3Zld0VldDNWbExNa29ka2JlNWw2RmdoTHFIbURKN3phOUF1RjBaUG9YYmNhDQpNb3lzYnNJZTlGT1J5NEg5cDR5TjJRPT0NCi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0=";
-
-// Decodificar
-const certPem = Buffer.from(CERT_B64, "base64").toString("utf8");
-const keyPem = Buffer.from(KEY_B64, "base64").toString("utf8");
-
-// Objetos forge
-const certObj = forge.pki.certificateFromPem(certPem);
-const keyObj = forge.pki.privateKeyFromPem(keyPem);
-
-// Construir LTR
-const uniqueId = Math.floor(Date.now() / 1000);
-
-const ltr = xmlbuilder
-  .create("loginTicketRequest", { encoding: "UTF-8" })
-  .att("version", "1.0")
-  .ele("header")
-  .ele("uniqueId", uniqueId).up()
-  .ele("generationTime", new Date(Date.now() - 600000).toISOString()).up()
-  .ele("expirationTime", new Date(Date.now() + 3600000).toISOString()).up()
-  .up()
-  .ele("service", "wsfe")
-  .end({ pretty: true });
-
-// Firmar PKCS#7 DER
-const p7 = forge.pkcs7.createSignedData();
-p7.content = forge.util.createBuffer(ltr, "utf8");
-p7.addCertificate(certObj);
-p7.addSigner({
-  key: keyObj,
-  certificate: certObj,
-  digestAlgorithm: forge.pki.oids.sha256
-});
-p7.sign();
-
-const derBytes = forge.asn1.toDer(p7.toAsn1()).getBytes();
-const cms = Buffer.from(derBytes, "binary").toString("base64");
-
-async function run() {
+(async () => {
   try {
-    const url = "https://wsaa.afip.gov.ar/ws/services/LoginCms?WSDL";
-    const client = await soap.createClientAsync(url);
+    console.log("🔐 Leyendo certificados reales...");
+
+    // Carga directa de tus archivos PEM
+    const certPem = fs.readFileSync("certificado-afip.crt", "utf8");
+    const keyPem = fs.readFileSync("tuClave.key", "utf8");
+
+    // Parse PEM → objetos forge válidos
+    const certObj = forge.pki.certificateFromPem(certPem);
+    const keyObj = forge.pki.privateKeyFromPem(keyPem);
+
+    console.log("📄 Generando LoginTicketRequest...");
+
+    const now = Date.now();
+    const uniqueId = Math.floor(now / 1000);
+
+    const loginTicketRequest = xmlbuilder
+      .create("loginTicketRequest", { encoding: "UTF-8" })
+      .att("version", "1.0")
+      .ele("header")
+      .ele("uniqueId", uniqueId).up()
+      .ele("generationTime", new Date(now - 600000).toISOString()).up()
+      .ele("expirationTime", new Date(now + 3600000).toISOString()).up()
+      .up()
+      .ele("service", "wsfe")
+      .end({ pretty: true });
+
+    console.log("🔏 Firmando con PKCS#7...");
+
+    const p7 = forge.pkcs7.createSignedData();
+    p7.content = forge.util.createBuffer(loginTicketRequest, "utf8");
+
+    p7.addCertificate(certObj);
+
+    p7.addSigner({
+      key: keyObj,
+      certificate: certObj,
+      digestAlgorithm: forge.pki.oids.sha256,
+    });
+
+    p7.sign();
+
+    // Convertir firma PKCS#7 a Base64
+    const der = forge.asn1.toDer(p7.toAsn1()).getBytes();
+    const cms = Buffer.from(der, "binary").toString("base64");
+
+    console.log("📡 Llamando a WSAA...");
+
+    const WSDL = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms?WSDL";
+
+    const client = await soap.createClientAsync(WSDL);
 
     const [result] = await client.loginCmsAsync({ in0: cms });
 
-    console.log("\n=== TA XML OBTENIDO ===\n");
+    console.log("🎉 TA recibido correctamente:");
+    console.log("-------------------------------------");
     console.log(result.loginCmsReturn);
-    console.log("\n========================\n");
+    console.log("-------------------------------------");
 
   } catch (err) {
-    console.error("ERROR WSAA:", err);
+    console.error("❌ ERROR:", err);
   }
-}
-
-run();
+})();
