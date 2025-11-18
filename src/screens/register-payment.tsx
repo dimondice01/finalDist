@@ -192,7 +192,7 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
                 {/* --- BOTÓN MEJORADO --- */}
                 <TouchableOpacity style={[styles.confirmButton, isSaving && styles.confirmButtonDisabled]} onPress={handleRegisterPayment} disabled={isSaving}>
                     {isSaving ? (
-                        <ActivityIndicator color={COLORS.primaryDark} /> 
+                        <ActivityIndicator color={COLORS.primary} /> 
                     ) : (
                         <Text style={styles.confirmButtonText}>Confirmar Pago</Text>
                     )}
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
     },
     
     balanceCard: { 
-        backgroundColor: COLORS.glass, 
+        backgroundColor: COLORS.cardBackground, 
         borderRadius: 20, 
         paddingVertical: 20, // Padding vertical y horizontal
         paddingHorizontal: 25,
@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
     inputContainer: { 
         flexDirection: 'row', 
         alignItems: 'center', 
-        backgroundColor: COLORS.glass, 
+        backgroundColor: COLORS.cardBackground, 
         borderRadius: 15, // Más redondeado
         borderWidth: 1, 
         borderColor: COLORS.glassBorder, 
@@ -314,7 +314,7 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     confirmButtonText: { 
-        color: COLORS.primaryDark, 
+        color: COLORS.primary, 
         fontSize: 18, 
         fontWeight: 'bold' 
     },

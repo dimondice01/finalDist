@@ -8,7 +8,6 @@ import {
     collection,
     doc,
     FirebaseFirestoreTypes,
-
     onSnapshot,
     runTransaction,
     serverTimestamp
@@ -41,7 +40,8 @@ interface Sale {
     id: string;
     clienteId?: string;
     clienteNombre?: string;
-    fecha: FirebaseFirestoreTypes.Timestamp;
+    clientName?: string; // Compatibilidad
+    fecha: FirebaseFirestoreTypes.Timestamp | Date | { seconds: number }; // Compatibilidad de fechas
     items: SaleItem[];
     totalVenta: number;
     saldoPendiente: number;
@@ -49,9 +49,16 @@ interface Sale {
     numeroFactura?: string;
     vendedorId?: string;
     vendedorNombre?: string;
+    vendedorName?: string; // Compatibilidad
     porcentajeComision?: number;
     totalComision?: number;
+    // Nuevos campos para cobros
+    tipo?: 'venta' | 'cobranza' | 'rendicion_cobranza';
+    montoCobrado?: number;
+    pagoEfectivo?: number;
+    rendido?: boolean;
 }
+
 interface CollectDebtModalProps {
     visible: boolean;
     onClose: () => void;
@@ -62,6 +69,7 @@ interface CollectDebtModalProps {
 
 interface SaleDetailRouteParams {
     saleId: string;
+    clientName?: string;
 }
 
 const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
@@ -74,13 +82,23 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
 
     if (!venta) return null;
 
-    const modalDate = venta.fecha ? venta.fecha.toDate().toLocaleDateString('es-AR') : 'Fecha inválida';
+    // Helper seguro para fecha
+    const getModalDate = () => {
+        if (!venta.fecha) return 'Fecha inválida';
+        if (venta.fecha instanceof Date) return venta.fecha.toLocaleDateString('es-AR');
+        // @ts-ignore
+        if (venta.fecha.toDate) return venta.fecha.toDate().toLocaleDateString('es-AR');
+        // @ts-ignore
+        if (venta.fecha.seconds) return new Date(venta.fecha.seconds * 1000).toLocaleDateString('es-AR');
+        return 'Fecha inválida';
+    };
+    const modalDate = getModalDate();
 
     const handleConfirmPayment = async () => {
         setError('');
         const cobro = parseFloat(montoCobrado);
         if (isNaN(cobro) || cobro <= 0) { setError('Por favor, ingresa un monto válido.'); return; }
-        if (cobro > venta.saldoPendiente) { setError(`El monto no puede ser mayor al saldo pendiente de ${formatCurrency(venta.saldoPendiente)}.`); return; }
+        if (cobro > (venta.saldoPendiente || 0) + 0.5) { setError(`El monto no puede ser mayor al saldo pendiente de ${formatCurrency(venta.saldoPendiente)}.`); return; }
 
         setIsSaving(true);
         
@@ -97,51 +115,65 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
                 
                 const ventaRef = doc(db, 'ventas', venta.id); 
                 
-                // 1. Crear el documento de "Cobro"
+                // 1. Crear el documento de "Cobro" (CORREGIDO: tipo 'cobranza')
                 await addDoc(collection(db, 'ventas'), {
-                    clientName: `Cobro Saldo - ${venta.clienteNombre}`, 
+                    tipo: 'cobranza', // <--- CRÍTICO PARA REPORTE Y CAJA
+                    clientName: `Cobro Saldo - ${venta.clienteNombre || venta.clientName || 'Cliente'}`, 
+                    clienteId: venta.clienteId,
                     estado: "Pagada", 
                     fecha: serverTimestamp(), 
                     numeroFactura: `COBRO-${venta.numeroFactura || venta.id.substring(0,6)}`,
+                    
                     pagoEfectivo: cobro, 
                     pagoTransferencia: 0, 
                     saldoPendiente: 0, 
+                    totalVenta: 0, // Para no duplicar venta
+                    montoCobrado: cobro, // Dato real
+                    items: [], 
+
                     vendedorId: venta.vendedorId, 
-                    vendedorNombre: venta.vendedorNombre,
+                    vendedorNombre: venta.vendedorNombre || venta.vendedorName,
+                    ventaOriginalId: venta.id,
+                    rendido: false 
                 });
                 
                 // 2. Actualizar la factura original
                 const saleDoc = await transaction.get(ventaRef);
                 
-                // @ts-ignore
-                if (!saleDoc.exists) throw new Error("La factura original no fue encontrada.");
+                if (!saleDoc.exists()) throw new Error("La factura original no fue encontrada.");
                 
                 const data = saleDoc.data();
                 if (!data) throw new Error("No se pudieron leer los datos de la venta.");
                 
                 const nuevoSaldo = (data.saldoPendiente || 0) - cobro;
-                const nuevoEstado = nuevoSaldo <= 0.01 ? "Pagada" : "Adeuda";
-                const comisionFinal = nuevoEstado === 'Pagada' ? data.totalVenta * ((data.porcentajeComision || 0) / 100) : (data.totalComision || 0);
+                const nuevoEstado = nuevoSaldo <= 1 ? "Pagada" : "Adeuda";
                 
-                transaction.update(ventaRef, { 
-                    saldoPendiente: nuevoSaldo, 
-                    estado: nuevoEstado, 
-                    totalComision: comisionFinal 
-                });
+                let updates: any = { 
+                    saldoPendiente: nuevoSaldo < 0 ? 0 : nuevoSaldo, 
+                    estado: nuevoEstado 
+                };
+                
+                if (nuevoEstado === 'Pagada') {
+                    // Asegurar comisión completa si se paga todo
+                    const comisionFinal = data.totalVenta * ((data.porcentajeComision || 0) / 100);
+                    if (comisionFinal > 0) updates.totalComision = comisionFinal;
+                    updates.fechaPagoCompleto = serverTimestamp();
+                }
+
+                transaction.update(ventaRef, updates);
             });
         };
 
         if (isOffline) {
             performTransaction()
-                .then(() => console.log("Cobro offline enviado a la cola de persistencia."))
-                .catch(err => console.error("Error en cobro offline en segundo plano:", err));
+                .then(() => console.log("Cobro offline enviado a la cola."))
+                .catch(err => console.error("Error offline:", err));
             
             Toast.show({ type: 'success', text1: 'Cobro Guardado (Offline)', text2: 'Se sincronizará al conectar.' });
             if(onPaymentSuccess) onPaymentSuccess();
             onClose();
 
             setIsSaving(false);
-            setError('');
             setMontoCobrado('');
             return;
         }
@@ -154,9 +186,9 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
             onClose();
 
         } catch (err) {
-            console.error("Error en transacción de cobro:", err);
-            setError("No se pudo registrar el cobro. Intenta de nuevo.");
-            Toast.show({type: 'error', text1: 'Error al registrar el cobro'});
+            console.error("Error cobro:", err);
+            setError("No se pudo registrar. Intenta de nuevo.");
+            Toast.show({type: 'error', text1: 'Error al registrar'});
         } finally {
             setIsSaving(false);
             setMontoCobrado('');
@@ -168,12 +200,10 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
             <View style={styles.modalOverlay}>
                 <View style={styles.modalContent}>
                     <Text style={styles.modalTitle}>Registrar Cobro</Text>
-                    {/* ✅ CORREGIDO: Venta del se envuelve en Text */}
                     <Text style={styles.modalSubtitle}>Venta del <Text style={{fontWeight: 'bold'}}>{modalDate}</Text></Text> 
                     
                     {error ? <Text style={styles.modalError}>{error}</Text> : null}
 
-                    {/* ✅ CORREGIDO: Saldo con componente Text anidado */}
                     <Text style={styles.modalDebt}>Saldo actual: <Text style={{ color: COLORS.warning }}>{formatCurrency(venta.saldoPendiente)}</Text></Text>
                     
                     <TextInput 
@@ -204,7 +234,7 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
     );
 };
 
-// --- Pantalla SaleDetailScreen (ACTUALIZADA PARA isOffline) ---
+// --- Pantalla SaleDetailScreen ---
 const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     const route = useRoute();
     const { saleId } = route.params as SaleDetailRouteParams; 
@@ -222,24 +252,34 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
 
         const db = dbContainer.instance;
         if (!db) {
-            console.error("SaleDetailScreen: DB no está lista para el listener.");
+            console.error("SaleDetailScreen: DB no está lista.");
             setIsLoading(false);
             return;
         }
 
         const saleRef = doc(db, 'ventas', saleId);
         
-        const unsubscribe = onSnapshot(saleRef, (doc) => {
-            // @ts-ignore
-            if (doc.exists) {
-                setSale({ id: doc.id, ...doc.data() } as Sale);
+        const unsubscribe = onSnapshot(saleRef, (docSnapshot) => {
+            // ✅ CORRECCIÓN DE ERROR TYPESCRIPT: docSnapshot.exists() es función
+            if (docSnapshot.exists()) {
+                const data = docSnapshot.data();
+                if (data) {
+                     // Normalizar fechas
+                    let fechaNormalizada = data.fecha;
+                    if (data.fecha && typeof data.fecha.toDate === 'function') {
+                        fechaNormalizada = data.fecha.toDate();
+                    } else if (data.fecha && typeof data.fecha.seconds === 'number') {
+                        fechaNormalizada = new Date(data.fecha.seconds * 1000);
+                    }
+                    setSale({ id: docSnapshot.id, ...data, fecha: fechaNormalizada } as Sale);
+                }
             } else {
                 console.error("No se encontró la venta.");
                 setSale(null);
             }
             setIsLoading(false);
         }, (error) => {
-            console.error("Error al cargar la venta:", error);
+            console.error("Error al cargar:", error);
             setIsLoading(false);
         });
 
@@ -249,6 +289,7 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     const clientName = useMemo(() => {
         if (!sale) return 'Cliente no especificado';
         if (sale.clienteNombre) return sale.clienteNombre;
+        if (sale.clientName) return sale.clientName;
         const client = clients.find(c => c.id === sale.clienteId);
         return client?.nombre || 'Cliente no especificado';
     }, [sale, clients]);
@@ -261,7 +302,6 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
-                {/* Usamos backgroundStart en ambos puntos */}
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
             </View>
@@ -272,7 +312,6 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
         return (
             <View style={styles.container}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
-                {/* --- HEADER ESTILIZADO --- */}
                 <View style={[styles.header, { backgroundColor: COLORS.backgroundEnd, borderColor: COLORS.glassBorder }]}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                         <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
@@ -280,15 +319,21 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
                     <Text style={styles.title}>Error</Text>
                     <View style={styles.headerButton} />
                 </View>
-                <Text style={styles.errorText}>No se pudieron cargar los datos de la venta.</Text>
+                <Text style={styles.errorText}>No se pudieron cargar los datos.</Text>
             </View>
         );
     }
     
-    const saleDateFormatted = sale.fecha ? sale.fecha.toDate().toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Fecha inválida';
+    const saleDateFormatted = sale.fecha instanceof Date 
+        ? sale.fecha.toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' }) 
+        : 'Fecha desconocida';
 
-    // Función para obtener el color del estado
+    // LÓGICA VISUAL (Agregada sutilmente)
+    const isCobranza = sale.tipo === 'cobranza';
+    const montoMostrar = isCobranza ? (sale.pagoEfectivo || sale.montoCobrado || 0) : sale.totalVenta;
+    
     const getStatusColor = (estado: Sale['estado']) => {
+        if (isCobranza) return '#8B5CF6'; // Color Violeta para cobros
         switch (estado) {
             case 'Pagada': return COLORS.success;
             case 'Adeuda': return COLORS.warning;
@@ -296,23 +341,25 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             default: return COLORS.textSecondary;
         }
     };
+    
     const statusColor = getStatusColor(sale.estado);
-    const isAdeuda = sale.estado === 'Adeuda' || sale.estado === 'Repartiendo';
+    const statusLabel = isCobranza ? 'COBRO' : sale.estado.toUpperCase();
+    const isAdeuda = !isCobranza && (sale.estado === 'Adeuda' || sale.estado === 'Repartiendo');
     const isAnulada = sale.estado === 'Anulada';
 
 
     return (
         <View style={styles.container}>
-            {/* Usamos dark-content en el fondo claro */}
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
             
-            {/* --- HEADER ESTILIZADO --- */}
+            {/* --- HEADER --- */}
             <View style={[styles.header, { backgroundColor: COLORS.backgroundEnd, borderColor: COLORS.glassBorder }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>DETALLE DE VENTA</Text>
+                {/* Cambiamos título si es cobro */}
+                <Text style={styles.title}>{isCobranza ? 'DETALLE DE COBRO' : 'DETALLE DE VENTA'}</Text>
                 <View style={styles.headerButton} />
             </View>
             
@@ -322,41 +369,44 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
                         {/* Summary Card */}
                         <View style={[styles.summaryCard, isAnulada && { opacity: 0.5 }]}>
                             
-                            {/* ✅ CORRECCIÓN: ROW PARA CLIENTE Y PILL - VUELVE AL DISEÑO ORIGINAL PERO ESTILIZADO */}
                             <View style={styles.clientHeaderRow}>
                                 <Text style={styles.clientName} numberOfLines={1}>{clientName}</Text>
                                 <View style={[styles.statusPillContainer, { borderColor: statusColor, backgroundColor: `${statusColor}20` }]}>
-                                    <Text style={[styles.statusPillText, { color: statusColor }]}>{sale.estado.toUpperCase()}</Text>
+                                    <Text style={[styles.statusPillText, { color: statusColor }]}>{statusLabel}</Text>
                                 </View>
                             </View>
 
-                            <Text style={styles.saleDate}>Vendedor: <Text style={{fontWeight: 'bold', color: COLORS.textPrimary}}>{sale.vendedorNombre || 'Tú'}</Text></Text> 
+                            <Text style={styles.saleDate}>Vendedor: <Text style={{fontWeight: 'bold', color: COLORS.textPrimary}}>{sale.vendedorNombre || sale.vendedorName || 'Tú'}</Text></Text> 
                             
                             <Text style={styles.saleDate}>{saleDateFormatted}</Text>
                             
                             <View style={[styles.totalRow, styles.totalRowBorder]}>
-                                <Text style={styles.totalLabel}>TOTAL VENTA:</Text>
-                                <Text style={styles.totalAmount}>{formatCurrency(sale.totalVenta)}</Text>
+                                <Text style={styles.totalLabel}>{isCobranza ? 'MONTO COBRADO:' : 'TOTAL VENTA:'}</Text>
+                                {/* Usamos color violeta si es cobro */}
+                                <Text style={[styles.totalAmount, isCobranza && { color: '#8B5CF6' }]}>{formatCurrency(montoMostrar)}</Text>
                             </View>
                             
-                            <View style={styles.balanceRow}>
-                                <Text style={styles.balanceLabel}>SALDO PENDIENTE:</Text>
-                                <Text style={styles.balanceAmount}>{formatCurrency(sale.saldoPendiente)}</Text>
-                            </View>
-
+                            {/* Solo mostramos saldo si NO es cobro */}
+                            {!isCobranza && (
+                                <View style={styles.balanceRow}>
+                                    <Text style={styles.balanceLabel}>SALDO PENDIENTE:</Text>
+                                    <Text style={styles.balanceAmount}>{formatCurrency(sale.saldoPendiente)}</Text>
+                                </View>
+                            )}
                         </View>
                         
-                        <Text style={styles.listHeader}>PRODUCTOS VENDIDOS</Text>
+                        {/* Solo mostramos titulo de productos si NO es cobro */}
+                        {!isCobranza && <Text style={styles.listHeader}>PRODUCTOS VENDIDOS</Text>}
                     </View>
                 }
-                data={sale.items}
+                // Si es cobro, lista vacía
+                data={isCobranza ? [] : sale.items}
                 keyExtractor={(item, index) => `${item.nombre}-${index}`}
                 contentContainerStyle={styles.listContentContainer}
                 renderItem={({ item }) => (
                     <View style={styles.itemCard}>
                         <View style={styles.itemDetails}>
                             <Text style={styles.itemName}>{item.nombre}</Text>
-                            {/* ✅ CORREGIDO: Item Price envuelto en Text */}
                             <Text style={styles.itemPrice}>
                                 <Text>{item.quantity} x </Text><Text>{formatCurrency(item.precio)}</Text>
                             </Text>
@@ -365,17 +415,24 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
                         <Text style={styles.itemSubtotal}>{formatCurrency(item.quantity * (item.precio || 0))}</Text>
                     </View>
                 )}
+                ListEmptyComponent={
+                    isCobranza ? (
+                        <View style={styles.emptyContainer}>
+                            <Feather name="check-circle" size={SIZES.h1} color="#8B5CF6" />
+                            <Text style={styles.emptyText}>Pago registrado correctamente.</Text>
+                        </View>
+                    ) : null
+                }
             />
             
-            {/* --- FOOTER DE ACCIÓN --- */}
-            {isAdeuda && (sale.saldoPendiente || 0) > 0 && (
-                // ✅ CORREGIDO: Usamos paddingBottom: SIZES.medium para Android
+            {/* --- FOOTER DE ACCIÓN (Solo si es Venta y hay Deuda) --- */}
+            {isAdeuda && (sale.saldoPendiente || 0) > 0.01 && (
                 <View style={[styles.footer, { paddingBottom: SIZES.medium }]}>
                     <TouchableOpacity 
                         style={styles.actionButton}
                         onPress={() => setIsDebtModalOpen(true)}
                     >
-                        <Feather name="dollar-sign" size={SIZES.h3} color={COLORS.primary} />
+                        <Feather name="dollar-sign" size={SIZES.h3} color={COLORS.cardBackground} />
                         <Text style={styles.actionButtonText}>REGISTRAR COBRO</Text>
                     </TouchableOpacity>
                 </View>
@@ -392,14 +449,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     );
 };
 
-// --- Estilos (AJUSTADOS AL TEMA ORIGINAL Y SIZES SEMÁNTICOS) ---
+// --- Estilos Originales Mantenidos ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundStart },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
     errorText: { color: COLORS.danger, textAlign: 'center', marginTop: SIZES.medium * 5, fontSize: SIZES.body },
     
-    // --- HEADER ESTANDARIZADO ---
     header: { 
         flexDirection: 'row', 
         alignItems: 'center', 
@@ -422,9 +478,9 @@ const styles = StyleSheet.create({
         color: COLORS.textPrimary,
         textTransform: 'uppercase',
     },
-    // --- SUMMARY CARD ---
+    
     headerContentContainer: {
-        paddingHorizontal: SIZES.medium, // 16px
+        paddingHorizontal: SIZES.medium, 
         paddingBottom: SIZES.small,
     },
     summaryCard: { 
@@ -439,14 +495,14 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'flex-start', 
-        marginBottom: SIZES.small, // Usando SIZES.small (8)
+        marginBottom: SIZES.small,
     },
     clientName: { 
         color: COLORS.textPrimary, 
-        fontSize: SIZES.h3, // 20px
+        fontSize: SIZES.h3, 
         fontWeight: 'bold', 
         flex: 1, 
-        paddingRight: SIZES.small, // 10px
+        paddingRight: SIZES.small,
     },
     saleDate: { color: COLORS.textSecondary, fontSize: SIZES.xsmallText, marginBottom: SIZES.xsmall / 2 },
 
@@ -464,15 +520,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: SIZES.small,
         paddingVertical: SIZES.xsmall,
         borderWidth: SIZES.borderWidth,
-        maxWidth: '40%', // Limitar el ancho
+        maxWidth: '40%',
     },
     statusPillText: {
-        fontSize: SIZES.xsmallText, // 12px
+        fontSize: SIZES.xsmallText,
         fontWeight: 'bold',
         textTransform: 'uppercase',
     },
 
-    // --- LISTA DE PRODUCTOS ---
     listHeader: { 
         fontSize: SIZES.body, 
         fontWeight: '600', 
@@ -484,7 +539,7 @@ const styles = StyleSheet.create({
     },
     listContentContainer: { 
         paddingHorizontal: SIZES.medium, 
-        paddingBottom: SIZES.medium * 8 // Espacio para el footer fijo
+        paddingBottom: SIZES.medium * 8 
     },
     itemCard: { 
         flexDirection: 'row', 
@@ -494,7 +549,7 @@ const styles = StyleSheet.create({
         paddingVertical: SIZES.medium, 
         paddingHorizontal: SIZES.medium, 
         borderRadius: SIZES.small, 
-        marginBottom: SIZES.small,
+        marginBottom: SIZES.small, 
         borderWidth: SIZES.borderWidth, 
         borderColor: COLORS.glassBorder,
     },
@@ -504,7 +559,6 @@ const styles = StyleSheet.create({
     promoText: { color: COLORS.success, fontSize: SIZES.xsmallText, fontStyle: 'italic', marginTop: SIZES.xsmall / 2 },
     itemSubtotal: { color: COLORS.textPrimary, fontSize: SIZES.body, fontWeight: 'bold' },
     
-    // --- FOOTER DE ACCIÓN ---
     footer: { 
         position: 'absolute', 
         bottom: 0, 
@@ -513,12 +567,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: SIZES.medium, 
         paddingVertical: SIZES.small, 
         backgroundColor: COLORS.backgroundEnd, 
-        borderTopWidth: SIZES.borderWidth * 2,
-        borderColor: COLORS.primary,
-        shadowColor: COLORS.textPrimary,
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 5,
+        borderTopWidth: SIZES.borderWidth * 2, 
+        borderColor: COLORS.primary, 
+        shadowColor: COLORS.textPrimary, 
+        shadowOffset: { width: 0, height: -2 }, 
+        shadowOpacity: 0.2, 
+        shadowRadius: 5, 
         elevation: 10,
     },
     actionButton: { 
@@ -528,16 +582,15 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.primary, 
         paddingVertical: SIZES.medium, 
         borderRadius: SIZES.radius, 
-        gap: SIZES.small,
+        gap: SIZES.small, 
         height: 56,
     },
     actionButtonText: { 
-        color: COLORS.primary, 
+        color: COLORS.cardBackground, 
         fontSize: SIZES.h3, 
         fontWeight: 'bold',
     },
 
-    // --- MODAL DE COBRO ---
     modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
     modalContent: { 
         width: '85%', 
@@ -566,6 +619,9 @@ const styles = StyleSheet.create({
     modalButtonCancel: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, backgroundColor: COLORS.disabled, borderWidth: SIZES.borderWidth, borderColor: COLORS.textSecondary },
     modalButtonConfirm: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, backgroundColor: COLORS.success }, 
     modalButtonText: { color: COLORS.primary, fontWeight: 'bold', textAlign: 'center', fontSize: SIZES.body },
+    
+    emptyContainer: { alignItems: 'center', justifyContent: 'center', padding: SIZES.large, gap: SIZES.small },
+    emptyText: { color: COLORS.textSecondary, fontStyle: 'italic' }
 });
 
 export default SaleDetailScreen;

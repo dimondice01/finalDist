@@ -5,11 +5,11 @@
 export const COLORS = {
   // --- FONDOS BASE (Cálidos, Suaves y Neutros) ---
   // Un gris muy claro con un matiz beige, muy cómodo para la vista.
-  backgroundStart: '#F9F7F5', // Gris Cálido Muy Claro (Near Beige) - Fondo Principal
-  backgroundEnd: '#FFFFFF',   // Blanco Puro - Para tarjetas y componentes elevados (Limpieza)
+  backgroundStart: '#fff0e1ff', // Gris Cálido Muy Claro (Near Beige) - Fondo Principal
+  backgroundEnd: '#f8f6f6ff',   // Blanco Puro - Para tarjetas y componentes elevados (Limpieza)
   
   // --- COLOR PRINCIPAL (Teal Profundo para profesionalismo) ---
-  primary: '#008080',         // Teal Profundo / Petróleo (Deep Teal) - Base de Marca y CTAs
+  primary: '#331d6aff',         // Teal Profundo / Petróleo (Deep Teal) - Base de Marca y CTAs
   secondary:  "#006666",      // Teal más oscuro y serio
   
   // Acento/Highlighter: Un Coral Cálido para inyectar un punto focal vibrante.

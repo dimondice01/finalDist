@@ -1,4 +1,4 @@
-// src/screens/ClientDashboardScreen.tsx
+// src/screens/client-dashboard.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -125,7 +125,7 @@ const WeeklyGoalWidget = memo(({ goalInfo }: {
 });
 
 
-// --- Componente SaleCard (Rediseñado) ---
+// --- Componente SaleCard (CORREGIDO PARA COBROS) ---
 const SaleCard = memo(({ item, onEdit, onDelete, onNavigate, isOffline }: {
     item: Sale;
     onEdit: (saleId: string, clientId: string) => void;
@@ -138,13 +138,19 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate, isOffline }: {
     const color = getStatusColor(item.estado);
     const isPending = item.estado === 'Pendiente de Entrega';
     const isAnulada = item.estado === 'Anulada';
+    const isCobranza = item.tipo === 'cobranza'; // <--- DETECCIÓN
 
     let icon: keyof typeof Feather.glyphMap;
     let iconColor: string;
     let title: string;
     const formattedDate = formatDate(item.fecha);
 
-    if (isAnulada) {
+    // Lógica de visualización según el tipo
+    if (isCobranza) {
+        icon = 'download'; // Icono de "Entrada de dinero"
+        iconColor = '#8B5CF6'; // Violeta distintivo para cobros
+        title = `COBRO - ${formattedDate}`;
+    } else if (isAnulada) {
         icon = 'x-circle';
         iconColor = COLORS.danger; 
         title = `ANULADA - ${formattedDate}`;
@@ -161,6 +167,9 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate, isOffline }: {
         iconColor = color; 
         title = `VENTA - ${formattedDate}`;
     }
+
+    // Determinamos el monto a mostrar: Si es cobro, usamos el pago efectivo; si no, el total de venta
+    const amountToShow = isCobranza ? (item.pagoEfectivo || item.montoCobrado || 0) : item.totalVenta;
 
     const handleNavigate = useCallback(() => onNavigate(item.id), [item.id, onNavigate]);
     
@@ -197,12 +206,17 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate, isOffline }: {
 
             <View style={saleCardStyles.saleInfo}>
                 <Text style={saleCardStyles.saleDate}>{title}</Text> 
-                <Text style={saleCardStyles.saleTotal}>{formatCurrency(item.totalVenta)}</Text>
-                <Text style={[saleCardStyles.saleStatus, { color: color }]}>{item.estado || 'Desconocido'}</Text>
+                {/* Mostramos el monto correcto según si es cobro o venta */}
+                <Text style={[saleCardStyles.saleTotal, isCobranza && { color: iconColor }]}>
+                    {formatCurrency(amountToShow)}
+                </Text>
+                <Text style={[saleCardStyles.saleStatus, { color: color }]}>
+                    {isCobranza ? 'Pago Registrado' : (item.estado || 'Desconocido')}
+                </Text>
             </View>
 
             <View style={saleCardStyles.actionButtonsContainer}>
-                {isPending ? (
+                {isPending && !isCobranza ? ( // Solo permitimos editar/borrar si es venta pendiente
                     <View style={saleCardStyles.actionButtonsGroup}>
                         <TouchableOpacity
                             style={[saleCardStyles.actionButton, isOffline && saleCardStyles.actionButtonDisabled]}
@@ -285,6 +299,7 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         
         const salesThisWeek = clientSales.filter(sale => {
             if (sale.estado === 'Anulada') return false;
+            if (sale.tipo === 'cobranza') return false; // No contamos cobros de deuda vieja para la meta semanal de venta
             
             let saleDate: Date;
             if (sale.fecha instanceof Date) {

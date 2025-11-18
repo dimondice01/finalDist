@@ -98,6 +98,8 @@ export interface Vendor {
     comisionGeneral?: number;
     firebaseAuthUid?: string;
 }
+
+// --- INTERFAZ SALE ACTUALIZADA PARA COBRANZAS ---
 export interface Sale {
     id: string;
     clienteId: string;
@@ -112,7 +114,10 @@ export interface Sale {
     totalComision: number;
     observaciones: string;
     estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada';
-    tipo: 'venta' | 'reposicion' | "devolucion";
+    
+    // ✅ TIPO ACTUALIZADO: Incluye 'cobranza' y 'rendicion_cobranza'
+    tipo: 'venta' | 'reposicion' | "devolucion" | "cobranza" | "rendicion_cobranza";
+    
     fecha: { seconds: number } | Date;
     
     // ✅ INICIO CAMBIOS AFIP (Punto 2: Ventas)
@@ -135,6 +140,12 @@ export interface Sale {
     pagoEfectivo?: number;
     pagoTransferencia?: number;
     itemDiscounts?: { [itemId: string]: number }; 
+
+    // ✅ NUEVOS CAMPOS PARA COBRANZA (Agregados para soportar la funcionalidad)
+    montoCobrado?: number;       // Monto total cobrado en una operación de cobranza
+    rendido?: boolean;           // Si el dinero ya fue entregado a caja
+    fechaRendicion?: any;        // Cuándo se rindió
+    ventaOriginalId?: string;    // ID de la venta que generó la deuda (si aplica)
 }
 export interface Route {
     id: string;
@@ -397,6 +408,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 return { id: docSnap.id, ...data };
             };
 
+            // --- FUNCIÓN DE PROCESAMIENTO DE VENTAS (ACTUALIZADA) ---
             const processFirebaseSale = (docSnap: FirebaseFirestoreTypes.DocumentSnapshot): Sale => {
                 const rawData = processFirebaseDoc(docSnap); 
                 const items = (rawData.items || []).map((item: any) => ({
@@ -420,7 +432,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     tipo: rawData.tipo || 'venta',
                     fecha: rawData.fecha || rawData.saleDate || new Date(0), 
                     
-                    // ✅ AÑADIDO: Campos de Facturación AFIP
+                    // ✅ INICIO CAMBIOS AFIP
                     tipoDocumento: rawData.tipoDocumento,
                     numeroDocumento: rawData.numeroDocumento,
                     facturaAfip: rawData.facturaAfip, 
@@ -430,6 +442,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     afipFechaVtoCAE: rawData.afipFechaVtoCAE,
                     afipPuntoVenta: rawData.afipPuntoVenta,
                     afipResultado: rawData.afipResultado,
+                    // ✅ FIN CAMBIOS AFIP
                     
                     saldoPendiente: rawData.saldoPendiente ?? 0,
                     paymentMethod: rawData.paymentMethod,
@@ -437,7 +450,13 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     pagoEfectivo: rawData.pagoEfectivo ?? 0,
                     pagoTransferencia: rawData.pagoTransferencia ?? 0,
                     itemDiscounts: rawData.itemDiscounts || {}, 
-                    } as Sale;
+
+                    // ✅ NUEVOS CAMPOS PARA COBRANZA (Mapeo)
+                    montoCobrado: rawData.montoCobrado,
+                    rendido: rawData.rendido,
+                    fechaRendicion: rawData.fechaRendicion,
+                    ventaOriginalId: rawData.ventaOriginalId,
+                } as Sale;
             };
 
             const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap] = await Promise.all([
@@ -569,7 +588,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     const data = doc.data();
                     return ({ 
                         id: doc.id, 
-                        ...data,
+                        ...data, 
                         nombre: data.nombrePromocion || data.nombre, 
                         productoIds: data.productoIds || (data.productoId ? [data.productoId] : []),
                         clienteIds: data.clienteIds || [],

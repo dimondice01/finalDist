@@ -1,10 +1,9 @@
-// src/screens/ClientDebtsScreen.tsx
+// src/screens/client-debts.tsx
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 // --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 import {
-    addDoc,
     collection,
     doc,
     runTransaction,
@@ -14,7 +13,7 @@ import {
 // --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
@@ -23,15 +22,14 @@ import { ClientDebtsScreenProps } from '../navigation/AppNavigator';
 // --- Contexto, DB, Estilos ---
 import { Sale as BaseSale, useData } from '../../context/DataContext';
 
-// --- ¡¡INICIO DE CORRECCIÓN DE IMPORTACIÓN!! ---
 import { dbContainer } from '../../db/firebase-service';
 // ✅ Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
 
-// Usamos el tipo completo de DataContext, renombrado para claridad
+// Usamos el tipo completo de DataContext
 type Sale = BaseSale; 
 
-// --- Props del Modal (ACTUALIZADA) ---
+// --- Props del Modal ---
 interface RegisterPaymentModalProps {
     visible: boolean;
     onClose: () => void;
@@ -41,7 +39,7 @@ interface RegisterPaymentModalProps {
     isOffline: boolean; 
 }
 
-// --- Función auxiliar para fechas (CORREGIDA) ---
+// --- Función auxiliar para fechas ---
 const getDateTimestamp = (fecha: Sale['fecha']): number => {
     if (!fecha) return 0;
     if (fecha instanceof Date) {
@@ -57,25 +55,33 @@ const getDateTimestamp = (fecha: Sale['fecha']): number => {
     return 0;
 };
 
-// --- COMPONENTE MODAL (ACTUALIZADO CON ESTILOS EJECUTIVOS) ---
+// --- COMPONENTE MODAL ---
 const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess, isOffline }: RegisterPaymentModalProps) => {
     const [amount, setAmount] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
-    if (!debt) return null;
-
+    // 1. HOOKS PRIMERO: Movemos useMemo y useCallback ANTES de cualquier 'return' condicional.
+    
     const modalDate = useMemo(() => {
+        // Protección: Si debt es null, retornamos un valor por defecto para que el hook no falle
+        if (!debt) return 'Fecha inválida';
+        
         const ts = getDateTimestamp(debt.fecha);
         return ts > 0 ? new Date(ts).toLocaleDateString('es-AR') : 'Fecha inválida';
-    }, [debt.fecha]);
+    }, [debt]); // Dependencia: 'debt' completo en lugar de 'debt.fecha' para seguridad
 
     const handleConfirmPayment = useCallback(async () => {
+        // Protección dentro de la función
+        if (!debt) return;
+
         const paymentAmount = parseFloat(amount);
         if (isNaN(paymentAmount) || paymentAmount <= 0) {
             Alert.alert("Error", "Por favor, ingresa un monto válido.");
             return;
         }
-        if (paymentAmount > (debt.saldoPendiente || 0) + 0.01) { 
+        
+        // Validar que no pague más de lo que debe (con margen de error pequeño para decimales)
+        if (paymentAmount > (debt.saldoPendiente || 0) + 0.10) { 
             Alert.alert("Error", `El monto no puede ser mayor al saldo pendiente de $${(debt.saldoPendiente || 0).toFixed(2)}.`);
             return;
         }
@@ -91,20 +97,33 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
         
         const executeTransaction = async () => {
             await runTransaction(db, async (transaction) => {
-                // 1. Crear el documento de "Cobro"
-                await addDoc(collection(db, 'ventas'), {
-                    clientName: `Cobro Saldo - ${clientName || debt.clienteNombre || 'Cliente'}`, 
-                    estado: "Pagada",
-                    fecha: serverTimestamp(), 
+                // 1. Crear el documento de "Cobranza"
+                // IMPORTANTE: Estructura compatible con ReporteVendedor y lógica de Caja
+                const cobroRef = doc(collection(db, 'ventas')); // Generamos ID nuevo
+                transaction.set(cobroRef, {
+                    tipo: 'cobranza', // 👈 CRÍTICO para diferenciar de ventas
+                    clientName: clientName || debt.clienteNombre || 'Cliente',
+                    clienteId: debt.clienteId,
+                    estado: "Pagada", // Una cobranza nace pagada
+                    fecha: serverTimestamp(),
                     numeroFactura: `COBRO-${debt.numeroFactura || debt.id.substring(0, 6)}`,
-                    pagoEfectivo: paymentAmount,
+                    
+                    // Datos económicos
+                    pagoEfectivo: paymentAmount, // Lo que entra a la caja del vendedor
                     pagoTransferencia: 0,
-                    saldoPendiente: 0,
+                    saldoPendiente: 0, // El cobro en sí no genera deuda
+                    totalVenta: 0, // 👈 0 para no duplicar ventas en reportes
+                    montoCobrado: paymentAmount, // Campo auxiliar útil para reportes rápidos
+                    items: [], // 👈 Array vacío para que no rompa iteraciones de productos
+
+                    // Datos de rastreo
                     vendedorId: debt.vendedorId,
-                    vendedorNombre: debt.vendedorName,
+                    vendedorNombre: debt.vendedorNombre || debt.vendedorName || 'Desconocido',
+                    ventaOriginalId: debt.id, // Referencia a qué deuda pagó
+                    ventaOriginalFecha: debt.fecha
                 });
 
-                // 2. Actualizar la factura original
+                // 2. Actualizar la factura original (reducir deuda)
                 const saleRef = doc(db, 'ventas', debt.id);
                 const saleDoc = await transaction.get(saleRef);
                 
@@ -114,17 +133,25 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
                 const data = saleDoc.data();
                 if (!data) throw new Error("No se pudieron leer los datos de la venta.");
 
-                const newBalance = (data.saldoPendiente || 0) - paymentAmount;
-                const newStatus = newBalance <= 0.01 ? "Pagada" : "Adeuda";
-                const finalCommission = newStatus === 'Pagada'
-                    ? data.totalVenta * ((data.porcentajeComision || 0) / 100)
-                    : (data.totalComision || 0);
+                const currentSaldo = data.saldoPendiente || 0;
+                const newBalance = currentSaldo - paymentAmount;
+                
+                // Si el saldo es menor a 1 peso, lo consideramos pagado para evitar problemas de redondeo
+                const newStatus = newBalance <= 1 ? "Pagada" : "Adeuda";
+                
+                // Recálculo de comisión: Si se paga totalmente, aseguramos la comisión total
+                // NOTA: Aquí podrías ajustar si pagas comisiones parciales.
+                // Por ahora mantenemos tu lógica: si se paga, se libera la comisión base.
+                let updates: any = {
+                    saldoPendiente: newBalance < 0 ? 0 : newBalance,
+                    estado: newStatus
+                };
 
-                transaction.update(saleRef, {
-                    saldoPendiente: newBalance,
-                    estado: newStatus,
-                    totalComision: finalCommission,
-                });
+                if (newStatus === 'Pagada') {
+                   updates.fechaPagoCompleto = serverTimestamp();
+                }
+
+                transaction.update(saleRef, updates);
             });
         };
         
@@ -157,6 +184,9 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
         }
     }, [amount, debt, clientName, onPaymentSuccess, onClose, isOffline]);
 
+    // 2. CONDICIONAL AL FINAL: Ahora es seguro retornar null si no hay deuda
+    if (!debt) return null;
+
     return (
         <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
             <View style={styles.modalOverlay}>
@@ -167,7 +197,7 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
 
                     <TextInput
                         style={styles.input}
-                        placeholder="Monto Cobrado"
+                        placeholder="Monto ($)"
                         placeholderTextColor={COLORS.textSecondary}
                         keyboardType="numeric"
                         value={amount}
@@ -192,10 +222,8 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
         </Modal>
     );
 };
-// --- FIN COMPONENTE MODAL ---
 
-
-// --- Componente DebtCard (Rediseñado) ---
+// --- Componente DebtCard ---
 const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) => void }) => {
     
     const formattedDate = useMemo(() => {
@@ -215,7 +243,7 @@ const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) =>
         >
             <View style={styles.debtInfoContainer}>
                 <Text style={styles.debtDate}>Venta del {formattedDate}</Text>
-                <Text style={styles.debtTotal}>Total: ${item.totalVenta?.toFixed(2)}</Text>
+                <Text style={styles.debtTotal}>Total Original: ${item.totalVenta?.toFixed(2)}</Text>
             </View>
             <View style={styles.debtAmountContainer}>
                 <Text style={styles.debtAmountLabel}>ADEUDA</Text>
@@ -225,10 +253,8 @@ const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) =>
         </TouchableOpacity>
     );
 });
-// --- FIN Componente Memoizado ---
 
-
-// --- Pantalla Principal (Estilizada) ---
+// --- Pantalla Principal ---
 const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
     const { clientId, clientName } = route.params;
     const { sales, isLoading, syncData, isOffline } = useData();
@@ -242,9 +268,9 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
                 sale &&
                 sale.clienteId === clientId &&
                 sale.estado === 'Adeuda' &&
-                (sale.saldoPendiente || 0) > 0.01 
+                (sale.saldoPendiente || 0) > 1 // Filtramos saldos mayores a $1
             )
-            .sort((a, b) => getDateTimestamp(a.fecha) - getDateTimestamp(b.fecha));
+            .sort((a, b) => getDateTimestamp(a.fecha) - getDateTimestamp(b.fecha)); // Más antiguas primero
     }, [sales, clientId]);
 
     const handleOpenModal = useCallback((debt: Sale) => { 
@@ -292,13 +318,10 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
                         <Feather name="check-circle" size={SIZES.h1} color={COLORS.success} />
-                        <Text style={styles.emptyText}>¡Este cliente no tiene saldos pendientes!</Text>
+                        <Text style={styles.emptyText}>¡Al día! No hay deudas pendientes.</Text>
                     </View>
                 }
                 initialNumToRender={15}
-                maxToRenderPerBatch={10}
-                windowSize={11}
-                removeClippedSubviews={Platform.OS === 'android'}
             />
             
             <RegisterPaymentModal
@@ -313,13 +336,11 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
     );
 };
 
-// --- Estilos (Ajustados al sistema de diseño) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundStart },
     background: { position: 'absolute', top: 0, left: 0, right: 0, height: '100%' },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
     
-    // Header
     header: { 
         flexDirection: 'row', 
         alignItems: 'center', 
@@ -347,8 +368,6 @@ const styles = StyleSheet.create({
         marginBottom: SIZES.medium,
         marginTop: SIZES.medium,
     },
-
-    // Lista y Tarjeta de Deuda
     listContentContainer: { 
         paddingHorizontal: SIZES.large, 
         paddingBottom: SIZES.large 
@@ -363,10 +382,6 @@ const styles = StyleSheet.create({
         marginBottom: SIZES.small, 
         borderWidth: SIZES.borderWidth, 
         borderColor: COLORS.glassBorder,
-        shadowColor: COLORS.textPrimary,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
         elevation: 1,
     },
     debtInfoContainer: { flex: 1, marginRight: SIZES.medium },
@@ -377,11 +392,9 @@ const styles = StyleSheet.create({
     debtAmount: { color: COLORS.warning, fontSize: SIZES.h3, fontWeight: 'bold', marginTop: SIZES.xsmall / 2 },
     payIcon: { padding: SIZES.xsmall },
 
-    // Empty State
     emptyContainer: { alignItems: 'center', marginTop: SIZES.xl, gap: SIZES.medium },
     emptyText: { color: COLORS.textSecondary, fontSize: SIZES.body, textAlign: 'center' },
 
-    // Modal
     modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
     modalContent: { 
         width: '85%', 

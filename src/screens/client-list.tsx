@@ -138,7 +138,7 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
     }, [availableZones]);
 
     const selectedZoneName = useMemo(() => {
-        if (!zonaFilter) return 'Todas las Zonas';
+        if (!zonaFilter) return 'Zonas';
         const selectedZone = sortedAvailableZones.find(z => z.id === zonaFilter);
         return selectedZone ? selectedZone.nombre : 'Seleccionar Zona';
     }, [zonaFilter, sortedAvailableZones]);
@@ -211,7 +211,7 @@ const ClientListScreen = ({ navigation }: ClientListScreenProps) => {
                     <Feather name="search" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
                     <TextInput
                         style={styles.input}
-                        placeholder="Buscar por nombre..."
+                        placeholder="Nombre..."
                         placeholderTextColor={COLORS.textSecondary}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
