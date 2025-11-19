@@ -1,978 +1,734 @@
 // src/screens/route-detail.tsx
+
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-
-// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
-import {
-    doc,
-    increment,
-    runTransaction,
-    serverTimestamp,
-    Timestamp,
-    updateDoc,
-    writeBatch
-} from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS ---
-
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    KeyboardAvoidingView,
+    Linking,
+    Modal,
+    Platform,
+    SafeAreaView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
+} from 'react-native';
 import Toast from 'react-native-toast-message';
 
-// --- Navegación ---
+// --- FIREBASE NATIVO ---
+import firestore from '@react-native-firebase/firestore';
+
+// --- CONTEXTO Y UTILS ---
+import { useData } from '../../context/DataContext';
+import { COLORS, SIZES } from '../../styles/theme';
 import type { RouteDetailScreenProps } from '../navigation/AppNavigator';
 
-// --- Contexto y DB ---
-import { useData } from '../../context/DataContext';
-import { dbContainer } from '../../db/firebase-service';
-// ✅ Importamos SIZES y COLORS
-import { COLORS, SIZES } from '../../styles/theme';
+const formatCurrency = (value?: number) =>
+    typeof value === 'number'
+        ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : '$0,00';
 
-const formatCurrency = (value?: number) => (typeof value === 'number' ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00');
+// --- INTERFACES ---
+interface ProductItem {
+    id: string;
+    productId?: string;
+    nombre: string;
+    quantity: number;
+    precio: number;
+    originalQuantity?: number; 
+}
 
-// --- INTERFACES CORREGIDAS ---
-interface SaleItem { nombre: string; quantity: number; precio: number; promoAplicada?: string; }
-interface DriverItem { productId: string; nombre: string; quantity: number; precio: number; }
 interface Invoice {
     id: string;
     clienteId: string;
     clienteNombre: string;
     clienteDireccion: string;
     totalVenta: number;
-    saldoPendiente: number; 
+    saldoPendiente: number;
+    pagoEfectivo?: number;
+    pagoTransferencia?: number;
     estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda';
-    location?: { latitude: number; longitude: number; };
+    location?: { latitude: number; longitude: number };
     telefono?: string;
-    items: DriverItem[];
-}
-interface RouteFull {
-    id: string;
-    nombre: string; 
-    fecha?: Date;
-    estado?: 'Creada' | 'En Curso' | 'Completada' | 'Archivada';
-    facturas: Invoice[];
+    items: ProductItem[];
 }
 
 // =================================================================================
-// --- Componente DeliveryAdjustmentModal Styles (Definido fuera del componente) ---
+// MODAL DE GESTIÓN DE ENTREGA
 // =================================================================================
-const modalStyles = StyleSheet.create({
-    keyboardAvoidingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' },
-    adjustmentModalContent: {
-        width: '95%',
-        maxHeight: '90%', 
-        backgroundColor: COLORS.backgroundEnd, 
-        borderRadius: SIZES.radius, 
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder,
-        padding: SIZES.medium,
-        overflow: 'hidden' 
-    },
-    modalTitle: { fontSize: SIZES.h2, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center', marginBottom: SIZES.xsmall },
-    modalSubtitle: { fontSize: SIZES.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SIZES.large },
-    sectionHeader: { fontSize: SIZES.caption, fontWeight: '700', color: COLORS.textSecondary, textTransform: 'uppercase', marginBottom: SIZES.small, marginTop: SIZES.medium },
-    modalScrollViewContent: { paddingBottom: SIZES.large },
-    
-    // Item List
-    itemList: { marginBottom: SIZES.medium, borderTopWidth: SIZES.borderWidth, borderBottomWidth: SIZES.borderWidth, borderColor: COLORS.glassBorder, flexGrow: 0 },
-    itemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: SIZES.small, borderBottomWidth: SIZES.borderWidth, borderBottomColor: COLORS.glassBorder, paddingHorizontal: SIZES.small },
-    itemName: { flex: 1, color: COLORS.textPrimary, fontSize: SIZES.body, marginRight: SIZES.small },
-    quantityControl: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.backgroundEnd, borderRadius: SIZES.small, borderWidth: SIZES.borderWidth, borderColor: COLORS.glassBorder },
-    quantityButton: { padding: SIZES.xsmall },
-    quantityText: { color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body, paddingHorizontal: SIZES.xsmall * 2, paddingVertical: SIZES.xsmall },
-    quantityInput: { color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body, paddingHorizontal: SIZES.xsmall, paddingVertical: Platform.OS === 'android' ? SIZES.xsmall / 2 : SIZES.xsmall, minWidth: 40, textAlign: 'center', backgroundColor: COLORS.backgroundStart, borderRadius: SIZES.xsmall / 2, marginHorizontal: SIZES.xsmall / 2, height: SIZES.xl },
-    itemTotal: { width: 80, textAlign: 'right', color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body },
 
-    // Summary
-    summaryContainer: { paddingVertical: SIZES.medium, paddingHorizontal: SIZES.small, backgroundColor: COLORS.backgroundStart, borderRadius: SIZES.radiusSmall, marginBottom: SIZES.large },
-    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: SIZES.xsmall },
-    summaryLabel: { fontSize: SIZES.body, color: COLORS.textSecondary },
-    summaryValueOriginal: { fontSize: SIZES.body, color: COLORS.textSecondary, fontWeight: 'bold', textDecorationLine: 'line-through' },
-    summaryValueFinal: { fontSize: SIZES.h3, color: COLORS.primary, fontWeight: 'bold' },
-
-    // Footer Buttons
-    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.backgroundEnd, borderRadius: SIZES.radius, borderWidth: SIZES.borderWidth, borderColor: COLORS.glassBorder, paddingHorizontal: SIZES.medium, marginBottom: SIZES.medium, height: 52 },
-    inputIcon: { marginRight: SIZES.medium },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: SIZES.body },
-    
-    modalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: SIZES.medium, marginTop: SIZES.medium },
-    modalButton: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, alignItems: 'center' },
-    cancelButton: { backgroundColor: COLORS.disabled, borderWidth: SIZES.borderWidth, borderColor: COLORS.textSecondary },
-    confirmButton: { backgroundColor: COLORS.primary },
-    buttonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
-});
-
-
-// --- Componente DeliveryAdjustmentModal ---
-interface DeliveryAdjustmentModalProps {
+interface DeliveryModalProps {
     visible: boolean;
     onClose: () => void;
-    stop: Invoice;
+    invoice: Invoice;
     routeId: string;
-    onConfirm: (updatedStop: Invoice) => void;
+    onSuccess: () => void;
 }
 
-const DeliveryAdjustmentModal = ({ visible, onClose, stop, routeId, onConfirm }: DeliveryAdjustmentModalProps) => {
-    // [Lógica del modal... sin cambios]
-    const [modifiedItems, setModifiedItems] = useState<DriverItem[]>([]);
+const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: DeliveryModalProps) => {
+    const [items, setItems] = useState<ProductItem[]>([]);
     const [pagoEfectivo, setPagoEfectivo] = useState('');
     const [pagoTransferencia, setPagoTransferencia] = useState('');
+    const [isLoadingItems, setIsLoadingItems] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [originalItems, setOriginalItems] = useState<DriverItem[]>([]);
-    const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
 
     useEffect(() => {
-        if (stop) {
-            const deepCopy = JSON.parse(JSON.stringify(stop.items || []));
-            setModifiedItems(deepCopy);
-            setOriginalItems(deepCopy);
-            setEditingItemIndex(null);
-            setPagoEfectivo('');
-            setPagoTransferencia('');
+        if (visible && invoice) {
+            setPagoEfectivo(invoice.pagoEfectivo ? invoice.pagoEfectivo.toString() : '');
+            setPagoTransferencia(invoice.pagoTransferencia ? invoice.pagoTransferencia.toString() : '');
+            
+            const hasItems = invoice.items && invoice.items.length > 0;
+
+            if (hasItems) {
+                prepareItems(invoice.items);
+            } else {
+                fetchFullSale(invoice.id);
+            }
         }
-    }, [stop]);
+    }, [visible, invoice]);
 
-    const newTotalVenta = useMemo(() => {
-        return modifiedItems.reduce((total, item) => total + (item.precio * item.quantity), 0);
-    }, [modifiedItems]);
-
-    const handleQuantityChange = (index: number, change: 'increment' | 'decrement' | 'input', value?: string) => {
-        if (change !== 'input') { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }
-        
-        setModifiedItems(currentItems => {
-            const itemToModify = currentItems[index];
-            if (!itemToModify) return currentItems;
-
-            const originalItem = originalItems.find(item => item.productId === itemToModify.productId);
-            const maxQuantity = originalItem ? originalItem.quantity : 0;
-
-            return currentItems.map((item, idx) => {
-                if (idx === index) {
-                    let newQuantity: number;
-
-                    if (change === 'increment') {
-                        newQuantity = Math.min(item.quantity + 1, maxQuantity);
-                    } else if (change === 'decrement') {
-                        newQuantity = Math.max(0, item.quantity - 1);
-                    } else { 
-                        const numericValue = parseInt(value || "0", 10);
-                        
-                        if (isNaN(numericValue)) { newQuantity = 0; } 
-                        else if (numericValue > maxQuantity) {
-                            Toast.show({ type: 'error', text1: 'Cantidad Excesiva', text2: `No puede superar la cantidad original (${maxQuantity})` });
-                            newQuantity = maxQuantity;
-                        } else if (numericValue < 0) {
-                            newQuantity = 0;
-                        } else {
-                            newQuantity = numericValue;
-                        }
-                    }
-                    return { ...item, quantity: newQuantity };
+    const fetchFullSale = async (saleId: string) => {
+        setIsLoadingItems(true);
+        try {
+            const saleDoc = await firestore().collection('ventas').doc(saleId).get();
+            if (saleDoc.exists()) {
+                const saleData = saleDoc.data();
+                const saleItems = saleData?.items || [];
+                if (saleItems.length > 0) {
+                    prepareItems(saleItems);
+                } else {
+                    Toast.show({ type: 'error', text1: 'Datos incompletos', text2: 'La venta no tiene productos.' });
                 }
-                return item;
-            });
-        });
+            } else {
+                 Toast.show({ type: 'error', text1: 'Error', text2: 'Venta no encontrada en base de datos.' });
+            }
+        } catch (error) {
+            console.error("Error fetching sale:", error);
+            Toast.show({ type: 'error', text1: 'Error de conexión' });
+        } finally {
+            setIsLoadingItems(false);
+        }
     };
 
-    const executeTransaction = async () => {
-        setIsSaving(true);
-        setEditingItemIndex(null); 
-        
+    const prepareItems = (rawItems: any[]) => {
+        const mappedItems = rawItems.map(i => ({
+            id: i.id || i.productId || '', 
+            productId: i.productId || i.id || '',
+            nombre: i.nombre || 'Producto',
+            quantity: typeof i.quantity === 'number' ? i.quantity : 0,
+            precio: typeof i.precio === 'number' ? i.precio : 0,
+            originalQuantity: typeof i.originalQuantity === 'number' ? i.originalQuantity : (typeof i.quantity === 'number' ? i.quantity : 0)
+        }));
+        setItems(JSON.parse(JSON.stringify(mappedItems)));
+    };
+
+    const { totalVentaNuevo, totalPagado, saldoRestante, nuevoEstado } = useMemo(() => {
+        if (isLoadingItems && items.length === 0) {
+            return { 
+                totalVentaNuevo: invoice.totalVenta, 
+                totalPagado: (invoice.pagoEfectivo || 0) + (invoice.pagoTransferencia || 0),
+                saldoRestante: invoice.saldoPendiente,
+                nuevoEstado: invoice.estadoVisita
+            };
+        }
+
+        const total = items.reduce((acc, item) => acc + (item.precio * item.quantity), 0);
         const efectivo = parseFloat(pagoEfectivo.replace(',', '.')) || 0;
-        const transferencia = parseFloat(pagoTransferencia.replace(',', '.')) || 0;
-        const totalPagado = efectivo + transferencia;
+        const transfe = parseFloat(pagoTransferencia.replace(',', '.')) || 0;
+        const pagado = efectivo + transfe;
+        const saldo = parseFloat(Math.max(0, total - pagado).toFixed(2));
 
+        let estado: Invoice['estadoVisita'] = 'Pendiente';
+        if (total === 0 && pagado === 0 && items.length > 0) {
+            estado = 'Anulada'; // Todos los items rechazados
+        } else if (saldo <= 10) {
+            estado = 'Pagada';
+        } else {
+            estado = 'Adeuda';
+        }
+
+        return { totalVentaNuevo: total, totalPagado: pagado, saldoRestante: saldo, nuevoEstado: estado };
+    }, [items, pagoEfectivo, pagoTransferencia, isLoadingItems, invoice]);
+
+    const handleQuantityChange = (index: number, delta: number) => {
+        const newItems = [...items];
+        const item = newItems[index];
+        const maxStock = item.originalQuantity || item.quantity; 
+
+        let newQty = item.quantity + delta;
+        if (newQty < 0) newQty = 0;
+        if (newQty > maxStock) {
+            Toast.show({ type: 'info', text1: 'Stock Máximo', text2: 'No puedes entregar más de lo cargado.' });
+            newQty = maxStock;
+        }
+
+        if (newQty !== item.quantity) {
+            item.quantity = newQty;
+            setItems(newItems);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+    };
+
+    const handleConfirmTransaction = async () => {
+        if (totalPagado > totalVentaNuevo) {
+            Alert.alert("Montos Incorrectos", `El pago (${formatCurrency(totalPagado)}) supera el total (${formatCurrency(totalVentaNuevo)}).`);
+            return;
+        }
+
+        setIsSaving(true);
         try {
-            const finalStatus = totalPagado < newTotalVenta ? 'Adeuda' : 'Pagada';
-            const finalItemsToDeliver = modifiedItems.filter(item => item.quantity > 0);
+            await firestore().runTransaction(async (transaction) => {
+                const routeRef = firestore().collection('rutas').doc(routeId);
+                const saleRef = firestore().collection('ventas').doc(invoice.id);
 
-            const db = dbContainer.instance;
-            if (!db) { throw new Error("La base de datos no está lista. Reinicia la app."); }
-            
-            await runTransaction(db, async (transaction) => {
-                const ventaRef = doc(db, 'ventas', stop.id);
-                const routeRef = doc(db, 'rutas', routeId);
-                
                 const routeDoc = await transaction.get(routeRef);
-                // @ts-ignore
-                if (!routeDoc.exists) throw new Error("La ruta no fue encontrada.");
+                if (!routeDoc.exists()) throw new Error("Ruta no encontrada");
 
-                const stockDevueltoMap = new Map<string, number>();
+                // 1. STOCK
+                for (const item of items) {
+                    if (!item.id) continue;
+                    const cargado = item.originalQuantity || 0;
+                    const entregado = item.quantity;
+                    const devolucion = cargado - entregado;
 
-                for (const item of originalItems) {
-                    stockDevueltoMap.set(item.productId, (stockDevueltoMap.get(item.productId) || 0) + item.quantity);
-                }
-                
-                for (const item of finalItemsToDeliver) {
-                    stockDevueltoMap.set(item.productId, (stockDevueltoMap.get(item.productId) || 0) - item.quantity);
-                }
-                
-                for (const [productId, stockDifference] of stockDevueltoMap.entries()) {
-                    if (stockDifference > 0 && productId) { 
-                        const productRef = doc(db, 'productos', productId);
-                        transaction.update(productRef, { stock: increment(stockDifference) });
+                    if (devolucion > 0) {
+                        const prodRef = firestore().collection('productos').doc(item.id);
+                        transaction.update(prodRef, { stock: firestore.FieldValue.increment(devolucion) });
                     }
                 }
 
-                transaction.update(ventaRef, {
-                    estado: finalStatus,
-                    items: finalItemsToDeliver,
-                    totalVenta: newTotalVenta,
-                    pagoEfectivo: efectivo,
-                    pagoTransferencia: transferencia,
-                    saldoPendiente: newTotalVenta - totalPagado,
-                    fechaUltimoPago: serverTimestamp(),
-                });
+                // 2. SANITIZAR DATOS
+                const itemsToSave = items.map(item => ({
+                    id: item.id,
+                    productId: item.productId || item.id, 
+                    nombre: item.nombre || 'Sin nombre',
+                    quantity: Number(item.quantity),
+                    precio: Number(item.precio),
+                    originalQuantity: Number(item.originalQuantity)
+                }));
 
+                // 3. ACTUALIZAR VENTA
+                const saleDataUpdate = {
+                    items: itemsToSave,
+                    totalVenta: Number(totalVentaNuevo),
+                    pagoEfectivo: parseFloat(pagoEfectivo.replace(',', '.')) || 0,
+                    pagoTransferencia: parseFloat(pagoTransferencia.replace(',', '.')) || 0,
+                    saldoPendiente: Number(saldoRestante),
+                    estado: nuevoEstado === 'Adeuda' ? 'Pendiente de Entrega' : nuevoEstado, 
+                    fechaUltimoPago: firestore.FieldValue.serverTimestamp()
+                };
+                transaction.update(saleRef, saleDataUpdate);
+
+                // 4. ACTUALIZAR RUTA
                 const routeData = routeDoc.data();
-                const updatedFacturas = (routeData?.facturas || []).map((f: any) =>
-                    f.id === stop.id ? { ...f, estadoVisita: finalStatus, totalVenta: newTotalVenta, items: finalItemsToDeliver } : f
-                );
+                // @ts-ignore
+                const currentInvoices = routeData?.facturas || [];
+                const updatedFacturas = currentInvoices.map((f: any) => {
+                    if (f.id === invoice.id) {
+                        return {
+                            ...f,
+                            items: itemsToSave,
+                            totalVenta: saleDataUpdate.totalVenta,
+                            pagoEfectivo: saleDataUpdate.pagoEfectivo,
+                            pagoTransferencia: saleDataUpdate.pagoTransferencia,
+                            saldoPendiente: saleDataUpdate.saldoPendiente,
+                            estadoVisita: nuevoEstado,
+                        };
+                    }
+                    return f;
+                });
                 transaction.update(routeRef, { facturas: updatedFacturas });
             });
 
-            Toast.show({ type: 'success', text1: `Entrega guardada como "${finalStatus}"` });
-            Haptics.notificationAsync('success' as any);
-            
-            onConfirm({ ...stop, estadoVisita: finalStatus, totalVenta: newTotalVenta, items: finalItemsToDeliver });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Toast.show({ type: 'success', text1: 'Entrega Registrada' });
+            onSuccess();
             onClose();
-
-        } catch (error) {
-            console.error("Error en la transacción de entrega:", error);
-            const err = error as Error;
-            Toast.show({ type: 'error', text1: 'Error en la transacción', text2: err.message || 'Error desconocido' });
-            Haptics.notificationAsync('error' as any);
+        } catch (error: any) {
+            console.error("Transaction Error:", error);
+            Alert.alert("Error", "No se pudo guardar: " + error.message);
         } finally {
             setIsSaving(false);
         }
     };
 
-    const handleConfirmDelivery = async () => {
-        const efectivo = parseFloat(pagoEfectivo.replace(',', '.')) || 0;
-        const transferencia = parseFloat(pagoTransferencia.replace(',', '.')) || 0;
-        const totalPagado = efectivo + transferencia;
-
-        if (totalPagado > newTotalVenta) {
-            Alert.alert("Error", `El monto pagado (${formatCurrency(totalPagado)}) no puede ser mayor al nuevo total de la factura (${formatCurrency(newTotalVenta)}).`);
-            return;
-        }
-
-        const itemsChanged = JSON.stringify(originalItems) !== JSON.stringify(modifiedItems);
-        const finalItemsToDeliver = modifiedItems.filter(item => item.quantity > 0);
-        const itemsRemoved = finalItemsToDeliver.length < originalItems.length;
-
-        if (itemsChanged) {
-            let alertMessage = `Se modificaron las cantidades. El nuevo total es ${formatCurrency(newTotalVenta)}.`;
-            if(itemsRemoved) { alertMessage += ` Algunos productos se quitarán de la factura.`; }
-            if (totalPagado < newTotalVenta) { alertMessage += `\nSe marcará como "Adeuda" con un saldo de ${formatCurrency(newTotalVenta - totalPagado)}.`; }
-            alertMessage += "\n\n¿Continuar?";
-            
-            Alert.alert("Revisar Cambios", alertMessage, [
-                { text: 'No', style: 'cancel' },
-                { text: 'Sí, Confirmar', onPress: executeTransaction }
-            ]);
-        }
-        else if (totalPagado < newTotalVenta) {
-            Alert.alert("Saldo Pendiente", `La factura se marcará como "Adeuda" con un saldo de ${formatCurrency(newTotalVenta - totalPagado)}. ¿Continuar?`, [
-                { text: 'No', style: 'cancel' },
-                { text: 'Sí, Continuar', onPress: executeTransaction }
-            ]);
-        } 
-        else {
-           await executeTransaction();
-        }
-    };
-
-    if (!stop) return null;
-
-    // --- RENDER DEL MODAL (ESTILIZADO) ---
     return (
-        <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={modalStyles.keyboardAvoidingContainer} 
-            >
-                <View style={modalStyles.adjustmentModalContent}>
-                    <ScrollView contentContainerStyle={modalStyles.modalScrollViewContent}> 
-                        <Text style={modalStyles.modalTitle}>GESTIONAR ENTREGA</Text>
-                        <Text style={modalStyles.modalSubtitle}>{stop.clienteNombre}</Text>
+        <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={modalStyles.container}>
+                <View style={modalStyles.content}>
+                    <View style={modalStyles.header}>
+                        <View>
+                            <Text style={modalStyles.title}>Gestionar Entrega</Text>
+                            <Text style={modalStyles.subtitle}>{invoice.clienteNombre}</Text>
+                        </View>
+                        <TouchableOpacity onPress={onClose} style={modalStyles.closeBtn}>
+                            <Feather name="x" size={24} color={COLORS.textSecondary} />
+                        </TouchableOpacity>
+                    </View>
 
-                        <Text style={modalStyles.sectionHeader}>PRODUCTOS</Text>
-                        
+                    <View style={modalStyles.sectionHeader}>
+                        <Text style={modalStyles.sectionTitle}>PRODUCTOS</Text>
+                        <Text style={modalStyles.sectionInfo}>(Ajustar rechazos)</Text>
+                    </View>
+
+                    {isLoadingItems ? (
+                        <ActivityIndicator size="large" color={COLORS.primary} style={{margin: 20}} />
+                    ) : (
                         <FlatList
-                            data={modifiedItems}
-                            keyExtractor={(item, index) => `${item.productId}-${index}`}
-                            renderItem={({ item, index }) => {
-                                const isEditing = editingItemIndex === index;
-                                
-                                return (
-                                    <View style={[modalStyles.itemRow, item.quantity === 0 && { opacity: 0.5 }]}>
-                                        <Text style={modalStyles.itemName} numberOfLines={1}>{item.nombre}</Text>
-                                        
-                                        <View style={modalStyles.quantityControl}>
-                                            <TouchableOpacity style={modalStyles.quantityButton} onPress={() => handleQuantityChange(index, 'decrement')}>
-                                                <Feather name="minus" size={SIZES.body} color={COLORS.primary} />
-                                            </TouchableOpacity>
-
-                                            {isEditing ? (
-                                                <TextInput
-                                                    style={modalStyles.quantityInput}
-                                                    value={item.quantity.toString()}
-                                                    onChangeText={(text) => handleQuantityChange(index, 'input', text)}
-                                                    onBlur={() => setEditingItemIndex(null)}
-                                                    keyboardType="numeric"
-                                                    autoFocus
-                                                    maxLength={3}
-                                                    selectTextOnFocus
-                                                />
-                                            ) : (
-                                                <TouchableOpacity onPress={() => setEditingItemIndex(index)}>
-                                                    <Text style={modalStyles.quantityText}>{item.quantity}</Text>
-                                                </TouchableOpacity>
-                                            )}
-
-                                            <TouchableOpacity style={modalStyles.quantityButton} onPress={() => handleQuantityChange(index, 'increment')}>
-                                                <Feather name="plus" size={SIZES.body} color={COLORS.primary} />
-                                            </TouchableOpacity>
-                                        </View>
-                                        
-                                        <Text style={modalStyles.itemTotal}>{formatCurrency(item.precio * item.quantity)}</Text>
+                            data={items}
+                            keyExtractor={(item, index) => (item.id || index).toString()}
+                            style={modalStyles.list}
+                            renderItem={({ item, index }) => (
+                                <View style={modalStyles.itemRow}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={modalStyles.itemName}>{item.nombre}</Text>
+                                        <Text style={modalStyles.itemPriceUnit}>{formatCurrency(item.precio)} c/u</Text>
                                     </View>
-                                );
-                            }}
-                            style={modalStyles.itemList}
-                            extraData={editingItemIndex}
+                                    <View style={modalStyles.qtyContainer}>
+                                        <TouchableOpacity onPress={() => handleQuantityChange(index, -1)} style={modalStyles.qtyBtn}>
+                                            <Feather name="minus" size={18} color={COLORS.primary} />
+                                        </TouchableOpacity>
+                                        <Text style={modalStyles.qtyText}>{item.quantity}</Text>
+                                        <TouchableOpacity 
+                                            onPress={() => handleQuantityChange(index, 1)}
+                                            style={[modalStyles.qtyBtn, item.quantity >= (item.originalQuantity || 9999) && modalStyles.qtyBtnDisabled]}
+                                            disabled={item.quantity >= (item.originalQuantity || 9999)}
+                                        >
+                                            <Feather name="plus" size={18} color={COLORS.white} />
+                                        </TouchableOpacity>
+                                    </View>
+                                    <Text style={modalStyles.itemSubtotal}>{formatCurrency(item.quantity * item.precio)}</Text>
+                                </View>
+                            )}
                         />
+                    )}
 
-                        <View style={modalStyles.summaryContainer}>
-                            <View style={modalStyles.summaryRow}>
-                                <Text style={modalStyles.summaryLabel}>Total Original:</Text>
-                                <Text style={modalStyles.summaryValueOriginal}>{formatCurrency(stop.totalVenta)}</Text>
-                            </View>
-                            <View style={modalStyles.summaryRow}>
-                                <Text style={modalStyles.summaryLabel}>Nuevo Total a Cobrar:</Text>
-                                <Text style={modalStyles.summaryValueFinal}>{formatCurrency(newTotalVenta)}</Text>
-                            </View>
+                    <View style={modalStyles.summaryContainer}>
+                        <View style={modalStyles.summaryRow}>
+                            <Text style={modalStyles.summaryLabel}>Original:</Text>
+                            <Text style={[modalStyles.summaryValue, { textDecorationLine: 'line-through', color: '#999' }]}>{formatCurrency(invoice.totalVenta)}</Text>
                         </View>
-                        
-                        <Text style={modalStyles.sectionHeader}>PAGOS</Text>
+                        <View style={modalStyles.summaryRow}>
+                            <Text style={[modalStyles.summaryLabel, { color: COLORS.textPrimary, fontWeight: 'bold' }]}>A COBRAR:</Text>
+                            <Text style={[modalStyles.summaryValue, { color: COLORS.primary, fontSize: 18 }]}>{formatCurrency(totalVentaNuevo)}</Text>
+                        </View>
+                    </View>
 
-                        <View style={modalStyles.inputContainer}>
-                            <Feather name="dollar-sign" size={SIZES.h3} color={COLORS.textSecondary} style={modalStyles.inputIcon} />
-                            <TextInput style={modalStyles.input} placeholder="Monto en Efectivo" placeholderTextColor={COLORS.textSecondary} keyboardType="numeric" value={pagoEfectivo} onChangeText={setPagoEfectivo} />
+                    <View style={modalStyles.paymentSection}>
+                        <Text style={modalStyles.sectionTitle}>REGISTRAR PAGO</Text>
+                        <View style={modalStyles.inputRow}>
+                            <Feather name="dollar-sign" size={20} color={COLORS.textSecondary} style={{ marginRight: 10 }} />
+                            <TextInput style={modalStyles.input} placeholder="Efectivo" keyboardType="numeric" value={pagoEfectivo} onChangeText={setPagoEfectivo} />
                         </View>
-                        <View style={modalStyles.inputContainer}>
-                            <Feather name="credit-card" size={SIZES.h3} color={COLORS.textSecondary} style={modalStyles.inputIcon} />
-                            <TextInput style={modalStyles.input} placeholder="Monto en Transferencia" placeholderTextColor={COLORS.textSecondary} keyboardType="numeric" value={pagoTransferencia} onChangeText={setPagoTransferencia} />
+                        <View style={modalStyles.inputRow}>
+                            <Feather name="credit-card" size={20} color={COLORS.textSecondary} style={{ marginRight: 10 }} />
+                            <TextInput style={modalStyles.input} placeholder="Transferencia" keyboardType="numeric" value={pagoTransferencia} onChangeText={setPagoTransferencia} />
                         </View>
+                    </View>
 
-                        <View style={modalStyles.modalButtons}>
-                            <TouchableOpacity style={[modalStyles.modalButton, modalStyles.cancelButton]} onPress={onClose}>
-                                <Text style={[modalStyles.buttonText, { color: COLORS.textSecondary }]}>CANCELAR</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[modalStyles.modalButton, modalStyles.confirmButton]} onPress={handleConfirmDelivery} disabled={isSaving}>
-                                {isSaving ? <ActivityIndicator color={COLORS.white} /> : <Text style={modalStyles.buttonText}>CONFIRMAR ENTREGA</Text>}
-                            </TouchableOpacity>
-                        </View>
-                    </ScrollView> 
-                </View> 
+                    <View style={modalStyles.footer}>
+                        <TouchableOpacity 
+                            style={[modalStyles.confirmBtn, isSaving && { opacity: 0.7 }]}
+                            onPress={handleConfirmTransaction}
+                            disabled={isSaving || isLoadingItems}
+                        >
+                            {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={modalStyles.confirmBtnText}>CONFIRMAR ENTREGA</Text>}
+                        </TouchableOpacity>
+                    </View>
+                </View>
             </KeyboardAvoidingView>
         </Modal>
     );
 };
 
 
-// --- Pantalla Principal: RouteDetailScreen (ACTUALIZADA CON SDK NATIVO v9) ---
+// =================================================================================
+// PANTALLA PRINCIPAL
+// =================================================================================
+
 const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const routeId = route.params?.routeId;
-    const { routes, clients, syncData } = useData();
+    const { routes, clients, sales, syncData } = useData();
+    
+    const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+    const [modalVisible, setModalVisible] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
 
-    const [isAdjustmentModalVisible, setAdjustmentModalVisible] = useState(false);
-    const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+    const routeData = useMemo(() => {
+        const r = routes.find(rt => rt.id === routeId);
+        if (!r) return null;
 
-    const [localInvoices, setLocalInvoices] = useState<Invoice[]>([]);
+        const enrichedInvoices = (r.facturas || []).map((inv: any) => {
+            // 1. Intentamos sacar el ID directamente
+            let targetId = (inv.clienteId || inv.clientId || '').trim();
+            
+            // 2. PUENTE: Si no hay ID, buscamos la venta original por ID de factura
+            if (!targetId) {
+                const linkedSale = sales.find(s => s.id === inv.id);
+                if (linkedSale && linkedSale.clienteId) {
+                    targetId = linkedSale.clienteId;
+                }
+            }
 
-    const currentRoute: RouteFull | undefined = useMemo(() => {
-        if (!routeId || !routes) return undefined;
-        const foundRoute = routes.find(r => r.id === routeId);
-        if (!foundRoute) return undefined;
+            // 3. Buscar cliente
+            const client = clients.find(c => c.id === targetId);
 
-        const enrichedFacturas = (foundRoute.facturas || []).map(f => {
-            const clientData = clients.find(c => c.id === f.clienteId);
             return {
-                ...f,
-                estadoVisita: f.estadoVisita || 'Pendiente',
-                saldoPendiente: f.saldoPendiente || f.totalVenta, // ✅ Aseguramos que exista saldoPendiente
-                location: clientData?.location || null, 
-                telefono: clientData?.telefono || null,
-                items: f.items || [] 
-            };
+                ...inv,
+                clienteNombre: client?.nombre || inv.clienteNombre || 'Cliente Desconocido',
+                clienteDireccion: client?.direccion || inv.clienteDireccion,
+                // Datos críticos para botones:
+                location: client?.location || inv.location || null,
+                telefono: client?.telefono || inv.telefono || null,
+                items: inv.items || [] 
+            } as Invoice;
         });
 
-        let routeDate: any = foundRoute.fecha;
-        if (routeDate && !(routeDate instanceof Date) && (routeDate as any).seconds !== undefined) {
-              routeDate = new Timestamp((routeDate as any).seconds, (routeDate as any).nanoseconds).toDate(); 
-        }
+        // ✅ ORDENAMIENTO: PENDIENTES PRIMERO
+        enrichedInvoices.sort((a: Invoice, b: Invoice) => {
+            const scoreA = a.estadoVisita === 'Pendiente' ? 0 : 1;
+            const scoreB = b.estadoVisita === 'Pendiente' ? 0 : 1;
+            return scoreA - scoreB;
+        });
 
-        return {
-             ...foundRoute,
-             nombre: (foundRoute as any).nombre || `Ruta ${foundRoute.id.substring(0, 6)}`, // ✅ Garantizamos el nombre
-             fecha: routeDate as Date | undefined,
-             facturas: enrichedFacturas
-        };
-    }, [routeId, routes, clients]);
+        return { ...r, facturas: enrichedInvoices };
+    }, [routeId, routes, clients, sales]);
 
-    useEffect(() => {
-        if (currentRoute?.facturas) {
-             if (JSON.stringify(localInvoices) !== JSON.stringify(currentRoute.facturas)) {
-                 setLocalInvoices(currentRoute.facturas);
-             }
-        }
-    }, [currentRoute, localInvoices]);
-
-    const routeReport = useMemo(() => {
-        if (localInvoices.length === 0) return { total: 0, pendientes: 0, entregadas: 0 };
-        const facturas = localInvoices;
-        const pendientes = facturas.filter(f => f.estadoVisita === 'Pendiente').length;
-        const entregadas = facturas.length - pendientes;
-        return {
-            total: facturas.length,
-            pendientes: pendientes,
-            entregadas: entregadas,
-        };
-    }, [localInvoices]);
-
-    const handleOpenMap = (invoice: Invoice) => {
-        if (invoice.location) {
-            const { latitude, longitude } = invoice.location;
-            const url = Platform.select({
-                ios: `maps:${latitude},${longitude}?q=${invoice.clienteDireccion}`,
-                android: `geo:${latitude},${longitude}?q=${invoice.clienteDireccion}`,
-            });
-            Linking.openURL(url!).catch(err => console.error('Error al abrir mapas:', err));
-        } else {
-            Alert.alert("Ubicación no disponible", "Este cliente no tiene una ubicación registrada.");
-        }
+    // --- ACCIONES DE BOTONES ---
+    
+    const handleSuccessUpdate = async () => {
+        await syncData();
     };
 
-    const handleCallClient = (invoice: Invoice) => {
-           if (invoice.telefono) {
-               Linking.openURL(`tel:${invoice.telefono}`).catch(err => console.error('Error al llamar:', err));
-           } else {
-               Alert.alert("Teléfono no disponible", "Este cliente no tiene un teléfono registrado.");
-           }
-    };
-
-    const openAdjustmentModal = (invoice: Invoice) => {
-        if (invoice.estadoVisita !== 'Pendiente' && invoice.estadoVisita !== 'Adeuda') {
-             Toast.show({ type: 'info', text1: 'Estado inválido', text2: 'Solo se pueden gestionar facturas Pendientes o Adeudadas.', position: 'bottom' });
-             return;
-           }
-        if (currentRoute?.estado === 'Completada' || currentRoute?.estado === 'Archivada') {
-            Toast.show({ type: 'info', text1: 'Ruta Finalizada', text2: 'No se pueden gestionar facturas de una ruta finalizada.', position: 'bottom' });
-            return;
+    const handleOpenModal = (invoice: Invoice) => {
+        if (invoice.estadoVisita === 'Anulada') {
+            Toast.show({ type: 'info', text1: 'Anulada', text2: 'Esta parada fue anulada.' });
         }
         setSelectedInvoice(invoice);
-        setAdjustmentModalVisible(true);
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setModalVisible(true);
     };
 
-    const handleConfirmAndUpdateUI = (updatedInvoice: Invoice) => {
-        setLocalInvoices(prevInvoices =>
-            prevInvoices.map(inv =>
-                inv.id === updatedInvoice.id ? updatedInvoice : inv
-            )
-        );
-        syncData();
-    };
-
-    const handleMarkAsPending = async (invoice: Invoice) => {
-        if (invoice.estadoVisita === 'Pendiente') return;
-
-        if (currentRoute?.estado === 'Completada' || currentRoute?.estado === 'Archivada') {
-            Toast.show({ type: 'info', text1: 'Ruta Finalizada', text2: 'No se puede revertir el estado.', position: 'bottom' });
-            return;
+    const handleCall = (phone?: string) => {
+        if (!phone || phone.trim() === '') {
+            return Toast.show({ type: 'info', text1: 'Sin datos', text2: 'El cliente no tiene teléfono registrado.' });
         }
+        Linking.openURL(`tel:${phone}`);
+    };
+
+    const handleWhatsApp = (phone?: string, name?: string) => {
+        if (!phone || phone.trim() === '') {
+            return Toast.show({ type: 'info', text1: 'Sin datos', text2: 'El cliente no tiene teléfono registrado.' });
+        }
+        let number = phone.replace(/[^\d]/g, '');
+        const message = `Hola ${name || ''}, le escribo de la distribuidora.`;
+        const url = `whatsapp://send?phone=${number}&text=${encodeURIComponent(message)}`;
         
+        Linking.openURL(url).catch(() => {
+            Toast.show({ type: 'error', text1: 'Error', text2: 'WhatsApp no instalado.' });
+        });
+    };
+
+    const handleNavigate = (lat?: number, lng?: number, label?: string) => {
+        if (!lat || !lng) {
+            return Toast.show({ type: 'info', text1: 'Sin ubicación', text2: 'El cliente no tiene coordenadas GPS.' });
+        }
+        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+        const latLng = `${lat},${lng}`;
+        const url = Platform.select({
+            ios: `${scheme}${label}@${latLng}`,
+            android: `${scheme}${latLng}(${label})`
+        });
+        if(url) Linking.openURL(url);
+    };
+
+    const handleResetStop = (invoice: Invoice) => {
         Alert.alert(
-            "Revertir a Pendiente",
-            `¿Seguro que desea revertir el estado de ${invoice.clienteNombre} a 'Pendiente'? Se restablecerá el saldo deudor y se anularán los pagos registrados.`,
+            "Revertir Parada",
+            "Se volverá a marcar como 'Pendiente' y se reiniciará el saldo. ¿Continuar?",
             [
                 { text: "Cancelar", style: "cancel" },
-                {
-                    text: "Sí, Revertir",
-                    style: "destructive",
-                    onPress: async () => {
-                        setIsUpdating(true);
-                        try {
-                            const db = dbContainer.instance;
-                            if (!db) { throw new Error("La base de datos no está lista. Reinicia la app."); }
+                { text: "Sí, Revertir", style: "destructive", onPress: async () => {
+                    setIsUpdating(true);
+                    try {
+                        await firestore().runTransaction(async (transaction) => {
+                            const routeRef = firestore().collection('rutas').doc(routeId);
+                            const saleRef = firestore().collection('ventas').doc(invoice.id);
+                            const routeDoc = await transaction.get(routeRef);
                             
-                            const batch = writeBatch(db);
-                            const saleRef = doc(db, 'ventas', invoice.id); 
-                            const routeRef = doc(db, 'rutas', routeId); 
+                            if (!routeDoc.exists()) throw new Error("Ruta no existe");
 
-                            batch.update(saleRef, {
+                            transaction.update(saleRef, {
                                 estado: 'Pendiente de Entrega',
-                                saldoPendiente: invoice.totalVenta,
+                                estadoVisita: 'Pendiente', 
+                                saldoPendiente: invoice.totalVenta, 
                                 pagoEfectivo: 0,
                                 pagoTransferencia: 0,
                             });
 
-                            const updatedFacturas = localInvoices.map(f =>
-                                f.id === invoice.id ? { ...f, estadoVisita: 'Pendiente' as const } : f
-                            );
-                            batch.update(routeRef, { facturas: updatedFacturas });
-                            
-                            await batch.commit(); 
-                            
-                            setLocalInvoices(updatedFacturas);
-                            Toast.show({ type: 'info', text1: 'Revertido a Pendiente', position: 'bottom' });
-
-                        } catch (error: any) {
-                             console.error("Error al revertir a pendiente:", error);
-                             Alert.alert("Error", `No se pudo revertir el estado: ${error.message}`);
-                        } finally {
-                            setIsUpdating(false);
-                        }
-                    }
-                }
-            ]
-        );
-    };
-
-    const handleCancelInvoice = async (invoice: Invoice) => {
-        if (invoice.estadoVisita === 'Anulada') return;
-
-        if (currentRoute?.estado === 'Completada' || currentRoute?.estado === 'Archivada') {
-            Toast.show({ type: 'info', text1: 'Ruta Finalizada', text2: 'No se puede anular la factura.', position: 'bottom' });
-            return;
-        }
-
-        Alert.alert(
-            "Anular Factura",
-            `¿Está seguro que desea ANULAR la visita a ${invoice.clienteNombre}? ESTA ACCIÓN DEVOLVERÁ EL STOCK ORIGINAL AL INVENTARIO.`,
-            [
-                { text: "Cancelar", style: "cancel" },
-                {
-                    text: "Sí, Anular",
-                    style: "destructive",
-                    onPress: async () => {
-                        setIsUpdating(true);
-                        try {
-                            const originalRoute = routes.find(r => r.id === routeId);
-                            const originalInvoice = originalRoute?.facturas?.find(f => f.id === invoice.id);
-                            const itemsToReturn = originalInvoice?.items || invoice.items;
-                            
-                            if (!originalInvoice) {
-                                console.warn(`ADVERTENCIA: No se encontró la factura original en DataContext (ID: ${invoice.id}). Se usará la factura local para anular. El stock devuelto podría ser incorrecto si la factura fue modificada.`);
-                            }
-                            
-                            const db = dbContainer.instance;
-                            if (!db) { throw new Error("La base de datos no está lista. Reinicia la app."); }
-
-                            const batch = writeBatch(db);
-                            const saleRef = doc(db, 'ventas', invoice.id); 
-                            const routeRef = doc(db, 'rutas', routeId); 
-
-                            // 4. Actualizar la Venta
-                            batch.update(saleRef, {
-                                estado: 'Anulada',
-                                saldoPendiente: invoice.totalVenta 
-                            });
-
-                            // 5. Actualizar la Factura en la Ruta
-                            const updatedFacturas = localInvoices.map(f =>
-                                f.id === invoice.id ? { ...f, estadoVisita: 'Anulada' as const } : f
-                            );
-                            batch.update(routeRef, { facturas: updatedFacturas });
-
-                            // 6. Devolver Stock usando los items ORIGINALES (itemsToReturn)
-                            itemsToReturn.forEach((item: DriverItem) => {
-                                if (item.productId && typeof item.quantity === 'number' && item.quantity > 0) {
-                                    const productRef = doc(db, 'productos', item.productId);
-                                    batch.update(productRef, { stock: increment(item.quantity) });
-                                } else {
-                                    console.warn("Item inválido al anular, no se devuelve stock para este item:", item);
+                            const routeData = routeDoc.data();
+                            // @ts-ignore
+                            const invoices = routeData?.facturas || [];
+                            const newInvoices = invoices.map((f: any) => {
+                                if (f.id === invoice.id) {
+                                    return {
+                                        ...f,
+                                        estadoVisita: 'Pendiente',
+                                        saldoPendiente: invoice.totalVenta,
+                                        pagoEfectivo: 0,
+                                        pagoTransferencia: 0
+                                    };
                                 }
+                                return f;
                             });
-                            
-                            await batch.commit(); 
-                            
-                            setLocalInvoices(updatedFacturas);
-                            Toast.show({ type: 'info', text1: 'Visita Anulada y Stock Devuelto', position: 'bottom' });
-                            syncData(); 
-
-                        } catch (error: any) {
-                            console.error("Error al anular factura:", error);
-                            Alert.alert("Error", `No se pudo anular la visita: ${error.message}`);
-                        } finally {
-                            setIsUpdating(false);
-                        }
+                            transaction.update(routeRef, { facturas: newInvoices });
+                        });
+                        
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        Toast.show({ type: 'success', text1: 'Parada Revertida' });
+                        await syncData();
+                    } catch (e: any) {
+                        Alert.alert("Error", e.message);
+                    } finally {
+                        setIsUpdating(false);
                     }
-                }
+                }}
             ]
         );
     };
 
-    const handleFinalizeRoute = async () => {
-        if (!currentRoute || routeReport.pendientes > 0 || isUpdating) {
-            if (routeReport.pendientes > 0) {
-                Alert.alert("Ruta Incompleta", `Aún quedan ${routeReport.pendientes} visitas pendientes. No se puede finalizar.`);
-            }
-            return;
-        }
+    const handleFinalizeRoute = () => {
+        if (!routeData) return;
+        const pendientes = routeData.facturas.filter(f => f.estadoVisita === 'Pendiente').length;
 
-        Alert.alert(
-            "Confirmar Finalización",
-            "¿Marcar esta ruta como completada?",
-            [
+        if (pendientes > 0) {
+            Alert.alert("Ruta Incompleta", `Quedan ${pendientes} paradas pendientes. ¿Finalizar de todos modos?`, [
                 { text: "Cancelar", style: "cancel" },
-                {
-                    text: "Sí, Finalizar", onPress: async () => {
-                        setIsUpdating(true);
-                        try {
-                            const db = dbContainer.instance;
-                            if (!db) { throw new Error("La base de datos no está lista. Reinicia la app."); }
-                            
-                            const routeRef = doc(db, 'rutas', currentRoute.id); 
-                            await updateDoc(routeRef, {
-                                estado: 'Completada'
-                            });
-                            
-                            await syncData();
-                            
-                            Toast.show({ type: 'success', text1: 'Ruta Finalizada', position: 'bottom' });
-                            navigation.goBack();
-                        } catch (error: any) {
-                            console.error("Error al finalizar ruta:", error);
-                            Alert.alert("Error", `No se pudo finalizar la ruta: ${error.message}`);
-                            setIsUpdating(false);
-                        }
-                    },
-                    style: "destructive"
-                }
-            ]
-        );
+                { text: "Sí, Finalizar", style: "destructive", onPress: executeFinalize }
+            ]);
+        } else {
+            Alert.alert("Finalizar Ruta", "¿Confirmas que terminaste el recorrido?", [
+                { text: "Cancelar", style: "cancel" },
+                { text: "Sí, Finalizar", onPress: executeFinalize }
+            ]);
+        }
     };
 
-    // --- RENDERIZADO PRINCIPAL (ESTILIZADO) ---
-    if (!currentRoute) {
+    const executeFinalize = async () => {
+        setIsUpdating(true);
+        try {
+            await firestore().collection('rutas').doc(routeId).update({
+                estado: 'Completada',
+                fechaFin: firestore.FieldValue.serverTimestamp()
+            });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Toast.show({ type: 'success', text1: 'Ruta Finalizada' });
+            navigation.goBack();
+        } catch (e: any) {
+            Alert.alert("Error", e.message);
+        } finally {
+            setIsUpdating(false);
+        }
+    };
+
+    if (!routeData) {
         return (
-             <SafeAreaView style={styles.container}>
-                <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
-                 <View style={styles.header}>
-                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                         <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
-                     </TouchableOpacity>
-                     <Text style={styles.title}>CARGANDO RUTA</Text>
-                     <View style={styles.headerButton} />
-                 </View>
-                 <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: SIZES.xl * 2 }} />
-             </SafeAreaView>
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
         );
     }
 
-    const renderInvoice = ({ item }: { item: Invoice }) => {
-        const isGestionable = item.estadoVisita === 'Pendiente' || item.estadoVisita === 'Adeuda';
-        const isCompleted = item.estadoVisita === 'Pagada';
-        const isAnulada = item.estadoVisita === 'Anulada';
-
-        // ✅ CORREGIDO: Accedemos al estilo de estado por nombre literal
-        const statusStyleKey = `status${item.estadoVisita}` as keyof typeof styles;
-
-        return (
-            <View style={[styles.invoiceCard, styles[statusStyleKey], isAnulada && { opacity: 0.6 }]}>
-                
-                <View style={styles.invoiceHeader}>
-                    
-                    <View style={{ flex: 1, paddingRight: SIZES.small }}> {/* Reducido paddingRight */}
-                        <Text style={styles.invoiceClientName} numberOfLines={1}>{item.clienteNombre}</Text>
-                        <Text style={styles.invoiceAddress} numberOfLines={1}>{item.clienteDireccion || 'Dirección no disponible'}</Text>
-                    </View>
-                    <View style={styles.statusBadge}>
-                        <Text style={[styles.statusBadgeText, { color: isAnulada ? COLORS.danger : (isCompleted ? COLORS.success : COLORS.warning) }]}>
-                            {item.estadoVisita.toUpperCase()}
-                        </Text>
-                    </View>
-                    <View style={styles.totalBlock}>
-                        <Text style={styles.invoiceTotal}>{formatCurrency(item.totalVenta)}</Text>
-                        {item.estadoVisita === 'Adeuda' && <Text style={styles.balanceWarning}>Saldo: {formatCurrency(item.saldoPendiente)}</Text>}
-                        {item.estadoVisita === 'Pendiente' && <Text style={styles.pendingText}>Pendiente</Text>}
-                    </View>
-                    
-                </View>
-
-                <View style={styles.invoiceActions}>
-                    <TouchableOpacity style={styles.actionButton} onPress={() => handleOpenMap(item)} disabled={!item.location}>
-                        <Feather name="map-pin" size={SIZES.h3} color={item.location ? COLORS.primary : COLORS.disabled} />
-                        <Text style={[styles.actionButtonText, !item.location && { color: COLORS.disabled }]}>MAPA</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionButton} onPress={() => handleCallClient(item)} disabled={!item.telefono}>
-                        <Feather name="phone" size={SIZES.h3} color={item.telefono ? COLORS.primary : COLORS.disabled} />
-                        <Text style={[styles.actionButtonText, !item.telefono && { color: COLORS.disabled }]}>LLAMAR</Text>
-                    </TouchableOpacity>
-                    
-                    {isGestionable && currentRoute.estado !== 'Completada' && currentRoute.estado !== 'Archivada' && (
-                        <>
-                            <TouchableOpacity style={styles.actionButton} onPress={() => handleCancelInvoice(item)}>
-                                <Feather name="x-circle" size={SIZES.h3} color={COLORS.danger} />
-                                <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>ANULAR</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity style={[styles.actionButton, styles.mainActionButton]} onPress={() => openAdjustmentModal(item)}>
-                                <Feather name="edit-3" size={SIZES.h3} color={COLORS.white} />
-                                <Text style={[styles.actionButtonText, styles.mainActionButtonText]}>GESTIONAR</Text>
-                            </TouchableOpacity>
-                        </>
-                    )}
-                     {isCompleted && (
-                        <TouchableOpacity style={[styles.actionButton]} onPress={() => handleMarkAsPending(item)}>
-                            <Feather name="rotate-ccw" size={SIZES.h3} color={COLORS.warning} />
-                            <Text style={[styles.actionButtonText, { color: COLORS.warning }]}>REVERTIR</Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-            </View>
-        );
-    };
+    const totalVisitas = routeData.facturas.length;
+    const visitadas = routeData.facturas.filter(f => f.estadoVisita !== 'Pendiente').length;
 
     return (
         <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundEnd} />
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundEnd]} style={StyleSheet.absoluteFill} />
 
-            <View style={[styles.header, { backgroundColor: COLORS.backgroundEnd, borderColor: COLORS.glassBorder }]}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
-                    <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                    <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>{currentRoute.nombre.toUpperCase()}</Text>
-                <TouchableOpacity
-                    onPress={handleFinalizeRoute}
-                    style={styles.headerButton}
-                    disabled={routeReport.pendientes > 0 || isUpdating || currentRoute.estado === 'Completada' || currentRoute.estado === 'Archivada'}
-                >
-                    {isUpdating ? (
-                        <ActivityIndicator color={COLORS.success} size="small" />
-                    ) : (
-                        <Feather
-                            name="check-circle"
-                            size={SIZES.h3}
-                            color={routeReport.pendientes === 0 && currentRoute.estado !== 'Completada' ? COLORS.success : COLORS.disabled}
-                        />
-                    )}
-                </TouchableOpacity>
-            </View>
-
-            <View style={styles.reportContainer}>
-                <View style={styles.reportItem}>
-                    <Text style={[styles.reportValue, { color: COLORS.primary }]}>{routeReport.entregadas}</Text>
-                    <Text style={styles.reportLabel}>Entregadas</Text>
-                </View>
-                <View style={styles.reportSeparator} />
-                <View style={styles.reportItem}>
-                    <Text style={[styles.reportValue, { color: COLORS.warning }]}>{routeReport.pendientes}</Text>
-                    <Text style={styles.reportLabel}>Pendientes</Text>
-                </View>
-                <View style={styles.reportSeparator} />
-                <View style={styles.reportItem}>
-                    <Text style={styles.reportValue}>{routeReport.total}</Text>
-                    <Text style={styles.reportLabel}>Total</Text>
+                <View>
+                    <Text style={styles.headerTitle}>{routeData.id}</Text>
+                    <Text style={styles.headerSubtitle}>Avance: {visitadas} / {totalVisitas}</Text>
                 </View>
             </View>
 
             <FlatList
-                data={localInvoices}
-                renderItem={renderInvoice}
+                data={routeData.facturas}
                 keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.listContentContainer}
-                ListEmptyComponent={<Text style={styles.emptyText}>Esta ruta no tiene facturas asignadas.</Text>}
-                extraData={localInvoices}
-            />
+                contentContainerStyle={{ padding: SIZES.medium, paddingBottom: 120 }}
+                renderItem={({ item }) => {
+                    const isPendiente = item.estadoVisita === 'Pendiente';
+                    const isPagada = item.estadoVisita === 'Pagada';
+                    const isAdeuda = item.estadoVisita === 'Adeuda';
+                    const isAnulada = item.estadoVisita === 'Anulada';
 
-            {selectedInvoice && currentRoute && (
-                <DeliveryAdjustmentModal
-                    visible={isAdjustmentModalVisible}
-                    onClose={() => setAdjustmentModalVisible(false)}
-                    stop={selectedInvoice}
-                    routeId={currentRoute.id}
-                    onConfirm={handleConfirmAndUpdateUI}
+                    let borderColor = COLORS.glassBorder;
+                    if (isPagada) borderColor = COLORS.success;
+                    if (isAdeuda) borderColor = COLORS.warning;
+                    if (isAnulada) borderColor = COLORS.danger;
+
+                    return (
+                        <View style={[styles.card, { borderLeftColor: borderColor, borderLeftWidth: 5 }]}>
+                            <View style={styles.cardHeader}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.clientName}>{item.clienteNombre}</Text>
+                                    <Text style={styles.clientAddress} numberOfLines={1}>{item.clienteDireccion || 'Sin dirección'}</Text>
+                                </View>
+                                <View style={[styles.badge, { backgroundColor: borderColor + '20' }]}>
+                                    <Text style={{ color: isPendiente ? COLORS.textSecondary : borderColor, fontWeight: 'bold', fontSize: 10 }}>
+                                        {item.estadoVisita.toUpperCase()}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.cardBody}>
+                                <View style={styles.rowBetween}>
+                                    <Text style={styles.label}>Total:</Text>
+                                    <Text style={styles.value}>{formatCurrency(item.totalVenta)}</Text>
+                                </View>
+                                {(isAdeuda || isPagada) && (
+                                    <View style={styles.rowBetween}>
+                                        <Text style={[styles.label, { color: isAdeuda ? COLORS.warning : COLORS.success }]}>
+                                            {isAdeuda ? 'Saldo Deudor:' : 'Pagado:'}
+                                        </Text>
+                                        <Text style={[styles.value, { color: isAdeuda ? COLORS.warning : COLORS.success }]}>
+                                            {isAdeuda ? formatCurrency(item.saldoPendiente) : 'Completo'}
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
+
+                            <View style={styles.quickActions}>
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleCall(item.telefono)}>
+                                    <Feather name="phone" size={18} color={COLORS.primary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleWhatsApp(item.telefono, item.clienteNombre)}>
+                                    <Feather name="message-circle" size={18} color="#25D366" />
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleNavigate(item.location?.latitude, item.location?.longitude, item.clienteNombre)}>
+                                    <Feather name="map" size={18} color={COLORS.secondary} />
+                                </TouchableOpacity>
+                                {!isPendiente && (
+                                    <TouchableOpacity style={styles.qaBtn} onPress={() => handleResetStop(item)}>
+                                        <Feather name="rotate-ccw" size={18} color={COLORS.warning} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+
+                            <TouchableOpacity 
+                                style={[styles.mainActionBtn, isAnulada && { backgroundColor: COLORS.disabled }]}
+                                onPress={() => handleOpenModal(item)}
+                            >
+                                <Text style={styles.mainActionText}>
+                                    {isPendiente ? 'GESTIONAR ENTREGA' : 'VER / EDITAR DETALLE'}
+                                </Text>
+                                <Feather name="chevron-right" size={16} color="#FFF" />
+                            </TouchableOpacity>
+                        </View>
+                    );
+                }}
+            />
+            
+            {routeData.estado !== 'Completada' && (
+                <View style={styles.floatingFooter}>
+                    <TouchableOpacity 
+                        style={[styles.finalizeBtn, isUpdating && { opacity: 0.7 }]} 
+                        onPress={handleFinalizeRoute}
+                        disabled={isUpdating}
+                    >
+                        {isUpdating ? <ActivityIndicator color="#FFF" /> : (
+                            <>
+                                <Feather name="check-circle" size={20} color="#FFF" style={{marginRight: 10}} />
+                                <Text style={styles.finalizeText}>FINALIZAR RUTA</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {selectedInvoice && (
+                <DeliveryModal 
+                    visible={modalVisible}
+                    invoice={selectedInvoice}
+                    routeId={routeData.id}
+                    onClose={() => setModalVisible(false)}
+                    onSuccess={handleSuccessUpdate}
                 />
             )}
+
         </SafeAreaView>
     );
 };
 
-// --- Estilos de Pantalla (AJUSTADOS AL TEMA) ---
+// =================================================================================
+// ESTILOS
+// =================================================================================
+const modalStyles = StyleSheet.create({
+    container: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
+    content: { backgroundColor: '#F2F2F7', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', paddingBottom: 30 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+    title: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary },
+    subtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
+    closeBtn: { padding: 5 },
+    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginTop: 15, marginBottom: 10 },
+    sectionTitle: { fontSize: 12, fontWeight: '900', color: '#8E8E93', letterSpacing: 1 },
+    sectionInfo: { fontSize: 11, color: COLORS.primary },
+    list: { maxHeight: 250 },
+    itemRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, marginHorizontal: 20, marginBottom: 8, borderRadius: 12 },
+    itemName: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
+    itemPriceUnit: { fontSize: 12, color: COLORS.textSecondary },
+    qtyContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F2F2F7', borderRadius: 8, marginHorizontal: 10 },
+    qtyBtn: { padding: 8, backgroundColor: '#E5E5EA', borderRadius: 8 },
+    qtyBtnDisabled: { backgroundColor: '#F2F2F7', opacity: 0.3 },
+    qtyText: { width: 30, textAlign: 'center', fontWeight: 'bold', fontSize: 14 },
+    itemSubtotal: { width: 70, textAlign: 'right', fontWeight: 'bold', fontSize: 14 },
+    summaryContainer: { padding: 20, backgroundColor: '#FFF', marginVertical: 10 },
+    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+    summaryLabel: { fontSize: 14, color: COLORS.textSecondary },
+    summaryValue: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary },
+    paymentSection: { paddingHorizontal: 20 },
+    inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 15, height: 50, marginBottom: 10, borderWidth: 1, borderColor: '#E5E5EA' },
+    input: { flex: 1, fontSize: 16, color: COLORS.textPrimary, height: '100%' },
+    footer: { padding: 20, backgroundColor: '#FFF', marginTop: 10 },
+    statusPreview: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+    confirmBtn: { backgroundColor: COLORS.primary, height: 50, borderRadius: 14, justifyContent: 'center', alignItems: 'center', shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+    confirmBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }
+});
+
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundStart },
-    background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-    // --- HEADER ---
-    header: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : SIZES.medium,
-        paddingBottom: SIZES.medium, 
-        paddingHorizontal: SIZES.small,
-        borderBottomWidth: SIZES.borderWidth,
-        borderColor: COLORS.glassBorder,
-        backgroundColor: COLORS.backgroundEnd,
-    },
-    headerButton:  { 
-        padding: SIZES.small,
-        width: SIZES.xxl, // 40px de ancho
-        height: SIZES.xxl, // 40px de alto
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    title: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center', textTransform: 'uppercase' },
-    // --- REPORT SUMMARY ---
-    reportContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        alignItems: 'center',
-        paddingVertical: SIZES.medium,
-        paddingHorizontal: SIZES.small,
-        backgroundColor: COLORS.backgroundEnd,
-        borderBottomWidth: SIZES.borderWidth,
-        borderColor: COLORS.glassBorder,
-        marginBottom: SIZES.medium,
-    },
-    reportItem: {
-        alignItems: 'center',
-        flex: 1,
-    },
-    reportValue: {
-        fontSize: SIZES.h2, 
-        fontWeight: 'bold',
-        color: COLORS.textPrimary,
-    },
-    reportLabel: {
-        fontSize: SIZES.caption,
-        color: COLORS.textSecondary,
-        marginTop: SIZES.xsmall / 2,
-    },
-    reportSeparator: {
-        width: SIZES.borderWidth,
-        height: '60%',
-        backgroundColor: COLORS.glassBorder,
-    },
-    // --- LISTA ---
-    listContentContainer: { paddingHorizontal: SIZES.medium, paddingBottom: SIZES.xl * 2 },
-    emptyText: { textAlign: 'center', color: COLORS.textSecondary, marginTop: SIZES.xl, fontSize: SIZES.body },
-    // --- INVOICE CARD ---
-    invoiceCard: { 
-        backgroundColor: COLORS.backgroundEnd, 
-        borderRadius: SIZES.radius, 
-        marginBottom: SIZES.medium,
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder,
-        overflow: 'hidden',
-        shadowColor: COLORS.textPrimary,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
-        elevation: 2,
-    },
-    invoiceHeader: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        padding: SIZES.medium,
-        borderBottomWidth: SIZES.borderWidth, 
-        borderBottomColor: COLORS.glassBorder,
-    },
-    invoiceClientName: { color: COLORS.textPrimary, fontSize: SIZES.body, fontWeight: 'bold', marginBottom: SIZES.xsmall / 2 },
-    invoiceAddress: { color: COLORS.textSecondary, fontSize: SIZES.caption },
-    totalBlock: { alignItems: 'flex-end', marginLeft: SIZES.small },
-    invoiceTotal: { color: COLORS.primary, fontSize: SIZES.h3, fontWeight: 'bold' },
-    balanceWarning: { color: COLORS.warning, fontSize: SIZES.caption, fontWeight: 'bold' },
-    pendingText: { color: COLORS.textSecondary, fontSize: SIZES.caption, fontWeight: '500' },
-
-    statusBadge: { 
-        paddingHorizontal: SIZES.small, 
-        paddingVertical: SIZES.xsmall / 2, 
-        borderRadius: SIZES.radiusSmall,
-        borderWidth: SIZES.borderWidth,
-        alignItems: 'center',
-    },
-    statusBadgeText: { fontSize: SIZES.caption, fontWeight: 'bold' },
-    
-    // ✅ CORREGIDO: Estilos de estado para la tarjeta
-    statusPendiente: { borderColor: COLORS.warning, borderLeftWidth: SIZES.small / 2, borderLeftColor: COLORS.warning },
-    statusPagada: { borderColor: COLORS.success, borderLeftWidth: SIZES.small / 2, borderLeftColor: COLORS.success },
-    statusAdeuda: { borderColor: COLORS.warning, borderLeftWidth: SIZES.small / 2, borderLeftColor: COLORS.warning },
-    statusAnulada: { borderColor: COLORS.danger, borderLeftWidth: SIZES.small / 2, borderLeftColor: COLORS.danger, opacity: 0.7 },
-    
-    // ACCIONES
-    invoiceActions: { 
-        flexDirection: 'row', 
-        borderTopWidth: 0, 
-        backgroundColor: COLORS.backgroundStart,
-    },
-    actionButton: { 
-        flex: 1, 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        paddingVertical: SIZES.small, 
-        gap: SIZES.xsmall,
-        borderRightWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder
-    },
-    actionButtonText: { color: COLORS.primary, fontWeight: '600', fontSize: SIZES.xsmallText, textTransform: 'uppercase' },
-    mainActionButton: { backgroundColor: COLORS.primary, flex: 1.2 },
-    mainActionButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.caption },
-
-    // --- MODAL ESTILOS ---
-    keyboardAvoidingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' },
-    adjustmentModalContent: {
-        width: '95%',
-        maxHeight: '90%', 
-        backgroundColor: COLORS.backgroundEnd, 
-        borderRadius: SIZES.radius, 
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder,
-        padding: SIZES.medium,
-        overflow: 'hidden' 
-    },
-    modalTitle: { fontSize: SIZES.h2, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center', marginBottom: SIZES.xsmall },
-    modalSubtitle: { fontSize: SIZES.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SIZES.large },
-    sectionHeader: { fontSize: SIZES.caption, fontWeight: '700', color: COLORS.textSecondary, textTransform: 'uppercase', marginBottom: SIZES.small, marginTop: SIZES.medium },
-    modalScrollViewContent: { paddingBottom: SIZES.large },
-    
-    // Item List
-    itemList: { marginBottom: SIZES.medium, borderTopWidth: SIZES.borderWidth, borderBottomWidth: SIZES.borderWidth, borderColor: COLORS.glassBorder, flexGrow: 0 },
-    itemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: SIZES.small, borderBottomWidth: SIZES.borderWidth, borderBottomColor: COLORS.glassBorder, paddingHorizontal: SIZES.small },
-    itemName: { flex: 1, color: COLORS.textPrimary, fontSize: SIZES.body, marginRight: SIZES.small },
-    quantityControl: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.backgroundEnd, borderRadius: SIZES.small, borderWidth: SIZES.borderWidth, borderColor: COLORS.glassBorder },
-    quantityButton: { padding: SIZES.xsmall },
-    quantityText: { color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body, paddingHorizontal: SIZES.xsmall * 2, paddingVertical: SIZES.xsmall },
-    quantityInput: { color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body, paddingHorizontal: SIZES.xsmall, paddingVertical: Platform.OS === 'android' ? SIZES.xsmall / 2 : SIZES.xsmall, minWidth: 40, textAlign: 'center', backgroundColor: COLORS.backgroundStart, borderRadius: SIZES.xsmall / 2, marginHorizontal: SIZES.xsmall / 2, height: SIZES.xl },
-    itemTotal: { width: 80, textAlign: 'right', color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body },
-
-    // Summary
-    summaryContainer: { paddingVertical: SIZES.medium, paddingHorizontal: SIZES.small, backgroundColor: COLORS.backgroundStart, borderRadius: SIZES.radiusSmall, marginBottom: SIZES.large },
-    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: SIZES.xsmall },
-    summaryLabel: { fontSize: SIZES.body, color: COLORS.textSecondary },
-    summaryValueOriginal: { fontSize: SIZES.body, color: COLORS.textSecondary, fontWeight: 'bold', textDecorationLine: 'line-through' },
-    summaryValueFinal: { fontSize: SIZES.h3, color: COLORS.primary, fontWeight: 'bold' },
-
-    // Footer Buttons
-    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.backgroundEnd, borderRadius: SIZES.radius, borderWidth: SIZES.borderWidth, borderColor: COLORS.glassBorder, paddingHorizontal: SIZES.medium, marginBottom: SIZES.medium, height: 52 },
-    inputIcon: { marginRight: SIZES.medium },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: SIZES.body },
-    
-    modalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: SIZES.medium, marginTop: SIZES.medium },
-    modalButton: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, alignItems: 'center' },
-    cancelButton: { backgroundColor: COLORS.disabled, borderWidth: SIZES.borderWidth, borderColor: COLORS.textSecondary },
-    confirmButton: { backgroundColor: COLORS.primary },
-    buttonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
-
-    totalButton: {},
-    totalButtonText: {},
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    container: { flex: 1 },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, backgroundColor: 'transparent' },
+    backBtn: { padding: 8, backgroundColor: '#FFF', borderRadius: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5 },
+    headerTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, marginLeft: 15 },
+    headerSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginLeft: 15 },
+    card: { backgroundColor: '#FFF', borderRadius: 16, marginBottom: 15, marginHorizontal: 20, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2, overflow: 'hidden' },
+    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' },
+    clientName: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary },
+    clientAddress: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
+    badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, justifyContent: 'center' },
+    cardBody: { padding: 15, paddingBottom: 5 },
+    rowBetween: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+    label: { fontSize: 14, color: COLORS.textSecondary },
+    value: { fontSize: 14, fontWeight: 'bold', color: COLORS.textPrimary },
+    quickActions: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F2F2F7', backgroundColor: '#FAFAFA' },
+    qaBtn: { padding: 10, borderRadius: 8, backgroundColor: '#FFF', shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 3, elevation: 1, width: 50, alignItems: 'center' },
+    mainActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.primary, paddingVertical: 12 },
+    mainActionText: { color: '#FFF', fontWeight: 'bold', fontSize: 12, marginRight: 5, letterSpacing: 0.5 },
+    floatingFooter: { position: 'absolute', bottom: 20, left: 20, right: 20 },
+    finalizeBtn: { flexDirection: 'row', backgroundColor: COLORS.success, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', shadowColor: COLORS.success, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: {width: 0, height: 4}, elevation: 6 },
+    finalizeText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 }
 });
 
 export default RouteDetailScreen;

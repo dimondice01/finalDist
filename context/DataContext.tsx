@@ -477,16 +477,83 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             finalData.vendors = vendorsSnap.docs.map(processFirebaseDoc) as Vendor[];
             finalData.rubros = rubrosSnap.docs.map(processFirebaseDoc) as Rubro[];
 
-            // Queries condicionales
+      // Queries condicionales
             if (userRole === 'Reparto') {
+                console.log("Cargando rutas para repartidor...");
                 const routesQuery = query(collection(dbInstance, 'rutas'), where('repartidorId', '==', currentVendorData.id));
                 const routesSnap = await getDocs(routesQuery);
-                // --- CORREGIDO: (r: any) ---
-                finalData.routes = routesSnap.docs.map((r: any) => ({ // <-- TIPO AÑADIDO
+                
+                // 1. Procesar Rutas
+                finalData.routes = routesSnap.docs.map((r: any) => ({ 
                     ...processFirebaseDoc(r), 
                     fecha: r.data().fechaCreacion || r.data().fecha || new Date(0)
                 })) as Route[];
 
+                // 2. Recolectar IDs de Ventas (Facturas) de las rutas
+                const saleIds = new Set<string>();
+                finalData.routes.forEach(r => {
+                    if (r.facturas && Array.isArray(r.facturas)) {
+                        r.facturas.forEach((f: any) => {
+                            // El campo 'id' en la factura de la ruta es el ID de la Venta
+                            if (f.id) saleIds.add(f.id);
+                        });
+                    }
+                });
+
+                // 3. Descargar las Ventas Completas (PUENTE: Aquí sí está el clienteId)
+                const salesArray = Array.from(saleIds);
+                if (salesArray.length > 0) {
+                    const saleChunks = [];
+                    // Dividimos en lotes de 10 (límite de Firebase 'in')
+                    for (let i = 0; i < salesArray.length; i += 10) {
+                        saleChunks.push(salesArray.slice(i, i + 10));
+                    }
+
+                    const salePromises = saleChunks.map(chunk => {
+                        // Usamos '__name__' para buscar por ID de documento de forma segura
+                        const q = query(collection(dbInstance, 'ventas'), where('__name__', 'in', chunk));
+                        return getDocs(q);
+                    });
+
+                    const saleSnaps = await Promise.all(salePromises);
+                    
+                    // Mapeamos las ventas usando la función procesadora existente
+                    // Usamos flatMap y tipado explícito para evitar errores de TS
+                    finalData.sales = saleSnaps.flatMap((snap: FirebaseFirestoreTypes.QuerySnapshot) => 
+                        snap.docs.map(processFirebaseSale)
+                    );
+                    console.log(`Descargadas ${finalData.sales.length} ventas asociadas a las rutas.`);
+                }
+
+                // 4. Recolectar IDs de Clientes desde las VENTAS descargadas (Fuente de verdad)
+                const clientIds = new Set<string>();
+                finalData.sales.forEach(s => {
+                    if (s.clienteId) clientIds.add(s.clienteId);
+                });
+
+                // 5. Descargar Clientes
+                const clientsArray = Array.from(clientIds);
+                if (clientsArray.length > 0) {
+                    const clientChunks = [];
+                    for (let i = 0; i < clientsArray.length; i += 10) {
+                        clientChunks.push(clientsArray.slice(i, i + 10));
+                    }
+
+                    const clientPromises = clientChunks.map(chunk => {
+                         const q = query(collection(dbInstance, 'clientes'), where('__name__', 'in', chunk));
+                         return getDocs(q);
+                    });
+
+                    const clientSnaps = await Promise.all(clientPromises);
+                    const fetchedClients = clientSnaps.flatMap((snap: FirebaseFirestoreTypes.QuerySnapshot) => 
+                        snap.docs.map(processFirebaseDoc)
+                    );
+                    
+                    finalData.clients = fetchedClients as Client[];
+                    console.log(`Datos de ${finalData.clients.length} clientes descargados para Reparto.`);
+                } else {
+                    finalData.clients = [];
+                }
             } else { // Vendedor o Admin
                 const clientsQuery = query(collection(dbInstance, 'clientes'), where('vendedorAsignadoId', '==', currentVendorData.id));
                 const clientsPromise = getDocs(clientsQuery);
