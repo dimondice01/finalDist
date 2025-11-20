@@ -1,15 +1,12 @@
 // app.config.js
-// ✅ CORRECCIÓN DE ERROR EAS: Añadimos ios.bundleIdentifier.
-
 module.exports = ({ config }) => {
     
-    // 1. Obtenemos el valor de la variable de entorno de EAS.
-    const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+    // ✅ SOLUCIÓN: Ponemos la llave directa para asegurar que EAS la lea sí o sí.
+    // Al tener restricciones de SHA-1 en Google Cloud, esto es SEGURO.
+    const GOOGLE_MAPS_API_KEY = "AIzaSyBEkn8qBfdkJkH-ZFW5yzOR-jrAxFdI-gA"; 
 
     return {
-        
         "expo": {
-            
             "name": "Distribuidora",
             "slug": "Distribuidora",
             "version": "1.0.0",
@@ -28,7 +25,6 @@ module.exports = ({ config }) => {
             },
             "ios": {
                 "supportsTablet": true,
-                // ✅ CAMBIO CLAVE: Definimos el bundleIdentifier para pasar la validación de EAS
                 "bundleIdentifier": "com.dimondice.Distribuidora", 
                 "config": {
                     "googleMaps": {
@@ -51,7 +47,7 @@ module.exports = ({ config }) => {
                 },
                 "config": {
                     "googleMaps": {
-                        "apiKey": GOOGLE_MAPS_API_KEY
+                        "apiKey": GOOGLE_MAPS_API_KEY // ✅ Aquí se inyectará la llave real
                     }
                 },
                 "compileSdkVersion": 36,
@@ -77,13 +73,10 @@ module.exports = ({ config }) => {
                         }
                     }
                 ],
-                
                 "@react-native-firebase/app"
-                
             ],
             "extra": {
                 "eas": {
-                    // ✅ ID CORREGIDO
                     "projectId": "1d7623d1-bc88-47cc-b1f9-73b653ce4ae5" 
                 }
             }

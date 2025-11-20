@@ -1,3 +1,5 @@
+// src/styles/theme.js
+
 // Paleta de colores: Base Gris Cálido (Cálido/Neutro) con Teal Profundo (Contraste Frío/Marca).
 // Estética: Elegante, Profesional, Contraste de Temperatura.
 // Estandarización de SIZES con 8-Point Grid.
@@ -5,36 +7,40 @@
 export const COLORS = {
   // --- FONDOS BASE (Cálidos, Suaves y Neutros) ---
   // Un gris muy claro con un matiz beige, muy cómodo para la vista.
-  backgroundStart: '#fff0e1ff', // Gris Cálido Muy Claro (Near Beige) - Fondo Principal
-  backgroundEnd: '#f8f6f6ff',   // Blanco Puro - Para tarjetas y componentes elevados (Limpieza)
+  backgroundStart: '#F9F7F2', // Gris Cálido Muy Claro (Near Beige) - Fondo Principal (Ajustado para suavidad)
+  backgroundEnd: '#FFFFFF',   // Blanco Puro - Para tarjetas y componentes elevados (Limpieza)
   
   // --- COLOR PRINCIPAL (Teal Profundo para profesionalismo) ---
-  primary: '#331d6aff',         // Teal Profundo / Petróleo (Deep Teal) - Base de Marca y CTAs
-  secondary:  "#006666",      // Teal más oscuro y serio
+  primary: '#0F4C5C',         // Teal Profundo / Petróleo (Deep Teal) - Base de Marca y CTAs
+  secondary: "#136F63",       // Teal más vibrante para estados secundarios
   
   // Acento/Highlighter: Un Coral Cálido para inyectar un punto focal vibrante.
-  accent: '#FF6B6B',          // Coral/Salmón Brillante - Máximo Contraste de Acción
+  accent: '#E07A5F',          // Coral/Terracota - Máximo Contraste de Acción (Botones flotantes, notificaciones)
   
   // --- TEXTO (Alto Contraste Cálido) ---
-  textPrimary: '#333333',     // Gris Carbón Cálido (Charcoal) - Lectura principal
-  textSecondary: '#757575',   // Gris medio cálido - Subtítulos, información secundaria
+  textPrimary: '#2D3142',     // Gris Azulado Oscuro (Gunmetal) - Lectura principal, menos duro que el negro puro
+  textSecondary: '#9CA3AF',   // Gris medio - Subtítulos, información secundaria
   
-  // Blanco 
+  // Blanco y Utilitarios
   white: '#FFFFFF',
+  black: '#000000',
+  gray: '#636363c6',
   
   // --- COMPONENTES ---
   cardBackground: '#FFFFFF', 
-  cardOverlay: 'rgba(240, 240, 240, 0.9)', // Gris muy claro semi-transparente
-  glassBorder: '#DEDEDE',     // Borde gris claro y sutil
+  cardOverlay: 'rgba(255, 255, 255, 0.95)', // Casi opaco para legibilidad sobre mapas
+  glassBorder: '#E5E7EB',     // Borde gris muy claro y sutil (Tailwind Gray-200)
   
   // --- COLORES DE ESTADO (Coherentes y accesibles) ---
-  success: '#4CAF50',         // Verde
-  warning: '#FFC107',         // Amarillo/Ámbar
-  danger: '#F44336',          // Rojo
-  error: '#F44336',           // Alias para 'danger'
-  disabled: '#E8E8E8',        // Gris claro para elementos inactivos
+  success: '#10B981',         // Verde Esmeralda
+  warning: '#F59E0B',         // Ámbar
+  danger: '#EF4444',          // Rojo
+  error: '#EF4444',           // Alias para 'danger'
+  disabled: '#E5E7EB',        // Gris claro para elementos inactivos
+  
+  // --- EXTRAS (Para gradientes o sombras) ---
+  shadow: '#9CA3AF',
 };
-
 
 // --- Estandarización de SIZES (Sistema de Escalado de 8 Puntos para UX/UI) ---
 export const SIZES = {
@@ -47,9 +53,10 @@ export const SIZES = {
   xxl: 40,
 
   // Tamaños de Fuente (Escala modular para jerarquía)
-  h1: 32,    
+  h1: 30,    
   h2: 24,    
   h3: 20,    
+  h4: 18,    // Añadido para subtítulos de secciones
   body: 16,  
   caption: 14, 
   xsmallText: 12, 
@@ -63,6 +70,10 @@ export const SIZES = {
 // --- FONT (Placeholder listo para fuentes personalizadas) ---
 export const FONT = {
   regular: 'System', 
-  medium: 'System',  
-  bold: 'System',    
+  medium: 'System',  // En iOS suele ser font-weight 500
+  bold: 'System',    // En iOS suele ser font-weight 700
 };
+
+const appTheme = { COLORS, SIZES, FONT };
+
+export default appTheme;

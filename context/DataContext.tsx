@@ -345,18 +345,24 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         prevIsConnected.current = isConnected;
     }, [netInfo.isConnected]);
 
-    // --- fetchDataAndStore (CORREGIDO: Usa dbContainer.instance) ---
-    const fetchDataAndStore = useCallback(async (showToast = true) => {
+    // ======================================================
+    // ✅ CORRECCIÓN CRÍTICA: Argumento isBackground=false
+    // ======================================================
+    const fetchDataAndStore = useCallback(async (showToast = true, isBackground = false) => {
         
         const dbInstance = dbContainer.instance;
         if (!dbInstance) {
             console.warn("fetchDataAndStore: DB no está lista, reintentando en 100ms...");
-            setTimeout(() => fetchDataAndStore(showToast), 100);
+            setTimeout(() => fetchDataAndStore(showToast, isBackground), 100);
             return;
         }
 
-        setIsLoading(true);
-        console.log("Iniciando obtención de datos desde Firestore...");
+        // ✅ FIX: Si es background, NO activamos el loading global
+        if (!isBackground) {
+            setIsLoading(true);
+        }
+
+        console.log(`Iniciando obtención de datos (Background: ${isBackground})...`);
         try {
             const currentUser = auth.currentUser;
             if (!currentUser) throw new Error("No hay usuario autenticado para obtener datos.");
@@ -456,7 +462,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     rendido: rawData.rendido,
                     fechaRendicion: rawData.fechaRendicion,
                     ventaOriginalId: rawData.ventaOriginalId,
-                } as Sale;
+                    } as Sale;
             };
 
             const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap] = await Promise.all([
@@ -477,7 +483,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             finalData.vendors = vendorsSnap.docs.map(processFirebaseDoc) as Vendor[];
             finalData.rubros = rubrosSnap.docs.map(processFirebaseDoc) as Rubro[];
 
-      // Queries condicionales
+            // Queries condicionales
             if (userRole === 'Reparto') {
                 console.log("Cargando rutas para repartidor...");
                 const routesQuery = query(collection(dbInstance, 'rutas'), where('repartidorId', '==', currentVendorData.id));
@@ -618,7 +624,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             }
             throw error;
         } finally {
-            setIsLoading(false);
+            // ✅ FIX: Solo apagamos loading si lo encendimos nosotros
+            if (!isBackground) {
+                setIsLoading(false);
+            }
         }
     }, [currentVendor?.id, auth.currentUser?.uid]); 
 
@@ -689,13 +698,16 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     }, [currentVendor, userRole, isInitialDataLoaded]); 
 
 
-    // --- Funciones sync y refresh (sin cambios) ---
+    // ======================================================
+    // ✅ CORRECCIÓN EN SYNC
+    // ======================================================
     const syncData = useCallback(async () => {
-        await fetchDataAndStore(true);
+        // Llamamos con TRUE para mostrar toast, pero TRUE para background
+        await fetchDataAndStore(true, true); 
     }, [fetchDataAndStore]);
 
     const refreshAllData = useCallback(async () => {
-        await fetchDataAndStore(true);
+        await fetchDataAndStore(true, false); // Aquí SÍ queremos loading (pull to refresh manual)
     }, [fetchDataAndStore]);
 
     

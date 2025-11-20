@@ -35,6 +35,58 @@ const formatCurrency = (value?: number) =>
         ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         : '$0,00';
 
+// --- UTILIDADES DE RUTA (Algoritmo) ---
+const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; 
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+};
+
+const optimizeInvoices = (invoices: Invoice[]): Invoice[] => {
+    // Filtramos solo los que tienen ubicación para ordenarlos
+    const withLoc = invoices.filter(i => i.location?.latitude && i.location?.longitude);
+    const withoutLoc = invoices.filter(i => !i.location?.latitude || !i.location?.longitude);
+
+    if (withLoc.length < 2) return [...withLoc, ...withoutLoc];
+
+    let current = withLoc[0];
+    let remaining = withLoc.slice(1);
+    const sorted: Invoice[] = [current];
+
+    while (remaining.length > 0) {
+        let nearestIndex = -1;
+        let minDist = Infinity;
+
+        for (let i = 0; i < remaining.length; i++) {
+            const candidate = remaining[i];
+            const dist = getDistance(
+                current.location!.latitude, current.location!.longitude,
+                candidate.location!.latitude, candidate.location!.longitude
+            );
+            if (dist < minDist) {
+                minDist = dist;
+                nearestIndex = i;
+            }
+        }
+
+        if (nearestIndex !== -1) {
+            const next = remaining[nearestIndex];
+            sorted.push(next);
+            current = next;
+            remaining.splice(nearestIndex, 1);
+        } else {
+            break;
+        }
+    }
+
+    return [...sorted, ...withoutLoc];
+};
+
 // --- INTERFACES ---
 interface ProductItem {
     id: string;
@@ -61,7 +113,7 @@ interface Invoice {
 }
 
 // =================================================================================
-// MODAL DE GESTIÓN DE ENTREGA
+// MODAL DE GESTIÓN DE ENTREGA (LÓGICA ORIGINAL)
 // =================================================================================
 
 interface DeliveryModalProps {
@@ -147,7 +199,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
 
         let estado: Invoice['estadoVisita'] = 'Pendiente';
         if (total === 0 && pagado === 0 && items.length > 0) {
-            estado = 'Anulada'; // Todos los items rechazados
+            estado = 'Anulada';
         } else if (saldo <= 10) {
             estado = 'Pagada';
         } else {
@@ -350,7 +402,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
 
 
 // =================================================================================
-// PANTALLA PRINCIPAL
+// PANTALLA PRINCIPAL (ROUTE DETAIL)
 // =================================================================================
 
 const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
@@ -358,18 +410,21 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const { routes, clients, sales, syncData } = useData();
     
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-    const [modalVisible, setModalVisible] = useState(false);
+    const [deliveryModalVisible, setDeliveryModalVisible] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
+
+    // --- ESTADOS DE NAVEGACIÓN ACTIVA (MODO COPILOTO) ---
+    const [isNavMode, setIsNavMode] = useState(false);
+    const [navQueue, setNavQueue] = useState<Invoice[]>([]);
+    const [navIndex, setNavIndex] = useState(0);
 
     const routeData = useMemo(() => {
         const r = routes.find(rt => rt.id === routeId);
         if (!r) return null;
 
         const enrichedInvoices = (r.facturas || []).map((inv: any) => {
-            // 1. Intentamos sacar el ID directamente
             let targetId = (inv.clienteId || inv.clientId || '').trim();
             
-            // 2. PUENTE: Si no hay ID, buscamos la venta original por ID de factura
             if (!targetId) {
                 const linkedSale = sales.find(s => s.id === inv.id);
                 if (linkedSale && linkedSale.clienteId) {
@@ -377,21 +432,19 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 }
             }
 
-            // 3. Buscar cliente
             const client = clients.find(c => c.id === targetId);
 
             return {
                 ...inv,
                 clienteNombre: client?.nombre || inv.clienteNombre || 'Cliente Desconocido',
                 clienteDireccion: client?.direccion || inv.clienteDireccion,
-                // Datos críticos para botones:
                 location: client?.location || inv.location || null,
                 telefono: client?.telefono || inv.telefono || null,
                 items: inv.items || [] 
             } as Invoice;
         });
 
-        // ✅ ORDENAMIENTO: PENDIENTES PRIMERO
+        // Orden: Pendientes primero
         enrichedInvoices.sort((a: Invoice, b: Invoice) => {
             const scoreA = a.estadoVisita === 'Pendiente' ? 0 : 1;
             const scoreB = b.estadoVisita === 'Pendiente' ? 0 : 1;
@@ -401,153 +454,125 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         return { ...r, facturas: enrichedInvoices };
     }, [routeId, routes, clients, sales]);
 
-    // --- ACCIONES DE BOTONES ---
-    
+    // --- ACCIONES ---
+
     const handleSuccessUpdate = async () => {
         await syncData();
     };
 
-    const handleOpenModal = (invoice: Invoice) => {
+    const handleOpenDeliveryModal = (invoice: Invoice) => {
         if (invoice.estadoVisita === 'Anulada') {
             Toast.show({ type: 'info', text1: 'Anulada', text2: 'Esta parada fue anulada.' });
         }
         setSelectedInvoice(invoice);
-        setModalVisible(true);
+        setDeliveryModalVisible(true);
     };
 
+    // --- UTILS ---
     const handleCall = (phone?: string) => {
-        if (!phone || phone.trim() === '') {
-            return Toast.show({ type: 'info', text1: 'Sin datos', text2: 'El cliente no tiene teléfono registrado.' });
-        }
+        if (!phone) return Toast.show({ type: 'info', text1: 'Sin teléfono' });
         Linking.openURL(`tel:${phone}`);
     };
 
     const handleWhatsApp = (phone?: string, name?: string) => {
-        if (!phone || phone.trim() === '') {
-            return Toast.show({ type: 'info', text1: 'Sin datos', text2: 'El cliente no tiene teléfono registrado.' });
-        }
+        if (!phone) return Toast.show({ type: 'info', text1: 'Sin teléfono' });
         let number = phone.replace(/[^\d]/g, '');
-        const message = `Hola ${name || ''}, le escribo de la distribuidora.`;
-        const url = `whatsapp://send?phone=${number}&text=${encodeURIComponent(message)}`;
-        
-        Linking.openURL(url).catch(() => {
-            Toast.show({ type: 'error', text1: 'Error', text2: 'WhatsApp no instalado.' });
-        });
+        const url = `whatsapp://send?phone=${number}&text=Hola ${name || ''}`;
+        Linking.openURL(url).catch(() => Toast.show({ type: 'error', text1: 'WhatsApp no instalado' }));
     };
 
     const handleNavigate = (lat?: number, lng?: number, label?: string) => {
-        if (!lat || !lng) {
-            return Toast.show({ type: 'info', text1: 'Sin ubicación', text2: 'El cliente no tiene coordenadas GPS.' });
-        }
+        if (!lat || !lng) return Toast.show({ type: 'info', text1: 'Sin coordenadas GPS' });
         const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
         const latLng = `${lat},${lng}`;
-        const url = Platform.select({
-            ios: `${scheme}${label}@${latLng}`,
-            android: `${scheme}${latLng}(${label})`
-        });
+        const url = Platform.select({ ios: `${scheme}${label}@${latLng}`, android: `${scheme}${latLng}(${label})` });
         if(url) Linking.openURL(url);
     };
 
-    const handleResetStop = (invoice: Invoice) => {
+    // --- LÓGICA DE INICIO DE RECORRIDO ---
+    const handleStartRoute = () => {
+        const pendientes = routeData?.facturas.filter(f => f.estadoVisita === 'Pendiente') || [];
+        
+        if (pendientes.length === 0) {
+            Alert.alert("Ruta Completada", "No hay paradas pendientes.");
+            return;
+        }
+
         Alert.alert(
-            "Revertir Parada",
-            "Se volverá a marcar como 'Pendiente' y se reiniciará el saldo. ¿Continuar?",
+            "Iniciar Recorrido",
+            `¿Quieres optimizar el recorrido para las ${pendientes.length} paradas pendientes?`,
             [
-                { text: "Cancelar", style: "cancel" },
-                { text: "Sí, Revertir", style: "destructive", onPress: async () => {
-                    setIsUpdating(true);
-                    try {
-                        await firestore().runTransaction(async (transaction) => {
-                            const routeRef = firestore().collection('rutas').doc(routeId);
-                            const saleRef = firestore().collection('ventas').doc(invoice.id);
-                            const routeDoc = await transaction.get(routeRef);
-                            
-                            if (!routeDoc.exists()) throw new Error("Ruta no existe");
-
-                            transaction.update(saleRef, {
-                                estado: 'Pendiente de Entrega',
-                                estadoVisita: 'Pendiente', 
-                                saldoPendiente: invoice.totalVenta, 
-                                pagoEfectivo: 0,
-                                pagoTransferencia: 0,
-                            });
-
-                            const routeData = routeDoc.data();
-                            // @ts-ignore
-                            const invoices = routeData?.facturas || [];
-                            const newInvoices = invoices.map((f: any) => {
-                                if (f.id === invoice.id) {
-                                    return {
-                                        ...f,
-                                        estadoVisita: 'Pendiente',
-                                        saldoPendiente: invoice.totalVenta,
-                                        pagoEfectivo: 0,
-                                        pagoTransferencia: 0
-                                    };
-                                }
-                                return f;
-                            });
-                            transaction.update(routeRef, { facturas: newInvoices });
-                        });
+                { text: "No, orden original", onPress: () => startNavigation(pendientes) },
+                { 
+                    text: "Sí, Optimizar (Distancia)", 
+                    onPress: () => {
+                        // 1. Optimizamos
+                        const optimized = optimizeInvoices(pendientes);
+                        // 2. Iniciamos navegación
+                        startNavigation(optimized);
                         
-                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                        Toast.show({ type: 'success', text1: 'Parada Revertida' });
-                        await syncData();
-                    } catch (e: any) {
-                        Alert.alert("Error", e.message);
-                    } finally {
-                        setIsUpdating(false);
+                        // 3. 🚀 AUTO-LAUNCH MAPA (Primer Cliente)
+                        if (optimized.length > 0) {
+                            const first = optimized[0];
+                            setTimeout(() => {
+                                handleNavigate(first.location?.latitude, first.location?.longitude, first.clienteNombre);
+                            }, 500);
+                        }
                     }
-                }}
+                }
             ]
         );
     };
 
-    const handleFinalizeRoute = () => {
-        if (!routeData) return;
-        const pendientes = routeData.facturas.filter(f => f.estadoVisita === 'Pendiente').length;
+    const startNavigation = (queue: Invoice[]) => {
+        setNavQueue(queue);
+        setNavIndex(0);
+        setIsNavMode(true);
+    };
 
-        if (pendientes > 0) {
-            Alert.alert("Ruta Incompleta", `Quedan ${pendientes} paradas pendientes. ¿Finalizar de todos modos?`, [
-                { text: "Cancelar", style: "cancel" },
-                { text: "Sí, Finalizar", style: "destructive", onPress: executeFinalize }
-            ]);
+    const handleNavNext = () => {
+        const nextIndex = navIndex + 1;
+        if (nextIndex < navQueue.length) {
+            setNavIndex(nextIndex);
+            
+            // 🚀 AUTO-LAUNCH MAPA (Siguiente Cliente)
+            const nextItem = navQueue[nextIndex];
+            setTimeout(() => {
+                 handleNavigate(nextItem.location?.latitude, nextItem.location?.longitude, nextItem.clienteNombre);
+            }, 400); // Pequeño delay para que la UI se actualice primero
+            
         } else {
-            Alert.alert("Finalizar Ruta", "¿Confirmas que terminaste el recorrido?", [
-                { text: "Cancelar", style: "cancel" },
-                { text: "Sí, Finalizar", onPress: executeFinalize }
-            ]);
+            Alert.alert("Fin del Recorrido", "Has pasado por todas las paradas planificadas.");
+            setIsNavMode(false);
         }
     };
 
-    const executeFinalize = async () => {
-        setIsUpdating(true);
-        try {
-            await firestore().collection('rutas').doc(routeId).update({
-                estado: 'Completada',
-                fechaFin: firestore.FieldValue.serverTimestamp()
-            });
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            Toast.show({ type: 'success', text1: 'Ruta Finalizada' });
-            navigation.goBack();
-        } catch (e: any) {
-            Alert.alert("Error", e.message);
-        } finally {
-            setIsUpdating(false);
-        }
+    const handleFinalizeRoute = async () => {
+        Alert.alert("Finalizar Ruta", "¿Confirmas que terminaste el recorrido?", [
+            { text: "Cancelar", style: "cancel" },
+            { text: "Sí, Finalizar", onPress: async () => {
+                setIsUpdating(true);
+                try {
+                    await firestore().collection('rutas').doc(routeId).update({
+                        estado: 'Completada',
+                        fechaFin: firestore.FieldValue.serverTimestamp()
+                    });
+                    Toast.show({ type: 'success', text1: 'Ruta Finalizada' });
+                    navigation.goBack();
+                } catch (e) { Alert.alert("Error", "Error al finalizar ruta."); } 
+                finally { setIsUpdating(false); }
+            }}
+        ]);
     };
 
     if (!routeData) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
-            </View>
-        );
+        return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
     }
 
     const totalVisitas = routeData.facturas.length;
     const visitadas = routeData.facturas.filter(f => f.estadoVisita !== 'Pendiente').length;
 
+    // --- RENDERIZADO ---
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
@@ -558,25 +583,29 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <View>
-                    <Text style={styles.headerTitle}>{routeData.id}</Text>
+                    <Text style={styles.headerTitle}>Ruta {routeData.id.slice(-4)}</Text>
                     <Text style={styles.headerSubtitle}>Avance: {visitadas} / {totalVisitas}</Text>
                 </View>
+            </View>
+
+            {/* BOTÓN HERO: INICIAR RECORRIDO */}
+            <View style={styles.heroContainer}>
+                <TouchableOpacity style={styles.startRouteBtn} onPress={handleStartRoute}>
+                    <Feather name="navigation" size={20} color={COLORS.white} />
+                    <Text style={styles.startRouteText}>INICIAR RECORRIDO</Text>
+                </TouchableOpacity>
             </View>
 
             <FlatList
                 data={routeData.facturas}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ padding: SIZES.medium, paddingBottom: 120 }}
-                renderItem={({ item }) => {
+                renderItem={({ item, index }) => {
                     const isPendiente = item.estadoVisita === 'Pendiente';
-                    const isPagada = item.estadoVisita === 'Pagada';
-                    const isAdeuda = item.estadoVisita === 'Adeuda';
-                    const isAnulada = item.estadoVisita === 'Anulada';
-
                     let borderColor = COLORS.glassBorder;
-                    if (isPagada) borderColor = COLORS.success;
-                    if (isAdeuda) borderColor = COLORS.warning;
-                    if (isAnulada) borderColor = COLORS.danger;
+                    if (item.estadoVisita === 'Pagada') borderColor = COLORS.success;
+                    if (item.estadoVisita === 'Adeuda') borderColor = COLORS.warning;
+                    if (item.estadoVisita === 'Anulada') borderColor = COLORS.danger;
 
                     return (
                         <View style={[styles.card, { borderLeftColor: borderColor, borderLeftWidth: 5 }]}>
@@ -597,42 +626,26 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                                     <Text style={styles.label}>Total:</Text>
                                     <Text style={styles.value}>{formatCurrency(item.totalVenta)}</Text>
                                 </View>
-                                {(isAdeuda || isPagada) && (
+                                {(item.estadoVisita === 'Adeuda' || item.estadoVisita === 'Pagada') && (
                                     <View style={styles.rowBetween}>
-                                        <Text style={[styles.label, { color: isAdeuda ? COLORS.warning : COLORS.success }]}>
-                                            {isAdeuda ? 'Saldo Deudor:' : 'Pagado:'}
+                                        <Text style={[styles.label, { color: item.estadoVisita === 'Adeuda' ? COLORS.warning : COLORS.success }]}>
+                                            {item.estadoVisita === 'Adeuda' ? 'Saldo Deudor:' : 'Pagado:'}
                                         </Text>
-                                        <Text style={[styles.value, { color: isAdeuda ? COLORS.warning : COLORS.success }]}>
-                                            {isAdeuda ? formatCurrency(item.saldoPendiente) : 'Completo'}
+                                        <Text style={[styles.value, { color: item.estadoVisita === 'Adeuda' ? COLORS.warning : COLORS.success }]}>
+                                            {item.estadoVisita === 'Adeuda' ? formatCurrency(item.saldoPendiente) : 'Completo'}
                                         </Text>
                                     </View>
                                 )}
                             </View>
 
                             <View style={styles.quickActions}>
-                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleCall(item.telefono)}>
-                                    <Feather name="phone" size={18} color={COLORS.primary} />
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleWhatsApp(item.telefono, item.clienteNombre)}>
-                                    <Feather name="message-circle" size={18} color="#25D366" />
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleNavigate(item.location?.latitude, item.location?.longitude, item.clienteNombre)}>
-                                    <Feather name="map" size={18} color={COLORS.secondary} />
-                                </TouchableOpacity>
-                                {!isPendiente && (
-                                    <TouchableOpacity style={styles.qaBtn} onPress={() => handleResetStop(item)}>
-                                        <Feather name="rotate-ccw" size={18} color={COLORS.warning} />
-                                    </TouchableOpacity>
-                                )}
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleCall(item.telefono)}><Feather name="phone" size={18} color={COLORS.primary} /></TouchableOpacity>
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleWhatsApp(item.telefono, item.clienteNombre)}><Feather name="message-circle" size={18} color="#25D366" /></TouchableOpacity>
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleNavigate(item.location?.latitude, item.location?.longitude, item.clienteNombre)}><Feather name="map" size={18} color={COLORS.secondary} /></TouchableOpacity>
                             </View>
 
-                            <TouchableOpacity 
-                                style={[styles.mainActionBtn, isAnulada && { backgroundColor: COLORS.disabled }]}
-                                onPress={() => handleOpenModal(item)}
-                            >
-                                <Text style={styles.mainActionText}>
-                                    {isPendiente ? 'GESTIONAR ENTREGA' : 'VER / EDITAR DETALLE'}
-                                </Text>
+                            <TouchableOpacity style={styles.mainActionBtn} onPress={() => handleOpenDeliveryModal(item)}>
+                                <Text style={styles.mainActionText}>{isPendiente ? 'GESTIONAR ENTREGA' : 'VER DETALLE'}</Text>
                                 <Feather name="chevron-right" size={16} color="#FFF" />
                             </TouchableOpacity>
                         </View>
@@ -642,30 +655,91 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
             
             {routeData.estado !== 'Completada' && (
                 <View style={styles.floatingFooter}>
-                    <TouchableOpacity 
-                        style={[styles.finalizeBtn, isUpdating && { opacity: 0.7 }]} 
-                        onPress={handleFinalizeRoute}
-                        disabled={isUpdating}
-                    >
+                    <TouchableOpacity style={styles.finalizeBtn} onPress={handleFinalizeRoute} disabled={isUpdating}>
                         {isUpdating ? <ActivityIndicator color="#FFF" /> : (
-                            <>
-                                <Feather name="check-circle" size={20} color="#FFF" style={{marginRight: 10}} />
-                                <Text style={styles.finalizeText}>FINALIZAR RUTA</Text>
-                            </>
+                            <><Feather name="check-circle" size={20} color="#FFF" style={{marginRight: 10}} /><Text style={styles.finalizeText}>FINALIZAR RUTA</Text></>
                         )}
                     </TouchableOpacity>
                 </View>
             )}
 
+            {/* MODAL GESTION DE ENTREGA (ORIGINAL) */}
             {selectedInvoice && (
                 <DeliveryModal 
-                    visible={modalVisible}
+                    visible={deliveryModalVisible}
                     invoice={selectedInvoice}
                     routeId={routeData.id}
-                    onClose={() => setModalVisible(false)}
+                    onClose={() => setDeliveryModalVisible(false)}
                     onSuccess={handleSuccessUpdate}
                 />
             )}
+
+            {/* NUEVO MODAL DE NAVEGACIÓN (COPILOTO) */}
+            <Modal visible={isNavMode} transparent animationType="slide" onRequestClose={() => setIsNavMode(false)}>
+                <View style={navStyles.overlay}>
+                    <View style={navStyles.card}>
+                        <View style={navStyles.header}>
+                            <View>
+                                <Text style={navStyles.progressText}>Parada {navIndex + 1} de {navQueue.length}</Text>
+                                <View style={navStyles.progressBarBg}>
+                                    <View style={[navStyles.progressBarFill, { width: `${((navIndex + 1) / navQueue.length) * 100}%` }]} />
+                                </View>
+                            </View>
+                            <TouchableOpacity onPress={() => setIsNavMode(false)}><Feather name="x" size={24} color={COLORS.textSecondary} /></TouchableOpacity>
+                        </View>
+
+                        {navQueue[navIndex] && (() => {
+                            const currentInv = navQueue[navIndex];
+                            // Obtenemos el estado actualizado desde routeData si existe para reflejar cambios
+                            const freshInv = routeData.facturas.find(f => f.id === currentInv.id) || currentInv;
+                            const isCompleted = freshInv.estadoVisita !== 'Pendiente';
+
+                            return (
+                                <View style={navStyles.content}>
+                                    <Text style={navStyles.label}>VISITANDO A:</Text>
+                                    <Text style={navStyles.clientName}>{freshInv.clienteNombre}</Text>
+                                    <TouchableOpacity onPress={() => handleNavigate(freshInv.location?.latitude, freshInv.location?.longitude, freshInv.clienteNombre)} style={navStyles.addressRow}>
+                                        <Feather name="map-pin" size={16} color={COLORS.primary} />
+                                        <Text style={navStyles.addressText}>{freshInv.clienteDireccion || "Ver en Mapa"}</Text>
+                                    </TouchableOpacity>
+
+                                    <View style={navStyles.statsRow}>
+                                        <View style={navStyles.statBox}>
+                                            <Text style={navStyles.statLabel}>Total</Text>
+                                            <Text style={navStyles.statValue}>{formatCurrency(freshInv.totalVenta)}</Text>
+                                        </View>
+                                        <View style={navStyles.statBox}>
+                                            <Text style={navStyles.statLabel}>Estado</Text>
+                                            <Text style={[navStyles.statValue, { color: isCompleted ? COLORS.success : COLORS.warning }]}>
+                                                {freshInv.estadoVisita}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    <View style={navStyles.actions}>
+                                        <TouchableOpacity 
+                                            style={[navStyles.primaryBtn, isCompleted && { backgroundColor: COLORS.success }]}
+                                            onPress={() => handleOpenDeliveryModal(freshInv)}
+                                        >
+                                            <Feather name={isCompleted ? "check" : "package"} size={24} color="#FFF" />
+                                            <Text style={navStyles.primaryBtnText}>
+                                                {isCompleted ? "VER DETALLE / EDITAR" : "GESTIONAR ENTREGA"}
+                                            </Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity style={navStyles.secondaryBtn} onPress={handleNavNext}>
+                                            <Text style={navStyles.secondaryBtnText}>
+                                                {isCompleted ? "Siguiente Cliente" : "No Recibido / Saltar"}
+                                            </Text>
+                                            <Feather name="chevrons-right" size={20} color={COLORS.textSecondary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            );
+                        })()}
+                    </View>
+                </View>
+            </Modal>
 
         </SafeAreaView>
     );
@@ -674,6 +748,29 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
 // =================================================================================
 // ESTILOS
 // =================================================================================
+const navStyles = StyleSheet.create({
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
+    card: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, minHeight: '55%' },
+    header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+    progressText: { color: COLORS.textSecondary, fontSize: 12, marginBottom: 5 },
+    progressBarBg: { width: 150, height: 6, backgroundColor: '#E5E5EA', borderRadius: 3 },
+    progressBarFill: { height: '100%', backgroundColor: COLORS.primary, borderRadius: 3 },
+    content: { flex: 1 },
+    label: { color: COLORS.textSecondary, fontSize: 12, fontWeight: 'bold', letterSpacing: 1 },
+    clientName: { fontSize: 26, fontWeight: 'bold', color: COLORS.textPrimary, marginVertical: 5 },
+    addressRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 5 },
+    addressText: { color: COLORS.primary, textDecorationLine: 'underline' },
+    statsRow: { flexDirection: 'row', gap: 15, marginBottom: 30 },
+    statBox: { flex: 1, backgroundColor: '#F2F2F7', padding: 15, borderRadius: 12, alignItems: 'center' },
+    statLabel: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 },
+    statValue: { fontSize: 18, fontWeight: 'bold', color: COLORS.textPrimary },
+    actions: { gap: 15 },
+    primaryBtn: { backgroundColor: COLORS.primary, padding: 18, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 8 },
+    primaryBtnText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+    secondaryBtn: { padding: 15, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#E5E5EA' },
+    secondaryBtnText: { color: COLORS.textSecondary, fontSize: 14, fontWeight: '600' }
+});
+
 const modalStyles = StyleSheet.create({
     container: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
     content: { backgroundColor: '#F2F2F7', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', paddingBottom: 30 },
@@ -701,7 +798,6 @@ const modalStyles = StyleSheet.create({
     inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 15, height: 50, marginBottom: 10, borderWidth: 1, borderColor: '#E5E5EA' },
     input: { flex: 1, fontSize: 16, color: COLORS.textPrimary, height: '100%' },
     footer: { padding: 20, backgroundColor: '#FFF', marginTop: 10 },
-    statusPreview: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
     confirmBtn: { backgroundColor: COLORS.primary, height: 50, borderRadius: 14, justifyContent: 'center', alignItems: 'center', shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
     confirmBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }
 });
@@ -713,6 +809,9 @@ const styles = StyleSheet.create({
     backBtn: { padding: 8, backgroundColor: '#FFF', borderRadius: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5 },
     headerTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.textPrimary, marginLeft: 15 },
     headerSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginLeft: 15 },
+    heroContainer: { paddingHorizontal: 20, marginBottom: 15 },
+    startRouteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.primary, paddingVertical: 15, borderRadius: 16, shadowColor: COLORS.primary, shadowOpacity: 0.4, shadowRadius: 8, elevation: 5, gap: 10 },
+    startRouteText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 },
     card: { backgroundColor: '#FFF', borderRadius: 16, marginBottom: 15, marginHorizontal: 20, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2, overflow: 'hidden' },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' },
     clientName: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary },
