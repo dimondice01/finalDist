@@ -20,14 +20,11 @@ import { SelectClientForSaleScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
 import { Client, useData } from '../../context/DataContext';
-// ✅ Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
 
-// --- Componente Memoizado para el Item de la Lista (Estilos Mejorados) ---
+// --- Componente Memoizado para el Item de la Lista ---
 const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect: (client: Client) => void }) => {
-    if (!item || !item.id) {
-        return null;
-    }
+    if (!item || !item.id) return null;
 
     const handlePress = useCallback(() => {
         onSelect(item);
@@ -41,23 +38,29 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
         >
             <Feather name="user" size={SIZES.h3} color={COLORS.primary} style={styles.userIcon} />
             <View style={styles.cardInfo}>
-                {/* Título: SIZES.body (16px) */}
-                <Text style={styles.cardTitle} numberOfLines={1}>{item.nombre || item.nombreCompleto || 'Cliente Sin Nombre'}</Text>
-                {/* Subtítulo: SIZES.caption (14px) */}
-                {item.direccion ? <Text style={styles.cardSubtitle} numberOfLines={1}>{item.direccion}</Text> : null}
+                <Text style={styles.cardTitle} numberOfLines={1}>
+                    {item.nombre || item.nombreCompleto || 'Cliente Sin Nombre'}
+                </Text>
+                {item.direccion ? (
+                    <Text style={styles.cardSubtitle} numberOfLines={1}>{item.direccion}</Text>
+                ) : null}
             </View>
             <Feather name="chevron-right" size={SIZES.h3} color={COLORS.primary} />
         </TouchableOpacity>
     );
 });
-// --- FIN Componente Memoizado ---
 
-
-const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProps) => {
+// --- PANTALLA PRINCIPAL ---
+const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScreenProps) => {
     const { clients: allClients = [], isLoading } = useData();
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Filtrado de clientes (sin cambios)
+    // 1. RECUPERAR EL CARRITO DEL CATÁLOGO (SI EXISTE)
+    // Si venimos del Home (botón "Nueva Venta"), esto será undefined.
+    // Si venimos del Catálogo, tendrá los productos.
+    const cartItemsFromCatalog = route.params?.cartItems;
+
+    // Filtrado de clientes
     const filteredClients = useMemo(() => {
         let clientsToFilter = Array.isArray(allClients) ? allClients : [];
         clientsToFilter = clientsToFilter.filter(c => c && c.id);
@@ -74,19 +77,22 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
         return clientsToFilter;
     }, [searchQuery, allClients]);
 
-    // Función de navegación (sin cambios)
+    // 2. NAVEGACIÓN A CREATE SALE CON DATOS
     const handleSelectClient = useCallback((client: Client) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        // ✅ CORREGIDO: Pasamos solo el clientId (string)
-        navigation.navigate('CreateSale', { clientId: client.id }); 
-    }, [navigation]);
+        
+        // Navegamos pasando el ID del cliente Y los items preseleccionados (si hay)
+        navigation.navigate('CreateSale', { 
+            clientId: client.id,
+            // @ts-ignore - CreateSale debe aceptar esta prop en AppNavigator
+            preselectedItems: cartItemsFromCatalog 
+        }); 
+    }, [navigation, cartItemsFromCatalog]);
 
-    // Función renderItem (sin cambios)
     const renderClientItem = useCallback(({ item }: { item: Client }) => (
         <ClientSelectItemCard item={item} onSelect={handleSelectClient} />
     ), [handleSelectClient]);
 
-    // Estado de carga inicial (sin cambios)
     if (isLoading && (!allClients || allClients.length === 0)) {
         return (
             <View style={styles.loadingContainer}>
@@ -102,16 +108,28 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
 
-            {/* Header (ESTILOS MEJORADOS) */}
+            {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
                     <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.title}>SELECCIONAR CLIENTE</Text>
-                 <View style={styles.headerButton} />{/* Espaciador */}
+                <Text style={styles.title}>
+                    {cartItemsFromCatalog ? 'ASIGNAR CARRITO A...' : 'SELECCIONAR CLIENTE'}
+                </Text>
+                 <View style={styles.headerButton} />
             </View>
 
-            {/* Barra de Búsqueda (ESTILOS MEJORADOS) */}
+            {/* Aviso si traemos carrito */}
+            {cartItemsFromCatalog && cartItemsFromCatalog.length > 0 && (
+                <View style={styles.cartNotice}>
+                    <Feather name="shopping-cart" size={16} color={COLORS.white} />
+                    <Text style={styles.cartNoticeText}>
+                        {cartItemsFromCatalog.length} productos seleccionados
+                    </Text>
+                </View>
+            )}
+
+            {/* Barra de Búsqueda */}
             <View style={styles.controlsContainer}>
                 <View style={styles.inputContainer}>
                     <Feather name="search" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
@@ -121,7 +139,7 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
                         placeholderTextColor={COLORS.textSecondary}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
-                        clearButtonMode="while-editing" // iOS
+                        clearButtonMode="while-editing"
                         autoCapitalize="none"
                         autoCorrect={false}
                     />
@@ -133,7 +151,7 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
                 </View>
             </View>
 
-            {/* FlatList Optimizada (ESTILOS MEJORADOS) */}
+            {/* Lista */}
             <FlatList
                 data={filteredClients}
                 renderItem={renderClientItem}
@@ -160,14 +178,12 @@ const SelectClientForSaleScreen = ({ navigation }: SelectClientForSaleScreenProp
     );
 };
 
-// --- ESTILOS MEJORADOS (USANDO SIZES) ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundStart },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
     loadingText: { marginTop: SIZES.medium, color: COLORS.textSecondary, fontSize: SIZES.body },
     
-    // --- HEADER ESTANDARIZADO ---
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -190,8 +206,24 @@ const styles = StyleSheet.create({
         color: COLORS.textPrimary,
         textAlign: 'center',
         textTransform: 'uppercase',
+        flex: 1,
     },
-    // --- BARRA DE BÚSQUEDA ---
+    
+    // Aviso de carrito
+    cartNotice: {
+        backgroundColor: COLORS.primary,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 8,
+        gap: 8,
+    },
+    cartNoticeText: {
+        color: COLORS.white,
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+
     controlsContainer: { 
         paddingHorizontal: SIZES.large, 
         paddingVertical: SIZES.medium,
@@ -221,7 +253,6 @@ const styles = StyleSheet.create({
     },
     clearButton: { padding: SIZES.xsmall },
     
-    // --- LISTA Y CARDS ---
     listContentContainer: { 
         paddingHorizontal: SIZES.large,
         paddingBottom: SIZES.large, 
@@ -232,7 +263,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center', 
         alignItems: 'center', 
         padding: SIZES.xl, 
-        paddingTop: SIZES.xl * 2, // Empuja hacia abajo
+        paddingTop: SIZES.xl * 2,
         gap: SIZES.medium,
     },
     emptyText: { 
@@ -240,12 +271,11 @@ const styles = StyleSheet.create({
         color: COLORS.textSecondary, 
         textAlign: 'center' 
     },
-    // Tarjeta de Selección
     card: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: COLORS.backgroundEnd,
-        paddingVertical: SIZES.medium + SIZES.xsmall, // 20px de padding vertical
+        paddingVertical: SIZES.medium + SIZES.xsmall, 
         paddingHorizontal: SIZES.medium, 
         borderRadius: SIZES.radius, 
         marginBottom: SIZES.small,

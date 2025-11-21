@@ -26,7 +26,7 @@ import Toast from 'react-native-toast-message';
 import { auth, dbContainer } from '../db/firebase-service';
 
 // --- Definición de Interfaces Estrictas ---
-// (Mantenido sin cambios)
+// (Mantenido sin cambios salvo img)
 export interface Product {
     id: string;
     nombre: string;
@@ -35,6 +35,7 @@ export interface Product {
     stock?: number;
     categoriaId?: string;
     comisionEspecifica?: number;
+    img?: string; // <--- ✅ CORRECCIÓN: Agregado soporte para imágenes
 }
 export interface CartItem extends Product {
     quantity: number;
@@ -142,10 +143,10 @@ export interface Sale {
     itemDiscounts?: { [itemId: string]: number }; 
 
     // ✅ NUEVOS CAMPOS PARA COBRANZA (Agregados para soportar la funcionalidad)
-    montoCobrado?: number;       // Monto total cobrado en una operación de cobranza
-    rendido?: boolean;           // Si el dinero ya fue entregado a caja
-    fechaRendicion?: any;        // Cuándo se rindió
-    ventaOriginalId?: string;    // ID de la venta que generó la deuda (si aplica)
+    montoCobrado?: number;        // Monto total cobrado en una operación de cobranza
+    rendido?: boolean;            // Si el dinero ya fue entregado a caja
+    fechaRendicion?: any;         // Cuándo se rindió
+    ventaOriginalId?: string;     // ID de la venta que generó la deuda (si aplica)
 }
 export interface Route {
     id: string;
@@ -808,7 +809,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             // El descuento de stock LOCAL (optimista) se hace en CreateSaleScreen.tsx
             
             // 2. Escritura remota. NO usamos transacción para permitir que la Cloud Function haga el descuento.
-            await setDoc(saleRef, finalSaleData);
+            // ✅ IMPORTANTE: Se elimina 'await' para evitar bloqueos en conexiones inestables
+            setDoc(saleRef, finalSaleData); 
 
             // Dado que la escritura fue exitosa (no hubo throw), retornamos el ID.
             return saleId;

@@ -6,13 +6,12 @@ import * as Sharing from 'expo-sharing';
 
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
+// --- SDK NATIVO (v9 Modular) ---
 import {
     doc,
     serverTimestamp,
     setDoc
 } from '@react-native-firebase/firestore';
-// --- FIN DE CAMBIOS ---
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -36,7 +35,7 @@ import Toast from 'react-native-toast-message';
 import { useRoute } from '@react-navigation/native';
 import { CreateSaleScreenProps } from '../navigation/AppNavigator';
 
-// --- Contexto, DB, Servicios, Estilos ---
+// --- Contexto ---
 import {
     Sale as BaseSale,
     CartItem,
@@ -55,11 +54,11 @@ import { COLORS, SIZES } from '../../styles/theme';
 
 const { width } = Dimensions.get('window');
 
-// --- CONSTANTE DE PAGINACIÓN ---
+// --- CONSTANTES ---
 const INITIAL_LOAD_COUNT = 25;
 const LOAD_MORE_STEP = 25;
 
-// Interface para la venta que guardaremos (ACTUALIZADA con campos AFIP - PUNTO 2)
+// Interface de Venta
 interface SaleDataToSave {
     clienteId: string;
     clienteNombre: string;
@@ -77,23 +76,20 @@ interface SaleDataToSave {
     observaciones: string; 
     tipo: 'venta' | 'reposicion' | 'devolucion';
     
-    // ✅ INICIO CAMPOS AFIP (COPIADOS DEL CLIENTE)
-    tipoDocumento: string; // copiado del cliente
-    numeroDocumento: string; // copiado del cliente
-    facturaAfip: boolean; // BOOLEANO: requiereFacturaAfip del cliente
+    // CAMPOS AFIP
+    tipoDocumento: string; 
+    numeroDocumento: string; 
+    facturaAfip: boolean; 
     
-    // ✅ CAMPOS AFIP (PARA USO DEL BACKEND)
     afipEstado: "pendiente" | "enviado" | "aprobado" | "error"; 
     afipNumeroComprobante: number | null;
     afipCAE: string | null;
-    afipFechaVtoCAE: string | null; // Guardado como string (YYYYMMDD) o null
+    afipFechaVtoCAE: string | null; 
     afipPuntoVenta: number | null;
     afipResultado: string | null;
-    // ✅ FIN CAMPOS AFIP
 }
 
-
-// --- Componente Modal Selector de Categoría (Estilizado) ---
+// --- Componente Modal Selector de Categoría ---
 const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
@@ -140,8 +136,7 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
     );
 });
 
-
-// --- Componente Memoizado para el Item de Producto (REDESIGNADO y CORREGIDO) ---
+// --- Componente Memoizado para el Item de Producto ---
 const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }: {
     item: Product,
     cart: CartItem[],
@@ -194,10 +189,7 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
             disabled={noStock} 
         >
             <View style={productCardStyles.cardInfo}>
-                {/* Título Principal */}
                 <Text style={productCardStyles.cardTitle} numberOfLines={1}>{item.nombre}</Text>
-
-                {/* Stock Status (CORREGIDO: Texto envuelto y tamaño reducido) */}
                 <Text style={[
                     productCardStyles.stockText, 
                     lowStock && !noStock && productCardStyles.stockTextLow,
@@ -207,7 +199,6 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                     <Text>{stock}</Text>
                 </Text>
 
-                {/* Contenedor de Precios y Promo */}
                 <View style={productCardStyles.priceContainer}>
                     {isPromo && (
                         <View style={productCardStyles.promoPill}>
@@ -228,10 +219,8 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                 </View>
             </View>
 
-            {/* Controles de Carrito / Añadir */}
             {quantityInCart > 0 ? (
                 <View style={productCardStyles.inCartControls}>
-                    {/* Badge de Cantidad más grande y legible */}
                     <View style={productCardStyles.quantityBadge}>
                         <Text style={productCardStyles.quantityBadgeText}>{quantityInCart}</Text>
                     </View>
@@ -245,21 +234,19 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
         </TouchableOpacity>
     );
 });
-// --- FIN Componente Memoizado ---
 
-
+// --- PANTALLA PRINCIPAL ---
 const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
-    // --- Lógica y Memos (Sin cambios en lógica) ---
     const route = useRoute();
     
-    // ✅ CORREGIDO: Eliminamos 'cliente: initialCliente' de la destructuración para evitar el warning.
-    const { clientId, saleId, isEditing, isReposicion = false, isDevolucion = false } = route.params as {
+    const { clientId, saleId, isEditing, isReposicion = false, isDevolucion = false, preselectedItems } = route.params as {
         clientId?: string,
         saleId?: string,
         isEditing?: string,
         isReposicion?: boolean,
         isDevolucion?: boolean,
-        cliente?: Client // <- Este tipo está ahora solo para referencia, no para uso en runtime.
+        cliente?: Client, 
+        preselectedItems?: any[] 
     };
 
     const editMode = isEditing === 'true';
@@ -290,9 +277,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [originalSale, setOriginalSale] = useState<BaseSale | null>(null);
     
-    // 🛑 NUEVO ESTADO PARA PAGINACIÓN LOCAL
     const [visibleProductCount, setVisibleProductCount] = useState(INITIAL_LOAD_COUNT);
-
 
     const currentUser = auth.currentUser;
 
@@ -301,11 +286,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid);
     }, [currentUser, vendors]);
 
-    // ✅ CORREGIDO: El cliente siempre se obtiene del contexto usando el clientId (serializable).
-    // NOTA: Se añade casting para incluir los nuevos campos de AFIP/Cliente.
     const client = useMemo(() => {
         if (!clientId || !clients) return null;
-        // Se añade un casting para acceder a los nuevos campos de AFIP/Cliente
         return clients.find((c: Client) => c.id === clientId) as (Client & { tipoDocumento: string, numeroDocumento: string, requiereFacturaAfip: boolean }) | undefined;
     }, [clientId, clients]);
 
@@ -314,50 +296,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         const selectedCategory = categories.find(c => c.id === categoryFilter);
         return selectedCategory ? selectedCategory.nombre : 'Todas las Categorías';
     }, [categoryFilter, categories]);
-
-    useEffect(() => {
-        if (editMode && saleId && sales.length > 0) {
-            const saleToEdit = sales.find((s: BaseSale) => s.id === saleId);
-            if (saleToEdit) {
-                setOriginalSale(saleToEdit);
-                const cartItems = (saleToEdit.items || []).map((item: CartItem) => ({
-                    ...item,
-                    precioOriginal: item.precioOriginal ?? item.precio
-                }));
-                setCart(cartItems);
-            } else {
-                Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró la venta para editar.', position: 'bottom' });
-                navigation.goBack();
-            }
-        }
-    }, [editMode, saleId, sales, navigation]);
-
-    useEffect(() => {
-        let products = allProducts;
-        if (categoryFilter) {
-            products = products.filter(p => p.categoriaId === categoryFilter);
-        }
-        if (searchQuery) {
-            const lowerQuery = searchQuery.toLowerCase();
-            products = products.filter(p => p.nombre.toLowerCase().includes(lowerQuery));
-        }
-        products.sort((a, b) => {
-            if (editMode) {
-                const aInCart = cart.some(cartItem => cartItem.id === a.id);
-                const bInCart = cart.some(cartItem => cartItem.id === b.id);
-                if (aInCart && !bInCart) return -1; 
-                if (!aInCart && bInCart) return 1; 
-            }
-            return (a.nombre || '').localeCompare(b.nombre || '');
-        });
-        setFilteredProducts(products);
-    }, [allProducts, categoryFilter, searchQuery, cart, editMode]);
-    
-    // 🛑 NUEVO HOOK: Resetea el contador de visibilidad cuando los filtros cambian
-    useEffect(() => {
-        setVisibleProductCount(INITIAL_LOAD_COUNT);
-    }, [categoryFilter, searchQuery]);
-
 
     const getComision = useCallback((product: Product, quantity: number): number => {
         if (isReposicion || isDevolucion) return 0;
@@ -375,6 +313,86 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         }
         return comisionPorItem * quantity;
     }, [currentVendedor, isReposicion, isDevolucion]);
+
+
+    // Efecto para cargar items del Catálogo
+    useEffect(() => {
+        if (preselectedItems && preselectedItems.length > 0 && cart.length === 0 && !editMode) {
+            console.log("Cargando items desde el Catálogo...", preselectedItems.length);
+            
+            const formattedItems: CartItem[] = preselectedItems.map((item) => {
+                const quantity = item.quantity || item.cantidad || 1;
+                const comision = getComision(item, quantity); 
+                
+                return {
+                    ...item,
+                    quantity: quantity,
+                    comision: comision,
+                    precioOriginal: item.precioOriginal ?? item.precio,
+                };
+            });
+
+            setCart(formattedItems);
+            Toast.show({
+                type: 'success',
+                text1: 'Carrito Cargado',
+                text2: `Se agregaron ${formattedItems.length} productos.`,
+                position: 'bottom'
+            });
+        }
+    }, [preselectedItems, editMode, getComision]);
+
+
+    // Efecto para editar venta
+    useEffect(() => {
+        if (editMode && saleId && sales.length > 0) {
+            const saleToEdit = sales.find((s: BaseSale) => s.id === saleId);
+            if (saleToEdit) {
+                setOriginalSale(saleToEdit);
+                const cartItems = (saleToEdit.items || []).map((item: CartItem) => ({
+                    ...item,
+                    precioOriginal: item.precioOriginal ?? item.precio
+                }));
+                setCart(cartItems);
+            } else {
+                Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró la venta para editar.', position: 'bottom' });
+                navigation.goBack();
+            }
+        }
+    }, [editMode, saleId, sales, navigation]);
+
+    // --- FILTRADO Y ORDENAMIENTO (AQUÍ ESTÁ LA MAGIA) ---
+    useEffect(() => {
+        // 🛑 1. CREAR COPIA DEL ARRAY para evitar problemas de referencia en React
+        let products = [...allProducts]; 
+        
+        if (categoryFilter) {
+            products = products.filter(p => p.categoriaId === categoryFilter);
+        }
+        if (searchQuery) {
+            const lowerQuery = searchQuery.toLowerCase();
+            products = products.filter(p => p.nombre.toLowerCase().includes(lowerQuery));
+        }
+        
+        products.sort((a, b) => {
+            // 🛑 2. LÓGICA DE ORDENAMIENTO: Carrito siempre arriba
+            if (editMode || cart.length > 0) { 
+                const aInCart = cart.some(cartItem => cartItem.id === a.id);
+                const bInCart = cart.some(cartItem => cartItem.id === b.id);
+                if (aInCart && !bInCart) return -1; // A va primero
+                if (!aInCart && bInCart) return 1;  // B va primero
+            }
+            return (a.nombre || '').localeCompare(b.nombre || '');
+        });
+        
+        // 🛑 3. ACTUALIZAR ESTADO (Al ser una copia, React detecta el cambio y repinta)
+        setFilteredProducts(products);
+    }, [allProducts, categoryFilter, searchQuery, cart, editMode]);
+    
+    useEffect(() => {
+        setVisibleProductCount(INITIAL_LOAD_COUNT);
+    }, [categoryFilter, searchQuery]);
+
 
     const handleAddProduct = useCallback((product: Product) => {
         const existingItem = cart.find(item => item.id === product.id);
@@ -528,14 +546,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
 
         setIsSubmitting(true);
-        Haptics.notificationAsync('success' as any); // ✅ CORREGIDO: Usamos string literal
+        Haptics.notificationAsync('success' as any); 
 
-        // ✅ INICIO LÓGICA AFIP: Traer datos del cliente (Punto 3)
-        // Se asume que client ya tiene estos campos gracias al casting en useMemo
         const clienteTipoDocumento = client.tipoDocumento || 'SC'; 
         const clienteNumeroDocumento = client.numeroDocumento || '';
         const requiereFacturaAfip = client.requiereFacturaAfip || false;
-        // ✅ FIN LÓGICA AFIP
         
         const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { 
             clienteId: client.id,
@@ -553,18 +568,16 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             tipo: 'venta', 
             ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {}),
 
-            // ✅ INICIO CAMPOS AFIP (Punto 2)
             tipoDocumento: clienteTipoDocumento,
             numeroDocumento: clienteNumeroDocumento,
-            facturaAfip: requiereFacturaAfip, // BOOLEANO
+            facturaAfip: requiereFacturaAfip, 
 
-            afipEstado: "pendiente", // Estado inicial para Cloud Function
+            afipEstado: "pendiente", 
             afipNumeroComprobante: null,
             afipCAE: null,
             afipFechaVtoCAE: null,
             afipPuntoVenta: null,
             afipResultado: null,
-            // ✅ FIN CAMPOS AFIP
         };
 
         try {
@@ -574,15 +587,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             if (!dbInstance) { throw new Error("La base de datos no está lista. Reinicia la app."); }
 
             if (editMode && originalSale) {
-                // --- Lógica de EDICIÓN con AJUSTE de STOCK ---
-                
                 const originalSaleBackup = { ...originalSale }; 
                 
-                // 1. STOCK OPTIMISTA: Reconciliación local (sumar stock viejo, restar stock nuevo)
                 reintegrarStockLocalmente(originalSale.items);
                 descontarStockLocalmente(cart);
 
-                // 2. Crear el objeto Sale completo para el estado local
                 const updatedSale: BaseSale = {
                     ...originalSale, 
                     ...saleDataToSave as any, 
@@ -591,75 +600,40 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     fecha: originalSale.fecha, 
                 };
                 
-                // 3. MUTACIÓN OPTIMISTA: Actualizar el estado local inmediatamente
                 setSalesState(prevSales => 
                     prevSales.map(s => s.id === originalSale.id ? updatedSale : s)
                 );
                 
-                // 4. PERSISTENCIA: Disparamos la actualización a Firestore. 
                 const saleRef = doc(dbInstance, 'ventas', originalSale.id); 
                 const updatePromise = setDoc(saleRef, saleDataToSave as any, { merge: true }); 
 
                 if (isOffline) {
-                    updatePromise.catch(err => {
-                        console.warn(`[Offline Edit Queued] Error transitorio: ${err.message}`);
-                    });
-                    
-                    Toast.show({
-                        type: 'success',
-                        text1: 'Venta Actualizada (Offline)', 
-                        text2: 'Se sincronizará al conectar. Stock ajustado localmente.',
-                        position: 'bottom',
-                        visibilityTime: 3000
-                    });
-
+                    updatePromise.catch(err => console.warn(`[Offline] ${err.message}`));
+                    Toast.show({ type: 'success', text1: 'Venta Actualizada (Offline)', text2: 'Se sincronizará al conectar.' });
                 } else {
                     try {
                         await updatePromise; 
-
-                        Toast.show({
-                            type: 'success',
-                            text1: 'Venta Actualizada', 
-                            text2: 'El stock fue ajustado en el servidor.',
-                            position: 'bottom',
-                            visibilityTime: 3000
-                        });
+                        Toast.show({ type: 'success', text1: 'Venta Actualizada', text2: 'Stock ajustado.' });
                     } catch (e) {
-                        console.error("Error al actualizar venta en línea (Rollback):", e);
-                        // Rollback: Revertir la mutación optimista de UI y Stock
-                        setSalesState(prevSales => 
-                            prevSales.map(s => s.id === originalSale.id ? originalSaleBackup as BaseSale : s)
-                        );
+                        setSalesState(prevSales => prevSales.map(s => s.id === originalSale.id ? originalSaleBackup as BaseSale : s));
                         descontarStockLocalmente(originalSale.items); 
                         reintegrarStockLocalmente(cart);
                         throw e; 
                     }
                 }
-                
                 savedSaleId = originalSale.id;
 
             } else {
-                // --- Lógica de NUEVA VENTA (Sin cambios) ---
                 const finalSaleData = {
                     ...saleDataToSave,
                     tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' 
                 };
                 
                 savedSaleId = await crearVentaConStock(finalSaleData);
-
-                // Actualización de Stock Optimista (Descuento solo de la nueva venta)
                 descontarStockLocalmente(cart);
-
-                Toast.show({
-                    type: 'success',
-                    text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Creada',
-                    text2: isOffline ? 'Se sincronizará al conectar.' : 'Venta guardada con éxito.',
-                    position: 'bottom',
-                    visibilityTime: 3000
-                });
+                Toast.show({ type: 'success', text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Creada' });
             }
 
-            // --- Lógica de Compartir (Sin cambios) ---
             const completeSaleDataForPdf: BaseSale = {
                 // @ts-ignore
                 ...(originalSale as BaseSale || {} as BaseSale),
@@ -677,20 +651,21 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
             Alert.alert(
                 isOffline ? "Venta Guardada (Offline)" : "Venta Guardada",
-                isOffline
-                    ? `La venta se guardó localmente y se sincronizará. ¿Generar comprobante?`
-                    : "¿Desea generar y compartir el comprobante ahora?",
+                isOffline ? `Sincronización pendiente.` : "¿Compartir comprobante?",
                 [
-                    { text: "No, Volver", onPress: () => {
+                    { text: "Volver", onPress: () => { 
                         setIsSubmitting(false); 
-                        navigation.goBack();
+                        // ✅ NAVEGACIÓN A HOME
+                        // @ts-ignore
+                        navigation.navigate('Home'); 
                     }, style: "cancel" },
-                    { text: "Sí, Compartir", onPress: async () => {
-                        try {
-                            await handleShare(completeSaleDataForPdf, client!, vendorName);
-                        } finally {
+                    { text: "Compartir", onPress: async () => {
+                        try { await handleShare(completeSaleDataForPdf, client!, vendorName); } 
+                        finally { 
                             setIsSubmitting(false); 
-                            navigation.goBack();
+                            // ✅ NAVEGACIÓN A HOME
+                            // @ts-ignore
+                            navigation.navigate('Home'); 
                         }
                     } }
                 ],
@@ -698,33 +673,24 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             );
 
         } catch (error: any) {
-            console.error("Error capturado en confirmarVenta:", error); 
-            const errorMessage = (error.message || 'No se pudo completar la operación.');
-            
-            Toast.show({ type: 'error', text1: 'Error al Guardar', text2: errorMessage, position: 'bottom' });
+            console.error("Error en confirmarVenta:", error); 
+            Toast.show({ type: 'error', text1: 'Error al Guardar', text2: error.message });
             setIsSubmitting(false); 
         }
     }, [
         isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision,
-        totalDescuentoPromociones,
-        itemsConDescuentosAplicados,
-        editMode, originalSale, handleShare, navigation,
-        isOffline, 
-        descontarStockLocalmente,
-        reintegrarStockLocalmente, 
-        crearVentaConStock,
-        setSalesState 
+        totalDescuentoPromociones, itemsConDescuentosAplicados, editMode, originalSale, 
+        handleShare, navigation, isOffline, descontarStockLocalmente,
+        reintegrarStockLocalmente, crearVentaConStock, setSalesState 
     ]);
-    // --- FIN DE confirmarVenta ---
 
-    // --- handleConfirmPress (Sin cambios) ---
     const handleConfirmPress = () => {
         if (isSubmitting) return;
         if (!client) { Alert.alert("Error", "No se ha seleccionado un cliente."); return; }
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
 
         if (isReposicion || isDevolucion) {
-            Haptics.notificationAsync('warning' as any); // ✅ CORREGIDO: Usamos string literal
+            Haptics.notificationAsync('warning' as any);
             navigation.navigate('ReviewSale', { 
                 cliente: client,
                 clientId: client!.id,
@@ -740,9 +706,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             confirmarVenta(); 
         }
     };
-    // --- FIN DE handleConfirmPress ---
 
-    // 🛑 NUEVOS HANDLERS Y MEMOS PARA PAGINACIÓN
+    // Paginación
     const handleLoadMore = useCallback(() => {
         setVisibleProductCount(prevCount => prevCount + LOAD_MORE_STEP);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -755,8 +720,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
     const hasMoreProducts = productsToRender.length < filteredProducts.length;
 
-
-    // --- RENDERIZADO (Sin cambios) ---
     const renderProductItem = useCallback(({ item }: { item: Product }) => (
         <ProductCard
             item={item}
@@ -790,19 +753,11 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }
 
     const headerTitle = editMode ? 'EDITAR VENTA' : (isReposicion ? 'NUEVA REPOSICIÓN' : (isDevolucion ? 'NUEVA DEVOLUCIÓN' : 'NUEVA VENTA'));
-    
     const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary);
-
     const buttonText = useMemo(() => {
-        if (isSubmitting) {
-            return editMode ? 'ACTUALIZANDO...' : 'GUARDANDO...';
-        }
-        if (isReposicion || isDevolucion) {
-            return 'REVISAR Y CONTINUAR';
-        }
-        if (editMode) {
-            return isOffline ? 'ACTUALIZAR (OFFLINE)' : 'ACTUALIZAR VENTA';
-        }
+        if (isSubmitting) return editMode ? 'ACTUALIZANDO...' : 'GUARDANDO...';
+        if (isReposicion || isDevolucion) return 'REVISAR Y CONTINUAR';
+        if (editMode) return isOffline ? 'ACTUALIZAR (OFFLINE)' : 'ACTUALIZAR VENTA';
         return isOffline ? 'CONFIRMAR VENTA (OFFLINE)' : 'CONFIRMAR VENTA';
     }, [isSubmitting, editMode, isReposicion, isDevolucion, isOffline]);
 
@@ -811,7 +766,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
 
-            {/* HEADER */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={SIZES.large} color={COLORS.textPrimary} /></TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
@@ -821,9 +775,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 <View style={styles.headerButton} />
             </View>
 
-            {/* CONTROLES DE FILTRO Y BÚSQUEDA */}
             <View style={styles.controlsContainer}>
-                {/* Búsqueda */}
                 <View style={[styles.inputContainer, { flex: 1 }]}>
                     <Feather name="search" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TextInput 
@@ -842,7 +794,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                         </TouchableOpacity> 
                     )}
                 </View>
-                {/* Selector de Categoría */}
                 <View style={styles.pickerWrapper}>
                     <TouchableOpacity
                         style={styles.pickerButton}
@@ -858,7 +809,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             </View>
 
             <FlatList
-                data={productsToRender} // 🛑 USAMOS EL ARRAY PAGINADO
+                data={productsToRender}
                 renderItem={renderProductItem}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.listContentContainer}
@@ -870,7 +821,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                         </View>
                     ) : null
                 }
-                // 🛑 FOOTER PARA CARGAR MÁS
                 ListFooterComponent={() => (
                     hasMoreProducts ? (
                         <TouchableOpacity style={styles.loadMoreButton} onPress={handleLoadMore}>
@@ -888,12 +838,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 keyboardShouldPersistTaps="handled"
             />
 
-            {/* CHECKOUT CONTAINER (Sticky Bottom - CORREGIDO) */}
             <View style={styles.checkoutContainer}>
-                {/* Detalles de Totales (Stacked) */}
                 <View style={styles.totalsDetails}>
-                    
-                    {/* ✅ CORREGIDO: Solo se muestra Descuentos */}
                     {totalDescuentoPromociones > 0 && (
                         <View style={styles.totalRow}>
                             <Text style={[styles.totalLabel, styles.discountText]}>Descuentos Aplicados</Text>
@@ -902,7 +848,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     )}
                 </View>
                 
-                {/* Total Principal y Botón */}
                 <View style={styles.finalTotalBar}>
                     <View>
                         <Text style={styles.finalTotalLabel}>TOTAL A PAGAR</Text>
@@ -929,7 +874,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 </View>
             </View>
 
-            {/* MODAL DE CANTIDAD */}
             <Modal transparent={true} visible={modalVisible} animationType="fade" onRequestClose={() => setModalVisible(false)}>
                 <View style={modalStyles.modalOverlay}>
                     <View style={modalStyles.modalContent}>
@@ -956,7 +900,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 </View>
             </Modal>
 
-            {/* MODAL DE CATEGORÍA */}
             <CategorySelectorModal
                 visible={isCategoryModalVisible}
                 onClose={() => setIsCategoryModalVisible(false)}
@@ -973,7 +916,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 const modalStyles = StyleSheet.create({
     modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)' },
     modalContent: { 
-        // ✅ CORREGIDO: Ancho del modal a 75%
         width: '75%', 
         backgroundColor: COLORS.backgroundEnd, 
         borderRadius: SIZES.radius, 
@@ -998,7 +940,6 @@ const modalStyles = StyleSheet.create({
         borderColor: COLORS.glassBorder, 
         borderWidth: SIZES.borderWidth, 
         borderRadius: SIZES.radius, 
-        // ✅ CORREGIDO: Input de cantidad más compacto
         paddingVertical: SIZES.small, 
         paddingHorizontal: SIZES.medium,
         fontSize: SIZES.h1, 
@@ -1047,7 +988,6 @@ const productCardStyles = StyleSheet.create({
         shadowRadius: 3,
         elevation: 1,
     },
-    // ✅ CORREGIDO: Usa backgroundEnd (blanco) como base, borde primario más grueso
     cardSelected: { 
         backgroundColor: COLORS.backgroundEnd, 
         borderColor: COLORS.primary, 
@@ -1073,7 +1013,6 @@ const productCardStyles = StyleSheet.create({
     cardPrice: { fontSize: SIZES.body, color: COLORS.primary, fontWeight: 'bold' },
     cardOriginalPrice: { fontSize: SIZES.caption, color: COLORS.textSecondary, fontWeight: '500', textDecorationLine: 'line-through' },
     
-    // CORREGIDO: Estilos de Stock
     stockText: { fontSize: SIZES.caption, color: COLORS.textSecondary, fontWeight: '500' },
     stockTextLow: { color: COLORS.warning, fontWeight: 'bold' },
     stockTextNoStock: { color: COLORS.danger, fontWeight: '900' },

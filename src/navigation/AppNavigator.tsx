@@ -2,12 +2,8 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-// --- INICIO DE CAMBIOS: SDK NATIVO ---
-// ELIMINADAS: import { onAuthStateChanged, User } from 'firebase/auth';
-// ELIMINADAS: import { doc, getDoc } from 'firebase/firestore';
-// AÑADIDO: el TIPO 'FirebaseAuthTypes'
+// --- SDK NATIVO ---
 import { FirebaseAuthTypes } from '@react-native-firebase/auth';
-// --- FIN DE CAMBIOS: SDK NATIVO ---
 
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
@@ -15,6 +11,7 @@ import { CartItem, Client } from '../../context/DataContext';
 
 // --- Importa tus pantallas ---
 import AddClientScreen from '../screens/add-client';
+import CatalogoScreen from '../screens/catalogo-screen'; // <--- IMPORTADO CORRECTAMENTE
 import ClientDashboardScreen from '../screens/client-dashboard';
 import ClientDebtsScreen from '../screens/client-debts';
 import ClientListScreen from '../screens/client-list';
@@ -34,14 +31,14 @@ import SelectClientForSaleScreen from '../screens/select-client-for-sale';
 
 // --- Contextos y Auth ---
 import { Sale as BaseSale, useData } from '../../context/DataContext';
-// Esta 'auth' y 'db' son NATIVAS
 import { auth, dbContainer } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
-// --- 1. Define los Parámetros de Ruta (Sin cambios) ---
+// --- 1. Define los Parámetros de Ruta ---
 export type RootStackParamList = {
     Login: undefined;
     Home: undefined; 
+    Catalogo: undefined; // <--- AÑADIDO
     Driver: undefined; 
     ClientList: undefined;
     ClientDashboard: { clientId: string };
@@ -49,13 +46,14 @@ export type RootStackParamList = {
     SaleDetail: { saleId: string; clientName: string }; 
     AddClient: undefined;
     EditClient: { clientId: string}; 
-    SelectClientForSale: undefined;
+    SelectClientForSale: { cartItems?: any[] } | undefined;
     CreateSale: {
         clientId: string;
         clientName?: string; 
         saleToEdit?: BaseSale; 
         saleId?: string; 
         isEditing?: string; 
+        preselectedItems?: any[];
         isReposicion?: boolean;
         isDevolucion?: boolean; 
         cliente?: Client;
@@ -78,7 +76,7 @@ export type RootStackParamList = {
     RouteDetail: { routeId: string };
 };
 
-// --- 2. Define los Tipos de Props (Sin cambios) ---
+// --- 2. Define los Tipos de Props ---
 export type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
 export type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 export type DriverScreenProps = NativeStackScreenProps<RootStackParamList, 'Driver'>;
@@ -102,18 +100,11 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 // --- Componente Navegador Principal ---
 function RootNavigator() {
-    // 1. Estados de control
     const [isAppReady, setIsAppReady] = useState(false);
-    
-    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-    // (Arregla el error 'any type')
     const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
-    // --- FIN DE CAMBIOS: SDK NATIVO ---
-    
     const [userRole, setUserRole] = useState<'Vendedor' | 'Reparto' | 'Admin' | null>(null);
     const [loadingMessage, setLoadingMessage] = useState('Verificando sesión...');
 
-    // 2. Acceso a DataContext
     const { syncData, isLoading: isDataLoading, isInitialDataLoaded } = useData();
 
     useEffect(() => {
@@ -122,54 +113,37 @@ function RootNavigator() {
             return;
         }
 
-        // --- INICIO DE CAMBIOS: SDK NATIVO ---
-        // Usamos el método 'onAuthStateChanged' de la INSTANCIA NATIVA 'auth'
-        // y tipamos 'currentUser' para arreglar el error de TypeScript
         const subscriber = auth.onAuthStateChanged(async (currentUser: FirebaseAuthTypes.User | null) => {
-        // --- FIN DE CAMBIOS: SDK NATIVO ---
             setUser(currentUser);
             setUserRole(null);
 
             if (currentUser) {
                 setLoadingMessage('Sincronizando datos...');
                 try {
-                    // 1. Obtenemos la instancia SEGURA
-                	const db = dbContainer.instance;
-
-                	// 2. Comprobación de seguridad
-                	// (App.tsx ya esperó, pero esto es una buena práctica)
-                	if (!db) {
-                		console.error("AppNavigator: ¡La DB no está inicializada! El loader de App.tsx falló.");
-                		throw new Error("Error fatal de inicialización de DB.");
-                	}
+                    const db = dbContainer.instance;
+                    if (!db) {
+                        console.error("AppNavigator: ¡La DB no está inicializada!");
+                        throw new Error("Error fatal de inicialización de DB.");
+                    }
                     await syncData();
 
-                    // --- INICIO DE CAMBIOS: SDK NATIVO ---
-                    // Usamos la sintaxis NATIVA para leer un documento
                     const userDocRef = db.collection('vendedores').doc(currentUser.uid);
                     const userDocSnap = await userDocRef.get();
-                    // --- FIN DE CAMBIOS: SDK NATIVO ---
 
-                    // --- ¡¡AQUÍ ESTÁ LA CORRECCIÓN!! ---
-                    // En el SDK Nativo, '.exists' es una PROPIEDAD booleana, NO una función.
                     // @ts-ignore
-                     if (userDocSnap.exists) { 
-                    // --- FIN DE LA CORRECCIÓN ---
+                    if (userDocSnap.exists) { 
                         setUserRole(userDocSnap.data()?.rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
                     } else {
-                        console.warn("Datos de vendedor no encontrados por UID directo, intentando fallback...");
-                        // --- INICIO DE CAMBIOS: SDK NATIVO (Fallback) ---
+                        console.warn("Datos de vendedor no encontrados por UID, usando fallback...");
                         const vendorsQuery = await db.collection('vendedores').where('firebaseAuthUid', '==', currentUser.uid).get();
                         if (!vendorsQuery.empty) {
                             setUserRole(vendorsQuery.docs[0].data().rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
                         } else {
-                            throw new Error("Datos de vendedor no encontrados en DB (ni por UID ni por firebaseAuthUid).");
+                            throw new Error("Datos de vendedor no encontrados en DB.");
                         }
-                        // --- FIN DE CAMBIOS: SDK NATIVO (Fallback) ---
                     }
                 } catch (error) {
-                    console.error("Error al sincronizar datos o obtener rol:", error);
-                    alert("Error de Sincronización. La sesión se cerrará.");
+                    console.error("Error al sincronizar datos:", error);
                     auth.signOut(); 
                     setUser(null);
                     setUserRole(null);
@@ -183,7 +157,6 @@ function RootNavigator() {
         return subscriber; 
     }, [isInitialDataLoaded, syncData]); 
 
-    // --- LOADER DE INICIO ---
     if (!isAppReady || isDataLoading || (user && !userRole)) {
         return (
             <View style={styles.loaderContainer}>
@@ -193,7 +166,6 @@ function RootNavigator() {
         );
     }
 
-    // --- Componente que devuelve la pantalla inicial según el rol ---
     const HomeOrDriverScreen = (props: any) => {
         if (userRole === 'Reparto') {
             return <DriverScreen {...props} />;
@@ -214,9 +186,10 @@ function RootNavigator() {
     return (
         <Stack.Navigator screenOptions={screenOptions}>
             {user && userRole ? ( 
-                // --- USUARIO AUTENTICADO: Stack Principal ---
-                <>
+                <Stack.Group>
                     <Stack.Screen name="Home" component={HomeOrDriverScreen} />
+                    {/* AQUÍ ESTÁ LA NUEVA PANTALLA SIN COMENTARIOS QUE ROMPAN EL CÓDIGO */}
+                    <Stack.Screen name="Catalogo" component={CatalogoScreen} options={unmountOptions} />
                     <Stack.Screen name="ClientList" component={ClientListScreen} options={unmountOptions} />
                     <Stack.Screen name="ClientDashboard" component={ClientDashboardScreen} options={unmountOptions} />
                     <Stack.Screen name="SelectClientForSale" component={SelectClientForSaleScreen} options={unmountOptions} />
@@ -231,16 +204,14 @@ function RootNavigator() {
                     <Stack.Screen name="RouteDetail" component={RouteDetailScreen} options={unmountOptions} />
                     <Stack.Screen name="AddClient" component={AddClientScreen} />
                     <Stack.Screen name="EditClient" component={EditClientScreen} />
-                </>
+                </Stack.Group>
             ) : (
-                // --- Pantalla de Login ---
                 <Stack.Screen name="Login" component={LoginScreen} />
             )}
         </Stack.Navigator>
     );
 }
 
-// Estilos para el loader (sin cambios)
 const styles = StyleSheet.create({
     loaderContainer: {
         flex: 1,
