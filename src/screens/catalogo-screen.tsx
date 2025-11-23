@@ -1,3 +1,4 @@
+// src/screens/catalogo-screen.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Image } from 'expo-image';
@@ -17,25 +18,14 @@ import {
   TouchableWithoutFeedback,
   View
 } from 'react-native';
-import { dbContainer } from '../../db/firebase-service';
+
+// ✅ IMPORTANTE: Consumimos del Contexto, no de Firebase directo
+import { Product, useData } from '../../context/DataContext';
 import { COLORS, SIZES } from '../../styles/theme';
 
-// Tipos
-interface Product {
-  id: string;
-  nombre: string;
-  precio: number;
-  img?: string;
-  categoriaId: string;
-  stock: number; 
-}
+// (Eliminamos las interfaces locales Product/Category para usar las globales)
 
-interface Category {
-  id: string;
-  nombre: string;
-}
-
-// --- COMPONENTE DE TARJETA OPTIMIZADO ---
+// --- COMPONENTE DE TARJETA OPTIMIZADO (Sin cambios lógicos, solo props) ---
 const ProductCard = React.memo(({ 
   item, 
   qty, 
@@ -62,7 +52,6 @@ const ProductCard = React.memo(({
   return (
     <Animated.View style={[styles.cardContainer, { transform: [{ scale: scaleAnim }] }]}>
       <View style={styles.card}>
-          {/* IMAGEN OPTIMIZADA Y CLICKEABLE */}
           <TouchableOpacity activeOpacity={0.9} onPress={onImagePress} style={styles.imageContainer}>
               {item.img ? (
                   <Image 
@@ -77,7 +66,6 @@ const ProductCard = React.memo(({
                       <Ionicons name="image-outline" size={32} color={COLORS.disabled} />
                   </View>
               )}
-              {/* Badge de cantidad */}
               {qty > 0 && (
                   <View style={[styles.badgeContainer, { backgroundColor: COLORS.secondary }]}>
                       <Text style={styles.badgeText}>{qty}</Text>
@@ -94,7 +82,6 @@ const ProductCard = React.memo(({
                       <Text style={styles.addButtonText}>Agregar</Text>
                   </TouchableOpacity>
               ) : (
-                  // --- CONTROLES DE CANTIDAD ---
                   <View style={[styles.qtyControls, { backgroundColor: COLORS.primary }]}>
                       <TouchableOpacity onPress={onRemove} style={styles.qtyBtn} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
                           <Ionicons name="remove" size={20} color="white" />
@@ -117,13 +104,11 @@ const ProductCard = React.memo(({
 
 export default function CatalogoScreen() {
   const navigation = useNavigation();
-  const db = dbContainer.instance; 
+  
+  // ✅ CORRECCIÓN MAESTRA: Usamos los datos globales ya cargados
+  const { products, categories, isLoading } = useData(); 
 
-  // --- Estados ---
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
-
+  // --- Estados Locales de UI ---
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({}); 
@@ -134,27 +119,6 @@ export default function CatalogoScreen() {
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
   const bottomBarAnim = useRef(new Animated.Value(150)).current; 
-
-  // --- Carga de Datos ---
-  useEffect(() => {
-    if (!db) return;
-
-    const unsubProducts = db.collection('productos').onSnapshot((snapshot) => {
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      setProducts(list);
-      setLoading(false);
-    });
-
-    const unsubCategories = db.collection('categorias').onSnapshot((snapshot) => {
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
-      setCategories(list);
-    });
-
-    return () => {
-      unsubProducts();
-      unsubCategories();
-    };
-  }, [db]); 
 
   // --- Animación Barra Inferior ---
   useEffect(() => {
@@ -236,12 +200,12 @@ export default function CatalogoScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Catálogo</Text>
         
-        {/* BARRA DE BÚSQUEDA CORREGIDA */}
+        {/* BARRA DE BÚSQUEDA */}
         <View style={styles.searchBar}>
             <Ionicons name="search" size={20} color={COLORS.textSecondary} style={{ marginRight: 8 }} />
             <TextInput 
                 placeholder="Buscar producto..." 
-                placeholderTextColor={COLORS.textSecondary} // Color del placeholder visible
+                placeholderTextColor={COLORS.textSecondary}
                 style={styles.searchInput}
                 value={searchTerm}
                 onChangeText={setSearchTerm}
@@ -298,7 +262,7 @@ export default function CatalogoScreen() {
           />
         )}
         showsVerticalScrollIndicator={false}
-        ListEmptyComponent={!loading ? (
+        ListEmptyComponent={!isLoading ? (
             <View style={styles.emptyState}>
                 <Ionicons name="basket-outline" size={64} color={COLORS.disabled} />
                 <Text style={{ color: COLORS.textSecondary, marginTop: 10 }}>No hay productos</Text>
@@ -373,7 +337,7 @@ export default function CatalogoScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.backgroundStart },
   
-  // HEADER CORREGIDO
+  // HEADER
   header: { 
     paddingHorizontal: SIZES.medium, 
     paddingTop: (StatusBar.currentHeight || 0) + 10, 
@@ -391,13 +355,13 @@ const styles = StyleSheet.create({
     marginBottom: 10 
   },
   
-  // BUSCADOR CORREGIDO
+  // BUSCADOR
   searchBar: { 
     flexDirection: 'row', 
-    backgroundColor: COLORS.backgroundStart, // Usamos el fondo claro del tema
+    backgroundColor: COLORS.backgroundStart, 
     borderRadius: SIZES.radius, 
     paddingHorizontal: SIZES.medium, 
-    height: 50, // Altura fija normal
+    height: 50, 
     alignItems: 'center', 
     marginBottom: 10,
     borderWidth: 1,
@@ -406,7 +370,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: SIZES.body,
-    color: COLORS.textPrimary, // Texto negro/oscuro
+    color: COLORS.textPrimary,
     height: '100%'
   },
 

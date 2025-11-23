@@ -146,20 +146,25 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
 }) => {
     if (!item || !item.id) return null;
 
-    const itemInCart = useMemo(() => cart.find(cartItem => cartItem.id === item.id), [cart, item.id]);
-    const quantityInCart = itemInCart?.quantity || 0;
+    // ✅ Lógica Visual: Sumamos cantidad MANUAL + cantidad REGALO para el badge
+    const quantityInCart = useMemo(() => {
+        return cart
+            .filter(c => c.id === item.id || c.id === `gift_${item.id}`)
+            .reduce((sum, c) => sum + c.quantity, 0);
+    }, [cart, item.id]);
 
+    // Lógica visual de precio especial (unitario)
     const { displayPrice, originalPrice, isPromo } = useMemo(() => {
         let price = item.precio;
         let original = item.precio;
         let isPromo = false;
-
-        const promoAplicable: Promotion | undefined = promotions.find(promo =>
+        
+        const promoAplicable = promotions.find(promo =>
             promo.tipo === 'precio_especial' &&
-            promo.productoIds.includes(item.id) &&
+            promo.productoIds?.includes(item.id) &&
             (!promo.clienteIds || promo.clienteIds.length === 0 || (clientId && promo.clienteIds.includes(clientId as string)))
         );
-
+        
         if (promoAplicable && promoAplicable.nuevoPrecio) {
             price = promoAplicable.nuevoPrecio;
             original = item.precio;
@@ -185,52 +190,56 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                 noStock && productCardStyles.cardDisabled 
             ]}
             onPress={handlePress}
-            activeOpacity={0.8}
+            activeOpacity={0.7}
             disabled={noStock} 
         >
-            <View style={productCardStyles.cardInfo}>
-                <Text style={productCardStyles.cardTitle} numberOfLines={1}>{item.nombre}</Text>
-                <Text style={[
-                    productCardStyles.stockText, 
-                    lowStock && !noStock && productCardStyles.stockTextLow,
-                    noStock && productCardStyles.stockTextNoStock
-                ]}>
-                    <Text>Stock: </Text>
-                    <Text>{stock}</Text>
-                </Text>
+            {/* Diseño Estilo iOS: Limpio, Sombra Suave */}
+            <View style={productCardStyles.contentContainer}>
+                <View style={productCardStyles.infoColumn}>
+                    <Text style={productCardStyles.cardTitle} numberOfLines={2}>{item.nombre}</Text>
+                    
+                    <View style={productCardStyles.metaRow}>
+                        <Text style={[
+                            productCardStyles.stockText, 
+                            lowStock && !noStock && productCardStyles.stockTextLow,
+                            noStock && productCardStyles.stockTextNoStock
+                        ]}>
+                            Stock: {stock}
+                        </Text>
+                        {isPromo && (
+                            <View style={productCardStyles.promoBadge}>
+                                <Feather name="zap" size={10} color={COLORS.white} />
+                                <Text style={productCardStyles.promoBadgeText}>OFERTA</Text>
+                            </View>
+                        )}
+                    </View>
 
-                <View style={productCardStyles.priceContainer}>
-                    {isPromo && (
-                        <View style={productCardStyles.promoPill}>
-                            <Feather name="zap" size={SIZES.xsmallText} color={COLORS.accent} />
-                            <Text style={productCardStyles.promoText}>PROMO</Text>
+                    <View style={productCardStyles.priceRow}>
+                        <Text style={[
+                            productCardStyles.cardPrice, 
+                            { color: isPromo ? COLORS.primary : '#1C1C1E' }
+                        ]}>
+                            ${displayPrice.toLocaleString('es-AR')}
+                        </Text>
+                        {displayPrice !== originalPrice && (
+                            <Text style={productCardStyles.cardOriginalPrice}>${originalPrice.toLocaleString('es-AR')}</Text>
+                        )}
+                    </View>
+                </View>
+
+                {/* Columna de Acción Derecha */}
+                <View style={productCardStyles.actionColumn}>
+                    {quantityInCart > 0 ? (
+                        <View style={productCardStyles.quantityBadge}>
+                            <Text style={productCardStyles.quantityText}>{quantityInCart}</Text>
+                        </View>
+                    ) : (
+                        <View style={productCardStyles.addButton}>
+                            <Feather name="plus" size={20} color={COLORS.primary} />
                         </View>
                     )}
-
-                    {displayPrice !== originalPrice && (
-                        <Text style={productCardStyles.cardOriginalPrice}>${originalPrice.toLocaleString('es-AR')}</Text>
-                    )}
-                    <Text style={[
-                        productCardStyles.cardPrice, 
-                        { color: isPromo ? COLORS.accent : COLORS.primary }
-                    ]}>
-                        ${displayPrice.toLocaleString('es-AR')}
-                    </Text>
                 </View>
             </View>
-
-            {quantityInCart > 0 ? (
-                <View style={productCardStyles.inCartControls}>
-                    <View style={productCardStyles.quantityBadge}>
-                        <Text style={productCardStyles.quantityBadgeText}>{quantityInCart}</Text>
-                    </View>
-                    <Feather name="edit-3" size={SIZES.h3} color={COLORS.primary} style={productCardStyles.editIcon} />
-                </View>
-            ) : (
-                <View style={productCardStyles.addButton}>
-                    <Feather name="plus" size={SIZES.h3} color={COLORS.white} />
-                </View>
-            )}
         </TouchableOpacity>
     );
 });
@@ -318,27 +327,19 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     // Efecto para cargar items del Catálogo
     useEffect(() => {
         if (preselectedItems && preselectedItems.length > 0 && cart.length === 0 && !editMode) {
-            console.log("Cargando items desde el Catálogo...", preselectedItems.length);
-            
             const formattedItems: CartItem[] = preselectedItems.map((item) => {
                 const quantity = item.quantity || item.cantidad || 1;
                 const comision = getComision(item, quantity); 
-                
                 return {
                     ...item,
                     quantity: quantity,
                     comision: comision,
                     precioOriginal: item.precioOriginal ?? item.precio,
+                    isGift: false 
                 };
             });
-
             setCart(formattedItems);
-            Toast.show({
-                type: 'success',
-                text1: 'Carrito Cargado',
-                text2: `Se agregaron ${formattedItems.length} productos.`,
-                position: 'bottom'
-            });
+            Toast.show({ type: 'success', text1: 'Carrito Cargado', text2: `Se agregaron ${formattedItems.length} productos.`, position: 'bottom' });
         }
     }, [preselectedItems, editMode, getComision]);
 
@@ -349,59 +350,133 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             const saleToEdit = sales.find((s: BaseSale) => s.id === saleId);
             if (saleToEdit) {
                 setOriginalSale(saleToEdit);
+                // Al editar, aseguramos que precioOriginal esté seteado
                 const cartItems = (saleToEdit.items || []).map((item: CartItem) => ({
                     ...item,
                     precioOriginal: item.precioOriginal ?? item.precio
                 }));
                 setCart(cartItems);
             } else {
-                Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró la venta para editar.', position: 'bottom' });
+                Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró la venta.', position: 'bottom' });
                 navigation.goBack();
             }
         }
     }, [editMode, saleId, sales, navigation]);
 
-    // --- FILTRADO Y ORDENAMIENTO (AQUÍ ESTÁ LA MAGIA) ---
+    // --- FILTRADO Y ORDENAMIENTO ---
     useEffect(() => {
-        // 🛑 1. CREAR COPIA DEL ARRAY para evitar problemas de referencia en React
         let products = [...allProducts]; 
-        
-        if (categoryFilter) {
-            products = products.filter(p => p.categoriaId === categoryFilter);
-        }
-        if (searchQuery) {
-            const lowerQuery = searchQuery.toLowerCase();
-            products = products.filter(p => p.nombre.toLowerCase().includes(lowerQuery));
-        }
+        if (categoryFilter) products = products.filter(p => p.categoriaId === categoryFilter);
+        if (searchQuery) products = products.filter(p => p.nombre.toLowerCase().includes(searchQuery.toLowerCase()));
         
         products.sort((a, b) => {
-            // 🛑 2. LÓGICA DE ORDENAMIENTO: Carrito siempre arriba
             if (editMode || cart.length > 0) { 
-                const aInCart = cart.some(cartItem => cartItem.id === a.id);
-                const bInCart = cart.some(cartItem => cartItem.id === b.id);
-                if (aInCart && !bInCart) return -1; // A va primero
-                if (!aInCart && bInCart) return 1;  // B va primero
+                const aInCart = cart.some(cartItem => cartItem.id === a.id && !cartItem.isGift);
+                const bInCart = cart.some(cartItem => cartItem.id === b.id && !cartItem.isGift);
+                if (aInCart && !bInCart) return -1;
+                if (!aInCart && bInCart) return 1;
             }
             return (a.nombre || '').localeCompare(b.nombre || '');
         });
-        
-        // 🛑 3. ACTUALIZAR ESTADO (Al ser una copia, React detecta el cambio y repinta)
         setFilteredProducts(products);
     }, [allProducts, categoryFilter, searchQuery, cart, editMode]);
     
+    useEffect(() => { setVisibleProductCount(INITIAL_LOAD_COUNT); }, [categoryFilter, searchQuery]);
+
+
+    // ============================================================================
+    // 🎁🎁 LÓGICA AUTOMÁTICA DE REGALOS (AUTO-ADD) 🎁🎁
+    // ============================================================================
     useEffect(() => {
-        setVisibleProductCount(INITIAL_LOAD_COUNT);
-    }, [categoryFilter, searchQuery]);
+        if (isReposicion || isDevolucion) return; 
+
+        let newCart = [...cart];
+        let cartChanged = false;
+
+        const giftPromos = promotions.filter(p => 
+            p.tipo === 'REGALO_POR_COMPRA' && 
+            p.estado === 'activa' &&
+            (!p.clienteIds || p.clienteIds.length === 0 || (client && p.clienteIds.includes(client.id)))
+        );
+
+        const requiredGifts = new Map<string, number>();
+
+        giftPromos.forEach(promo => {
+            // Contar triggers en el carrito (solo items MANUALES)
+            const triggerItems = newCart.filter(item => promo.productoIds?.includes(item.id) && !item.isGift);
+            const totalTriggerQty = triggerItems.reduce((sum, item) => sum + item.quantity, 0);
+
+            const minQty = promo.condicion?.cantidadMinima || 0;
+            const giftQtyPerBatch = promo.beneficio?.cantidadRegalo || 0;
+            const giftProductId = promo.beneficio?.productoRegaloId;
+
+            if (minQty > 0 && giftQtyPerBatch > 0 && giftProductId && totalTriggerQty >= minQty) {
+                const batches = Math.floor(totalTriggerQty / minQty);
+                const totalGifts = batches * giftQtyPerBatch;
+                
+                if (totalGifts > 0) {
+                    const current = requiredGifts.get(giftProductId) || 0;
+                    requiredGifts.set(giftProductId, current + totalGifts);
+                }
+            }
+        });
+
+        // Borrar o actualizar regalos existentes
+        newCart = newCart.map(item => {
+            if (item.isGift) {
+                const originalId = item.id.replace('gift_', '');
+                const neededQty = requiredGifts.get(originalId);
+
+                if (!neededQty) {
+                    cartChanged = true;
+                    return null;
+                } else {
+                    if (item.quantity !== neededQty) {
+                        cartChanged = true;
+                        return { ...item, quantity: neededQty };
+                    }
+                    requiredGifts.delete(originalId);
+                    return item;
+                }
+            }
+            return item;
+        }).filter(Boolean) as CartItem[];
+
+        // Agregar nuevos regalos
+        requiredGifts.forEach((qty, giftId) => {
+            const productData = allProducts.find(p => p.id === giftId);
+            if (productData) {
+                cartChanged = true;
+                newCart.push({
+                    ...productData,
+                    id: `gift_${giftId}`,
+                    nombre: `(REGALO) ${productData.nombre}`, 
+                    quantity: qty,
+                    // IMPORTANTE: Precio real aquí, se descuenta 100% en el cálculo final
+                    precio: productData.precio, 
+                    precioOriginal: productData.precio,
+                    costo: productData.costo,
+                    comision: 0,
+                    isGift: true 
+                });
+            }
+        });
+
+        if (cartChanged) setCart(newCart);
+
+    }, [cart, promotions, client, allProducts, isReposicion, isDevolucion]); 
 
 
+    // --- Handlers UI ---
     const handleAddProduct = useCallback((product: Product) => {
-        const existingItem = cart.find(item => item.id === product.id);
+        const existingItem = cart.find(item => item.id === product.id && !item.isGift);
         let precioFinal = product.precio;
         let precioOriginal = product.precio;
+        
         if (!isReposicion && !isDevolucion) {
-            const promoAplicable: Promotion | undefined = promotions.find(promo =>
+            const promoAplicable = promotions.find(promo =>
                 promo.tipo === 'precio_especial' &&
-                promo.productoIds.includes(product.id) &&
+                promo.productoIds?.includes(product.id) &&
                 (!promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)))
             );
             if (promoAplicable && promoAplicable.nuevoPrecio) {
@@ -409,21 +484,30 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 precioOriginal = product.precio;
             }
         }
-        const productToAdd = { ...product, precio: precioFinal, precioOriginal: precioOriginal };
-        setSelectedProduct(productToAdd);
+        setSelectedProduct({ ...product, precio: precioFinal, precioOriginal });
         setCurrentQuantity(existingItem ? existingItem.quantity.toString() : '1');
         setModalVisible(true);
     }, [cart, promotions, client, isReposicion, isDevolucion]);
 
     const handleConfirmQuantity = useCallback(() => {
         const quantity = parseInt(currentQuantity, 10);
-        if (isNaN(quantity) || quantity <= 0) { Alert.alert("Cantidad Inválida", "Por favor ingrese un número mayor a 0."); return; }
+        if (isNaN(quantity) || quantity <= 0) { Alert.alert("Cantidad Inválida", "Ingrese un número mayor a 0."); return; }
         if (!selectedProduct) return;
+        
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         const comision = getComision(selectedProduct, quantity);
-        const cartItemToAdd: CartItem = { ...selectedProduct, precio: selectedProduct.precio, precioOriginal: selectedProduct.precioOriginal ?? selectedProduct.precio, quantity, comision };
+        
+        const cartItemToAdd: CartItem = { 
+            ...selectedProduct, 
+            precio: selectedProduct.precio, 
+            precioOriginal: selectedProduct.precioOriginal ?? selectedProduct.precio, 
+            quantity, 
+            comision,
+            isGift: false 
+        };
+        
         setCart(prevCart => {
-            const existingItemIndex = prevCart.findIndex(item => item.id === selectedProduct.id);
+            const existingItemIndex = prevCart.findIndex(item => item.id === selectedProduct.id && !item.isGift);
             if (existingItemIndex > -1) { return prevCart.map((item, index) => index === existingItemIndex ? cartItemToAdd : item ); }
             else { return [...prevCart, cartItemToAdd]; }
         });
@@ -435,12 +519,15 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     const handleRemoveFromCart = useCallback(() => {
         if (!selectedProduct) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setCart(prevCart => prevCart.filter(item => item.id !== selectedProduct!.id));
+        setCart(prevCart => prevCart.filter(item => !(item.id === selectedProduct!.id && !item.isGift)));
         setModalVisible(false);
         setSelectedProduct(null);
         setCurrentQuantity('1');
     }, [selectedProduct]);
 
+    // ============================================================================
+    // 💰💰 LÓGICA DE TOTALES Y DESCUENTOS (FIXED) 💰💰
+    // ============================================================================
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
         if (isReposicion || isDevolucion) {
             const costo = cart.reduce((acc, item) => acc + (item.costo || 0) * item.quantity, 0);
@@ -453,263 +540,272 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 itemsConDescuentosAplicados: cart.map(item => ({...item, precio: 0, precioOriginal: 0, comision: 0})),
             };
         }
-        let sub: number = 0;
-        let comision: number = 0;
-        let costo: number = 0;
-        let descuentoPrecioEspecial: number = 0;
-        let descuentoPorCantidadTotal: number = 0;
-        let itemsModificados: (CartItem & { descuentoPorCantidadAplicado?: number })[] = [];
+
+        let sub = 0;
+        let comision = 0;
+        let costo = 0;
+        let totalDescuentoVisual = 0; 
+        const itemDiscounts = new Map<string, number>(); 
+
+        // 1. Subtotales BASE usando Precio ORIGINAL (Para que el ticket muestre el valor real antes de desc)
         cart.forEach(item => {
-            const subtotalItemBase = item.precio * item.quantity;
-            sub += subtotalItemBase;
+            const basePrice = item.precioOriginal ?? item.precio;
+            sub += basePrice * item.quantity;
             comision += item.comision;
             costo += (item.costo || 0) * item.quantity;
-            if (item.precioOriginal && item.precioOriginal > item.precio) {
-                descuentoPrecioEspecial += (item.precioOriginal - item.precio) * item.quantity;
+            
+            // Si hay precio especial, la diferencia se suma al descuento total visual
+            if (basePrice > item.precio) {
+                totalDescuentoVisual += (basePrice - item.precio) * item.quantity;
             }
-            const quantity = item.quantity;
-            const itemPrice = item.precio;
-            let descuentoPorCantidadItem: number = 0;
-            const quantityPromosForProduct = promotions.filter(promo => {
-                const isQuantityPromo = promo.tipo === 'LLEVA_X_PAGA_Y' || promo.tipo === 'DESCUENTO_POR_CANTIDAD';
-                const isProductInPromo = promo.productoIds?.includes(item.id);
-                const isClientApplicable = !promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id));
-                const hasCondition = promo.condicion?.cantidadMinima && promo.condicion.cantidadMinima > 0;
-                return isQuantityPromo && isProductInPromo && isClientApplicable && hasCondition;
-            });
-            if (quantityPromosForProduct.length > 0) {
-                const promo = quantityPromosForProduct[0];
-                if (promo.tipo === 'LLEVA_X_PAGA_Y' && quantity >= promo.condicion.cantidadMinima) {
-                    const X = promo.condicion.cantidadMinima;
-                    const Y = promo.beneficio.cantidadAPagar;
+        });
+
+        const manualItems = cart.filter(i => !i.isGift);
+
+        promotions.forEach(promo => {
+            if (promo.clienteIds && promo.clienteIds.length > 0 && client && !promo.clienteIds.includes(client.id)) return;
+            
+            const matchingItems = manualItems.filter(item => promo.productoIds?.includes(item.id));
+            if (matchingItems.length === 0) return;
+
+            const totalQty = matchingItems.reduce((sum, item) => sum + item.quantity, 0);
+
+            // LLEVA X PAGA Y (Agrupado y Descontando los más baratos del grupo total)
+            if (promo.tipo === 'LLEVA_X_PAGA_Y' && promo.condicion?.cantidadMinima && promo.beneficio?.cantidadAPagar) {
+                const X = promo.condicion.cantidadMinima;
+                const Y = promo.beneficio.cantidadAPagar;
+                
+                if (totalQty >= X) {
                     const itemsGratisPorLote = X - Y;
-                    if (X > 0 && Y > 0 && itemsGratisPorLote > 0) {
-                        const numLotes = Math.floor(quantity / X);
-                        const itemsGratisTotales = numLotes * itemsGratisPorLote;
-                        descuentoPorCantidadItem = itemsGratisTotales * itemPrice;
-                    }
-                } else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && quantity >= promo.condicion.cantidadMinima) {
-                    const porcentaje = promo.beneficio.porcentajeDescuento;
-                    if (porcentaje > 0 && porcentaje <= 100) {
-                        const subtotalItem = itemPrice * quantity;
-                        const descuentoCalculado = subtotalItem * (porcentaje / 100);
-                        descuentoPorCantidadItem = descuentoCalculado;
+                    const lotes = Math.floor(totalQty / X);
+                    const totalGratis = lotes * itemsGratisPorLote;
+
+                    if (totalGratis > 0) {
+                        // Expandimos todas las unidades para ordenar por precio y descontar las baratas
+                        let allUnits: { id: string, price: number }[] = [];
+                        matchingItems.forEach(item => {
+                            // Usamos el precio "actual" de venta (puede ser el especial) para calcular el descuento monetario
+                            const unitPrice = item.precio; 
+                            for(let i=0; i<item.quantity; i++) allUnits.push({ id: item.id, price: unitPrice });
+                        });
+                        
+                        // Orden ascendente (baratos primero)
+                        allUnits.sort((a, b) => a.price - b.price);
+
+                        // Tomar las N primeras
+                        const freeUnits = allUnits.slice(0, totalGratis);
+
+                        // Acumular valor de descuento por ID
+                        freeUnits.forEach(unit => {
+                            const current = itemDiscounts.get(unit.id) || 0;
+                            itemDiscounts.set(unit.id, current + unit.price);
+                        });
                     }
                 }
+            } 
+            // DESCUENTO %
+            else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && promo.condicion?.cantidadMinima) {
+                const minQty = promo.condicion.cantidadMinima;
+                const pct = promo.beneficio?.porcentajeDescuento || 0;
+
+                if (totalQty >= minQty && pct > 0) {
+                    matchingItems.forEach(item => {
+                        const itemTotal = item.precio * item.quantity;
+                        const discountVal = itemTotal * (pct / 100);
+                        const curr = itemDiscounts.get(item.id) || 0;
+                        itemDiscounts.set(item.id, curr + discountVal);
+                    });
+                }
             }
-            descuentoPorCantidadTotal += descuentoPorCantidadItem;
-            itemsModificados.push({
-                ...item,
-                precioOriginal: item.precioOriginal ?? item.precio,
-                descuentoPorCantidadAplicado: descuentoPorCantidadItem
-            });
         });
-        const totalDescuentoTotal = descuentoPrecioEspecial + descuentoPorCantidadTotal;
+
+        let totalDescuentoSurtido = 0;
+        
+        // 3. Construcción final de items para DB/PDF
+        const itemsFinales = cart.map(item => {
+            const basePrice = item.precioOriginal ?? item.precio;
+
+            // Regalo: Descuento = 100% del precio base
+            if (item.isGift) {
+                const giftDiscount = basePrice * item.quantity;
+                totalDescuentoSurtido += giftDiscount;
+                return {
+                    ...item,
+                    // Guardamos precio ORIGINAL (alto)
+                    precio: basePrice, 
+                    precioOriginal: basePrice,
+                    // Guardamos descuento TOTAL (para que neto sea 0)
+                    descuentoPorCantidadAplicado: giftDiscount
+                };
+            }
+            
+            // Descuentos por volumen
+            const volumeDiscount = itemDiscounts.get(item.id) || 0;
+            totalDescuentoSurtido += volumeDiscount;
+
+            // Diferencia por precio especial
+            let specialPriceDiscount = 0;
+            if (basePrice > item.precio) {
+                specialPriceDiscount = (basePrice - item.precio) * item.quantity;
+            }
+
+            const totalItemDiscount = volumeDiscount + specialPriceDiscount;
+
+            return {
+                ...item,
+                // Guardamos precio ORIGINAL
+                precio: basePrice, 
+                precioOriginal: basePrice,
+                // Acumulamos TODO el descuento en este campo
+                descuentoPorCantidadAplicado: totalItemDiscount 
+            };
+        });
+
+        // Recalculamos el total de descuentos sumando los individuales de itemsFinales para precisión
+        const finalTotalDiscount = itemsFinales.reduce((acc, i) => acc + (i.descuentoPorCantidadAplicado || 0), 0);
+
         return {
             subtotal: sub,
             totalComision: comision,
             totalCosto: costo,
-            totalFinal: sub - descuentoPorCantidadTotal,
-            totalDescuentoPromociones: totalDescuentoTotal,
-            itemsConDescuentosAplicados: itemsModificados
+            totalFinal: sub - finalTotalDiscount,
+            totalDescuentoPromociones: finalTotalDiscount,
+            itemsConDescuentosAplicados: itemsFinales
         };
+
     }, [cart, promotions, client, isReposicion, isDevolucion]);
 
+
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
-        if (!clientData) {
-            Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' });
-            return;
-        }
+        if (!clientData) { Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' }); return; }
         try {
-            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName,);
+            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName);
             if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
             const { uri } = await Print.printToFileAsync({ html: htmlContent });
-            if (!uri) { throw new Error("printToFileAsync no devolvió URI."); }
-            const isAvailable = await Sharing.isAvailableAsync();
-            if (!isAvailable) { throw new Error("La función de compartir no está disponible."); }
-            await Sharing.shareAsync(uri, {
-                mimeType: 'application/pdf',
-                dialogTitle: `Compartir Comprobante ${saleDataForPdf.id}`,
-            });
+            await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `Comprobante ${saleDataForPdf.id}` });
         } catch (shareError: any) {
-            console.error("handleShare: Error con expo-sharing/print:", shareError);
-            if (!(shareError.message?.includes('Sharing dismissed') || shareError.message?.includes('cancelled'))) {
-                Alert.alert("Error al Compartir", `Detalle: ${shareError.message || 'Error desconocido'}`);
-            }
+            console.error("Error share:", shareError);
+            Alert.alert("Error", "No se pudo compartir el PDF.");
         }
     }, []);
 
 
     const confirmarVenta = useCallback(async () => {
         if (isSubmitting) return;
-        if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos del cliente o vendedor."); return; }
-        if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
+        if (!client || !currentVendedor) { Alert.alert("Error", "Faltan datos."); return; }
+        if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue productos."); return; }
 
         setIsSubmitting(true);
         Haptics.notificationAsync('success' as any); 
 
-        const clienteTipoDocumento = client.tipoDocumento || 'SC'; 
-        const clienteNumeroDocumento = client.numeroDocumento || '';
-        const requiereFacturaAfip = client.requiereFacturaAfip || false;
-        
+        // Limpiar IDs temporales
+        const itemsToSave = itemsConDescuentosAplicados.map(item => {
+            const cleanId = item.id.startsWith('gift_') ? item.id.replace('gift_', '') : item.id;
+            const { isGift, ...rest } = item; 
+            return { ...rest, id: cleanId };
+        });
+
         const saleDataToSave: Omit<SaleDataToSave, 'fecha'> = { 
             clienteId: client.id,
             clienteNombre: client.nombre,
             vendedorId: currentVendedor.id,
             vendedorName: currentVendedor.nombreCompleto || currentVendedor.nombre,
-            items: itemsConDescuentosAplicados,
+            items: itemsToSave,
             totalVenta: totalFinal,
             totalCosto: totalCosto,
             totalComision: totalComision,
-            estado: 'Pendiente de Entrega', 
+            estado: 'Pendiente de Entrega',
             saldoPendiente: totalFinal,
             totalDescuentoPromociones: totalDescuentoPromociones,
             observaciones: originalSale?.observaciones || '',
-            tipo: 'venta', 
+            tipo: 'venta',
             ...(editMode ? { fechaUltimaEdicion: serverTimestamp() } : {}),
-
-            tipoDocumento: clienteTipoDocumento,
-            numeroDocumento: clienteNumeroDocumento,
-            facturaAfip: requiereFacturaAfip, 
-
-            afipEstado: "pendiente", 
-            afipNumeroComprobante: null,
-            afipCAE: null,
-            afipFechaVtoCAE: null,
-            afipPuntoVenta: null,
-            afipResultado: null,
+            tipoDocumento: client.tipoDocumento || 'SC',
+            numeroDocumento: client.numeroDocumento || '',
+            facturaAfip: client.requiereFacturaAfip || false,
+            afipEstado: "pendiente", afipNumeroComprobante: null, afipCAE: null, afipFechaVtoCAE: null, afipPuntoVenta: null, afipResultado: null
         };
 
         try {
-            let savedSaleId = originalSale ? originalSale.id : '';
             const dbInstance = dbContainer.instance;
+            if (!dbInstance) throw new Error("DB no lista");
 
-            if (!dbInstance) { throw new Error("La base de datos no está lista. Reinicia la app."); }
+            let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
-                const originalSaleBackup = { ...originalSale }; 
-                
                 reintegrarStockLocalmente(originalSale.items);
-                descontarStockLocalmente(cart);
-
-                const updatedSale: BaseSale = {
-                    ...originalSale, 
-                    ...saleDataToSave as any, 
-                    id: originalSale.id,
-                    items: itemsConDescuentosAplicados,
-                    fecha: originalSale.fecha, 
-                };
+                descontarStockLocalmente(itemsToSave);
                 
-                setSalesState(prevSales => 
-                    prevSales.map(s => s.id === originalSale.id ? updatedSale : s)
-                );
+                const updatedSale: BaseSale = { ...originalSale, ...saleDataToSave as any, id: originalSale.id, items: itemsToSave, fecha: originalSale.fecha };
+                setSalesState(prev => prev.map(s => s.id === originalSale.id ? updatedSale : s));
                 
                 const saleRef = doc(dbInstance, 'ventas', originalSale.id); 
-                const updatePromise = setDoc(saleRef, saleDataToSave as any, { merge: true }); 
-
-                if (isOffline) {
-                    updatePromise.catch(err => console.warn(`[Offline] ${err.message}`));
-                    Toast.show({ type: 'success', text1: 'Venta Actualizada (Offline)', text2: 'Se sincronizará al conectar.' });
-                } else {
-                    try {
-                        await updatePromise; 
-                        Toast.show({ type: 'success', text1: 'Venta Actualizada', text2: 'Stock ajustado.' });
-                    } catch (e) {
-                        setSalesState(prevSales => prevSales.map(s => s.id === originalSale.id ? originalSaleBackup as BaseSale : s));
-                        descontarStockLocalmente(originalSale.items); 
-                        reintegrarStockLocalmente(cart);
-                        throw e; 
-                    }
-                }
-                savedSaleId = originalSale.id;
-
-            } else {
-                const finalSaleData = {
-                    ...saleDataToSave,
-                    tipo: 'venta' as 'venta' | 'reposicion' | 'devolucion' 
-                };
+                const promise = setDoc(saleRef, saleDataToSave as any, { merge: true });
                 
+                if (isOffline) promise.catch(e => console.log("Offline save pending"));
+                else await promise;
+                
+                Toast.show({ type: 'success', text1: 'Venta Actualizada' });
+            } else {
+                const finalSaleData = { ...saleDataToSave, tipo: 'venta' as const };
                 savedSaleId = await crearVentaConStock(finalSaleData);
-                descontarStockLocalmente(cart);
-                Toast.show({ type: 'success', text1: isOffline ? 'Venta Guardada (Offline)' : 'Venta Creada' });
+                descontarStockLocalmente(itemsToSave);
+                Toast.show({ type: 'success', text1: 'Venta Creada' });
             }
 
-            const completeSaleDataForPdf: BaseSale = {
+            const completeData: BaseSale = {
                 // @ts-ignore
-                ...(originalSale as BaseSale || {} as BaseSale),
-                ...saleDataToSave,
-                id: savedSaleId,
-                observaciones: saleDataToSave.observaciones,
+                ...(originalSale || {}), 
+                ...saleDataToSave, 
+                id: savedSaleId, 
+                items: itemsToSave,
                 // @ts-ignore
                 fecha: originalSale?.fecha || new Date(), 
-                items: itemsConDescuentosAplicados,
-                estado: saleDataToSave.estado as BaseSale['estado'],
-                tipo: saleDataToSave.tipo as BaseSale['tipo'], 
+                estado: saleDataToSave.estado as BaseSale['estado'], 
+                tipo: saleDataToSave.tipo as BaseSale['tipo'],
+                clientName: saleDataToSave.clienteNombre
             };
 
-            const vendorName = currentVendedor.nombreCompleto || currentVendedor.nombre;
-
             Alert.alert(
-                isOffline ? "Venta Guardada (Offline)" : "Venta Guardada",
-                isOffline ? `Sincronización pendiente.` : "¿Compartir comprobante?",
+                "Éxito", "¿Compartir comprobante?",
                 [
-                    { text: "Volver", onPress: () => { 
-                        setIsSubmitting(false); 
-                        // ✅ NAVEGACIÓN A HOME
-                        // @ts-ignore
-                        navigation.navigate('Home'); 
-                    }, style: "cancel" },
-                    { text: "Compartir", onPress: async () => {
-                        try { await handleShare(completeSaleDataForPdf, client!, vendorName); } 
-                        finally { 
-                            setIsSubmitting(false); 
-                            // ✅ NAVEGACIÓN A HOME
-                            // @ts-ignore
-                            navigation.navigate('Home'); 
-                        }
-                    } }
-                ],
-                { cancelable: false }
+                    { text: "No", onPress: () => { setIsSubmitting(false); navigation.navigate('Home' as any); }, style: "cancel" },
+                    { text: "Sí", onPress: async () => {
+                        try { await handleShare(completeData, client!, currentVendedor.nombre); } 
+                        finally { setIsSubmitting(false); navigation.navigate('Home' as any); }
+                    }}
+                ], { cancelable: false }
             );
 
         } catch (error: any) {
-            console.error("Error en confirmarVenta:", error); 
-            Toast.show({ type: 'error', text1: 'Error al Guardar', text2: error.message });
+            console.error(error);
+            Toast.show({ type: 'error', text1: 'Error', text2: error.message });
             setIsSubmitting(false); 
         }
     }, [
         isSubmitting, client, currentVendedor, cart, totalFinal, totalCosto, totalComision,
         totalDescuentoPromociones, itemsConDescuentosAplicados, editMode, originalSale, 
-        handleShare, navigation, isOffline, descontarStockLocalmente,
-        reintegrarStockLocalmente, crearVentaConStock, setSalesState 
+        handleShare, navigation, isOffline, descontarStockLocalmente, reintegrarStockLocalmente, 
+        crearVentaConStock, setSalesState 
     ]);
 
     const handleConfirmPress = () => {
         if (isSubmitting) return;
-        if (!client) { Alert.alert("Error", "No se ha seleccionado un cliente."); return; }
-        if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue al menos un producto."); return; }
+        if (!client) { Alert.alert("Error", "Cliente no seleccionado"); return; }
+        if (cart.length === 0) { Alert.alert("Error", "Carrito vacío"); return; }
 
         if (isReposicion || isDevolucion) {
-            Haptics.notificationAsync('warning' as any);
             navigation.navigate('ReviewSale', { 
-                cliente: client,
-                clientId: client!.id,
-                cart: itemsConDescuentosAplicados, 
-                isReposicion: isReposicion,
-                isDevolucion: isDevolucion,
-                totalVenta: 0,
-                totalCosto: totalCosto,
-                totalComision: 0,
-                totalDescuento: totalDescuentoPromociones,
+                cliente: client, clientId: client!.id, cart: itemsConDescuentosAplicados, 
+                isReposicion, isDevolucion, totalVenta: 0, totalCosto, totalComision: 0, totalDescuento: totalDescuentoPromociones,
             });
         } else {
             confirmarVenta(); 
         }
     };
 
-    // Paginación
     const handleLoadMore = useCallback(() => {
-        setVisibleProductCount(prevCount => prevCount + LOAD_MORE_STEP);
+        setVisibleProductCount(prev => prev + LOAD_MORE_STEP);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }, []);
 
@@ -733,33 +829,22 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     if (isDataLoading && !client) {
         return (
             <View style={styles.fullScreenLoader}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loaderText}>Cargando datos...</Text>
             </View>
         );
     }
     if (!client && !isDataLoading) {
         return (
             <View style={styles.fullScreenLoader}>
-                <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
-                <Feather name="user-x" size={SIZES.h1} color={COLORS.danger} />
-                <Text style={styles.loaderText}>Error: Cliente no encontrado</Text>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonError}>
-                    <Text style={styles.backButtonErrorText}>Volver</Text>
-                </TouchableOpacity>
+                <Feather name="user-x" size={40} color={COLORS.danger} />
+                <Text style={styles.loaderText}>Cliente no encontrado</Text>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonError}><Text style={styles.backButtonErrorText}>Volver</Text></TouchableOpacity>
             </View>
         );
     }
 
-    const headerTitle = editMode ? 'EDITAR VENTA' : (isReposicion ? 'NUEVA REPOSICIÓN' : (isDevolucion ? 'NUEVA DEVOLUCIÓN' : 'NUEVA VENTA'));
+    const headerTitle = editMode ? 'EDITAR VENTA' : (isReposicion ? 'REPOSICIÓN' : (isDevolucion ? 'DEVOLUCIÓN' : 'NUEVA VENTA'));
     const dynamicButtonColor = isReposicion ? COLORS.warning : (isDevolucion ? COLORS.secondary : COLORS.primary);
-    const buttonText = useMemo(() => {
-        if (isSubmitting) return editMode ? 'ACTUALIZANDO...' : 'GUARDANDO...';
-        if (isReposicion || isDevolucion) return 'REVISAR Y CONTINUAR';
-        if (editMode) return isOffline ? 'ACTUALIZAR (OFFLINE)' : 'ACTUALIZAR VENTA';
-        return isOffline ? 'CONFIRMAR VENTA (OFFLINE)' : 'CONFIRMAR VENTA';
-    }, [isSubmitting, editMode, isReposicion, isDevolucion, isOffline]);
 
     return (
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? SIZES.xl : 0}>
@@ -767,7 +852,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
 
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={SIZES.large} color={COLORS.textPrimary} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}><Feather name="x" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
                     <Text style={[styles.title, { color: dynamicButtonColor }]}>{headerTitle}</Text>
                     <Text style={styles.clientName}>{client?.nombreCompleto || client?.nombre}</Text>
@@ -777,35 +862,18 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
             <View style={styles.controlsContainer}>
                 <View style={[styles.inputContainer, { flex: 1 }]}>
-                    <Feather name="search" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                    <Feather name="search" size={20} color={COLORS.textSecondary} style={styles.inputIcon} />
                     <TextInput 
-                        style={styles.input} 
-                        placeholder="Producto..." 
-                        placeholderTextColor={COLORS.textSecondary} 
-                        value={searchQuery} 
-                        onChangeText={setSearchQuery} 
-                        clearButtonMode="while-editing" 
-                        autoCapitalize="none" 
-                        autoCorrect={false}
+                        style={styles.input} placeholder="Producto..." placeholderTextColor={COLORS.textSecondary} 
+                        value={searchQuery} onChangeText={setSearchQuery} clearButtonMode="while-editing" 
                     />
-                    {searchQuery.length > 0 && Platform.OS === 'android' && ( 
-                        <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-                            <Feather name="x" size={SIZES.body} color={COLORS.textSecondary} />
-                        </TouchableOpacity> 
-                    )}
+                    {searchQuery.length > 0 && <TouchableOpacity onPress={() => setSearchQuery('')}><Feather name="x" size={18} color={COLORS.textSecondary} /></TouchableOpacity>}
                 </View>
-                <View style={styles.pickerWrapper}>
-                    <TouchableOpacity
-                        style={styles.pickerButton}
-                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsCategoryModalVisible(true); }}
-                    >
-                        <Feather name="tag" size={SIZES.body} color={COLORS.textSecondary} style={styles.pickerIcon} />
-                        <Text style={[styles.pickerButtonText, { color: categoryFilter ? COLORS.textPrimary : COLORS.textSecondary }]}>
-                            {selectedCategoryName}
-                        </Text>
-                        <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
-                    </TouchableOpacity>
-                </View>
+                <TouchableOpacity style={styles.pickerButton} onPress={() => setIsCategoryModalVisible(true)}>
+                    <Feather name="filter" size={20} color={COLORS.textSecondary} style={styles.pickerIcon} />
+                    <Text style={styles.pickerButtonText} numberOfLines={1}>{selectedCategoryName}</Text>
+                    <Feather name="chevron-down" size={16} color={COLORS.primary} />
+                </TouchableOpacity>
             </View>
 
             <FlatList
@@ -813,84 +881,47 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 renderItem={renderProductItem}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.listContentContainer}
-                ListEmptyComponent={
-                    !isDataLoading ? (
-                        <View style={styles.emptyContainer}>
-                            <Feather name="package" size={SIZES.h1} color={COLORS.disabled} />
-                            <Text style={styles.emptyText}>No se encontraron productos</Text>
-                        </View>
-                    ) : null
-                }
-                ListFooterComponent={() => (
-                    hasMoreProducts ? (
-                        <TouchableOpacity style={styles.loadMoreButton} onPress={handleLoadMore}>
-                            <Feather name="chevrons-down" size={SIZES.body} color={COLORS.primary} />
-                            <Text style={styles.loadMoreText}>Cargar {LOAD_MORE_STEP} productos más ({productsToRender.length}/{filteredProducts.length})</Text>
-                        </TouchableOpacity>
-                    ) : (
-                        <View style={styles.listEndSpacer} />
-                    )
-                )}
-                initialNumToRender={INITIAL_LOAD_COUNT}
-                maxToRenderPerBatch={LOAD_MORE_STEP}
-                windowSize={11}
-                removeClippedSubviews={Platform.OS === 'android'}
-                keyboardShouldPersistTaps="handled"
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={hasMoreProducts ? <ActivityIndicator color={COLORS.primary} style={{margin: 20}}/> : <View style={{height: 20}}/>}
             />
 
             <View style={styles.checkoutContainer}>
-                <View style={styles.totalsDetails}>
-                    {totalDescuentoPromociones > 0 && (
+                {totalDescuentoPromociones > 0 && (
+                    <View style={styles.totalsDetails}>
                         <View style={styles.totalRow}>
-                            <Text style={[styles.totalLabel, styles.discountText]}>Descuentos Aplicados</Text>
+                            <Text style={[styles.totalLabel, styles.discountText]}>Descuentos</Text>
                             <Text style={[styles.totalValue, styles.discountText]}>-${totalDescuentoPromociones.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text>
                         </View>
-                    )}
-                </View>
+                    </View>
+                )}
                 
                 <View style={styles.finalTotalBar}>
                     <View>
                         <Text style={styles.finalTotalLabel}>TOTAL A PAGAR</Text>
                         <Text style={styles.finalTotalValue}>${totalFinal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text>
+                        <Text style={styles.subtotalText}>Subtotal: ${subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</Text>
                     </View>
                     <TouchableOpacity
-                        style={[
-                            styles.checkoutButton,
-                            { backgroundColor: dynamicButtonColor },
-                            isSubmitting && styles.checkoutButtonDisabled,
-                        ]}
+                        style={[styles.checkoutButton, { backgroundColor: dynamicButtonColor }, isSubmitting && styles.checkoutButtonDisabled]}
                         onPress={handleConfirmPress}
                         disabled={isSubmitting || cart.length === 0}
                     >
-                        {isSubmitting ? ( 
-                            <ActivityIndicator color={COLORS.white} /> 
-                        ) : ( 
-                            <Feather name={editMode ? "check-circle" : "arrow-right-circle"} size={SIZES.h3} color={COLORS.white} /> 
-                        )}
-                        <Text style={styles.checkoutButtonText}>
-                            {buttonText}
-                        </Text>
+                        {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Feather name="arrow-right" size={24} color="#FFF" />}
+                        <Text style={styles.checkoutButtonText}>{isSubmitting ? '...' : 'CONFIRMAR'}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
 
-            <Modal transparent={true} visible={modalVisible} animationType="fade" onRequestClose={() => setModalVisible(false)}>
+            <Modal transparent visible={modalVisible} animationType="fade" onRequestClose={() => setModalVisible(false)}>
                 <View style={modalStyles.modalOverlay}>
                     <View style={modalStyles.modalContent}>
                         <Text style={modalStyles.modalTitle}>CANTIDAD</Text>
                         <Text style={modalStyles.modalProduct}>{selectedProduct?.nombre}</Text>
-                        <TextInput 
-                            style={modalStyles.modalInput} 
-                            value={currentQuantity} 
-                            onChangeText={setCurrentQuantity} 
-                            keyboardType="number-pad" 
-                            textAlign="center" 
-                            autoFocus={true} 
-                            selectTextOnFocus 
-                        />
+                        <TextInput style={modalStyles.modalInput} value={currentQuantity} onChangeText={setCurrentQuantity} keyboardType="number-pad" autoFocus selectTextOnFocus />
                         <View style={modalStyles.modalButtons}>
                             <TouchableOpacity style={[modalStyles.modalButton, modalStyles.modalButtonCancel]} onPress={handleRemoveFromCart}>
-                                <Feather name="trash-2" size={SIZES.h2} color={COLORS.danger} />
+                                <Feather name="trash-2" size={24} color={COLORS.danger} />
                             </TouchableOpacity>
                             <TouchableOpacity style={[modalStyles.modalButton, modalStyles.modalButtonConfirm]} onPress={handleConfirmQuantity}>
                                 <Text style={modalStyles.modalButtonText}>CONFIRMAR</Text>
@@ -900,302 +931,144 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 </View>
             </Modal>
 
-            <CategorySelectorModal
-                visible={isCategoryModalVisible}
-                onClose={() => setIsCategoryModalVisible(false)}
-                categories={categories}
-                selectedId={categoryFilter}
-                onSelect={setCategoryFilter}
-            />
+            <CategorySelectorModal visible={isCategoryModalVisible} onClose={() => setIsCategoryModalVisible(false)} categories={categories} selectedId={categoryFilter} onSelect={setCategoryFilter} />
         </KeyboardAvoidingView>
     );
 };
 
-// --- Estilos Auxiliares (Modales y Product Card) ---
-
-const modalStyles = StyleSheet.create({
-    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)' },
-    modalContent: { 
-        width: '75%', 
-        backgroundColor: COLORS.backgroundEnd, 
-        borderRadius: SIZES.radius, 
-        padding: SIZES.large, 
-        alignItems: 'center', 
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder 
-    },
-    modalHeader: { 
-        paddingVertical: SIZES.small, 
-        borderBottomWidth: SIZES.borderWidth, 
-        borderBottomColor: COLORS.glassBorder, 
-        alignItems: 'center', 
-        width: '100%',
-        marginBottom: SIZES.medium,
-    },
-    modalTitle: { fontSize: SIZES.h2, fontWeight: 'bold', marginBottom: SIZES.xsmall, color: COLORS.textPrimary },
-    modalProduct: { fontSize: SIZES.h3, color: COLORS.primary, marginBottom: SIZES.large, textAlign: 'center', fontWeight: '500' },
-    modalInput: { 
-        width: '100%', 
-        backgroundColor: COLORS.backgroundStart, 
-        borderColor: COLORS.glassBorder, 
-        borderWidth: SIZES.borderWidth, 
-        borderRadius: SIZES.radius, 
-        paddingVertical: SIZES.small, 
-        paddingHorizontal: SIZES.medium,
-        fontSize: SIZES.h1, 
-        textAlign: 'center', 
-        marginBottom: SIZES.large, 
-        color: COLORS.textPrimary,
-        fontWeight: 'bold',
-    },
-    modalButtons: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', gap: SIZES.medium },
-    modalButton: { flex: 1, padding: SIZES.medium, borderRadius: SIZES.radius, alignItems: 'center' },
-    modalButtonCancel: { backgroundColor: COLORS.backgroundEnd, borderWidth: SIZES.borderWidth, borderColor: COLORS.danger, flex: 1 },
-    modalButtonConfirm: { backgroundColor: COLORS.primary, flex: 2 },
-    modalButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
-    modalItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SIZES.medium },
-    modalItemText: { fontSize: SIZES.body, color: COLORS.textPrimary },
-    separatorModal: { height: SIZES.borderWidth, backgroundColor: COLORS.glassBorder },
-    modalCloseButton: { 
-        marginTop: SIZES.large, 
-        padding: SIZES.medium, 
-        backgroundColor: COLORS.backgroundStart, 
-        borderRadius: SIZES.radius, 
-        alignItems: 'center', 
-        width: '100%',
-        borderWidth: SIZES.borderWidth,
-        borderColor: COLORS.glassBorder,
-    },
-    modalCloseText: { color: COLORS.textPrimary, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
-});
-
-// Estilos de la Product Card (Ajustados y Compactos)
+// --- ESTILOS IOS & MODERNOS ---
 const productCardStyles = StyleSheet.create({
     card: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        backgroundColor: COLORS.backgroundEnd, 
-        paddingVertical: SIZES.medium, 
-        paddingLeft: SIZES.medium, 
-        paddingRight: SIZES.small, 
-        borderRadius: SIZES.radius, 
-        marginBottom: SIZES.small, 
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder,
-        shadowColor: COLORS.textPrimary,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
-        elevation: 1,
+        backgroundColor: '#FFFFFF', 
+        borderRadius: 16, 
+        marginBottom: 12, 
+        marginHorizontal: 4,
+        // iOS Shadows
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        // Android
+        elevation: 3,
+        borderWidth: 1,
+        borderColor: '#F2F4F7',
     },
     cardSelected: { 
-        backgroundColor: COLORS.backgroundEnd, 
+        backgroundColor: '#F0FDF4', 
         borderColor: COLORS.primary, 
-        borderWidth: SIZES.borderWidth * 2,
-        shadowColor: COLORS.primary,
-        shadowOpacity: 0.15,
+        borderWidth: 1.5
     },
-    cardDisabled: { opacity: 0.4, backgroundColor: COLORS.backgroundStart },
-    cardInfo: { flex: 1, marginRight: SIZES.medium },
-    cardTitle: { fontSize: SIZES.body, fontWeight: '700', color: COLORS.textPrimary, marginBottom: SIZES.xsmall / 2 },
+    cardDisabled: { opacity: 0.5 },
     
-    priceContainer: { flexDirection: 'row', alignItems: 'center', gap: SIZES.xsmall, marginTop: SIZES.xsmall / 2 },
-    promoPill: { 
+    contentContainer: {
+        flexDirection: 'row',
+        padding: 16,
+        alignItems: 'center',
+    },
+    infoColumn: { flex: 1, marginRight: 12 },
+    actionColumn: { justifyContent: 'center', alignItems: 'center', minWidth: 40 },
+
+    cardTitle: { fontSize: 16, fontWeight: '600', color: '#1E293B', marginBottom: 6, letterSpacing: 0.2 },
+    
+    metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+    stockText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginRight: 8 },
+    stockTextLow: { color: '#D97706', fontWeight: '700' },
+    stockTextNoStock: { color: '#EF4444', fontWeight: '800' },
+    
+    promoBadge: { 
+        backgroundColor: '#F59E0B', 
+        borderRadius: 4, 
+        paddingHorizontal: 6, 
+        paddingVertical: 2, 
         flexDirection: 'row', 
-        alignItems: 'center', 
-        backgroundColor: COLORS.accent + '20', 
-        borderRadius: SIZES.small, 
-        paddingHorizontal: SIZES.xsmall, 
-        paddingVertical: SIZES.xsmall / 2, 
-        marginRight: SIZES.xsmall 
+        alignItems: 'center',
+        gap: 4
     },
-    promoText: { fontSize: SIZES.xsmallText, color: COLORS.accent, fontWeight: 'bold', marginLeft: SIZES.xsmall / 2 },
-    cardPrice: { fontSize: SIZES.body, color: COLORS.primary, fontWeight: 'bold' },
-    cardOriginalPrice: { fontSize: SIZES.caption, color: COLORS.textSecondary, fontWeight: '500', textDecorationLine: 'line-through' },
-    
-    stockText: { fontSize: SIZES.caption, color: COLORS.textSecondary, fontWeight: '500' },
-    stockTextLow: { color: COLORS.warning, fontWeight: 'bold' },
-    stockTextNoStock: { color: COLORS.danger, fontWeight: '900' },
-    
-    inCartControls: { flexDirection: 'row', alignItems: 'center', gap: SIZES.xsmall },
-    quantityBadge: { 
-        backgroundColor: COLORS.primary, 
-        borderRadius: SIZES.radiusSmall, 
-        minWidth: 40,
-        height: 40, 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        paddingHorizontal: SIZES.small 
-    },
-    quantityBadgeText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body },
-    editIcon: { marginLeft: SIZES.small },
+    promoBadgeText: { color: '#FFF', fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 },
+
+    priceRow: { flexDirection: 'row', alignItems: 'baseline' },
+    cardPrice: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+    cardOriginalPrice: { fontSize: 13, color: '#94A3B8', textDecorationLine: 'line-through', marginLeft: 8 },
+
     addButton: { 
-        backgroundColor: COLORS.primary, 
-        width: 48, 
-        height: 48,
-        borderRadius: SIZES.radiusSmall, 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        shadowColor: COLORS.primary, 
-        shadowOffset: { width: 0, height: 2 }, 
-        shadowOpacity: 0.3, 
-        shadowRadius: 3, 
-        elevation: 4 
+        width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', 
+        justifyContent: 'center', alignItems: 'center' 
     },
+    quantityBadge: { 
+        width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.primary, 
+        justifyContent: 'center', alignItems: 'center',
+        shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4
+    },
+    quantityText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+    editIcon: { marginLeft: 0 }, // no longer used but kept for interface compat if needed
+    inCartControls: {}, // kept for compat
 });
 
+const modalStyles = StyleSheet.create({
+    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)' },
+    modalContent: { width: '80%', backgroundColor: '#FFF', borderRadius: 24, padding: 24, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20 },
+    modalHeader: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', width: '100%', alignItems: 'center', marginBottom: 10 },
+    modalTitle: { fontSize: 14, fontWeight: '700', color: '#94A3B8', letterSpacing: 1, marginBottom: 8 },
+    modalProduct: { fontSize: 18, color: '#1E293B', marginBottom: 20, textAlign: 'center', fontWeight: '600' },
+    modalInput: { width: '100%', fontSize: 32, textAlign: 'center', marginBottom: 30, color: COLORS.primary, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: COLORS.primary, paddingBottom: 5 },
+    modalButtons: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', gap: 15 },
+    modalButton: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    modalButtonCancel: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#EF4444' },
+    modalButtonConfirm: { backgroundColor: COLORS.primary },
+    modalButtonText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
+    modalItem: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 16, paddingHorizontal: 10 },
+    modalItemText: { fontSize: 16, color: '#334155' },
+    separatorModal: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 10 },
+    modalCloseButton: { marginTop: 20, padding: 12, backgroundColor: '#F8FAFC', borderRadius: 12, width: '100%', alignItems: 'center' },
+    modalCloseText: { color: '#64748B', fontWeight: 'bold' },
+});
 
-// --- Estilos Principales de Pantalla ---
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.backgroundStart },
+    container: { flex: 1, backgroundColor: '#F8FAFC' },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-    
-    // Loader
-    fullScreenLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: SIZES.medium, backgroundColor: COLORS.backgroundStart },
-    loaderText: { fontSize: SIZES.body, color: COLORS.textSecondary },
-    backButtonError: { marginTop: SIZES.large, backgroundColor: COLORS.primary, paddingVertical: SIZES.small, paddingHorizontal: SIZES.large, borderRadius: SIZES.radius },
-    backButtonErrorText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body },
-    
-    // Header
-    header: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        paddingTop: (StatusBar.currentHeight || 0) + SIZES.small, 
-        paddingBottom: SIZES.medium, 
-        paddingHorizontal: SIZES.small,
-        backgroundColor: COLORS.backgroundStart,
-    },
-    headerButton: { padding: SIZES.small, width: 48 },
-    headerTitleContainer: { flex: 1, alignItems: 'center' },
-    title: { fontSize: SIZES.h3, fontWeight: 'bold', color: COLORS.textPrimary, textTransform: 'uppercase' },
-    clientName: { fontSize: SIZES.body, color: COLORS.textPrimary, fontWeight: '500', marginTop: SIZES.xsmall / 2 },
-    
-    // Controles (Filtro y Búsqueda - 50/50)
-    controlsContainer: { 
-        paddingHorizontal: SIZES.large, 
-        marginBottom: SIZES.medium, 
-        flexDirection: 'row', 
-        gap: SIZES.medium 
-    },
-    inputContainer: { 
-        flex: 2,
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        backgroundColor: COLORS.backgroundEnd, 
-        borderRadius: SIZES.radius, 
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder, 
-        paddingHorizontal: SIZES.small, 
-        height: 52 
-    },
-    inputIcon: { marginRight: SIZES.small },
-    input: { flex: 1, color: COLORS.textPrimary, fontSize: SIZES.body, height: '100%' },
-    clearButton: { padding: SIZES.xsmall },
-    
-    pickerWrapper: { flex: 1.5 },
-    pickerButton: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        paddingHorizontal: SIZES.small, 
-        height: 52,
-        backgroundColor: COLORS.backgroundEnd,
-        borderRadius: SIZES.radius, 
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder,
-    },
-    pickerIcon: { marginRight: SIZES.xsmall },
-    pickerButtonText: { fontSize: SIZES.caption, flex: 1, textAlign: 'center', fontWeight: '500' },
-    
-    // Lista de Productos
-    listContentContainer: { 
-        paddingHorizontal: SIZES.large, 
-        paddingBottom: SIZES.medium, 
-        flexGrow: 1 
-    },
-    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SIZES.xl, gap: SIZES.medium, minHeight: 200 },
-    emptyText: { fontSize: SIZES.body, color: COLORS.textSecondary, textAlign: 'center' },
-    
-    // BOTÓN CARGAR MÁS (FOOTER)
-    loadMoreButton: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: SIZES.medium,
-        backgroundColor: COLORS.backgroundEnd,
-        borderRadius: SIZES.radius,
-        borderWidth: SIZES.borderWidth,
-        borderColor: COLORS.glassBorder,
-        marginVertical: SIZES.medium,
-        gap: SIZES.small,
-        marginHorizontal: SIZES.large,
-    },
-    loadMoreText: {
-        color: COLORS.primary,
-        fontSize: SIZES.body,
-        fontWeight: 'bold',
-    },
-    listEndSpacer: { height: SIZES.large },
+    fullScreenLoader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    loaderText: { marginTop: 10, color: '#64748B' },
+    backButtonError: { marginTop: 20, padding: 10, backgroundColor: COLORS.primary, borderRadius: 8 },
+    backButtonErrorText: { color: '#FFF' },
 
-    // Checkout Bar (Sticky)
-    checkoutContainer: { 
-        backgroundColor: COLORS.backgroundEnd, 
-        borderTopWidth: 1, 
-        borderColor: COLORS.glassBorder, 
-        paddingTop: SIZES.medium,
-        paddingHorizontal: SIZES.large,
-        paddingBottom: Platform.OS === 'ios' ? SIZES.xl : SIZES.medium,
-        shadowColor: COLORS.textPrimary,
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 5,
-        elevation: 10,
-    },
-    totalsDetails: {
-        marginBottom: SIZES.medium,
-        gap: SIZES.xsmall / 2,
-    },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'android' ? 40 : 10, paddingBottom: 10 },
+    headerButton: { width: 40, alignItems: 'center' },
+    headerTitleContainer: { alignItems: 'center' },
+    title: { fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+    clientName: { fontSize: 14, color: '#64748B', marginTop: 2, fontWeight: '500' },
+
+    controlsContainer: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 12, gap: 12 },
+    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 12, height: 48, borderWidth: 1, borderColor: '#E2E8F0' },
+    inputIcon: { marginRight: 8 },
+    input: { flex: 1, fontSize: 15, color: '#1E293B' },
+    clearButton: { padding: 4 },
+    pickerWrapper: { }, 
+    pickerButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 12, height: 48, borderWidth: 1, borderColor: '#E2E8F0', gap: 8 },
+    pickerIcon: { marginRight: 0 },
+    pickerButtonText: { fontSize: 14, fontWeight: '600', color: '#475569', maxWidth: 120 },
+
+    listContentContainer: { paddingHorizontal: 16, paddingBottom: 20 },
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 50 },
+    emptyText: { marginTop: 10, color: '#94A3B8' },
+    loadMoreButton: { flexDirection: 'row', justifyContent: 'center', padding: 15, backgroundColor: '#FFF', marginHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', gap: 8 },
+    loadMoreText: { color: COLORS.primary, fontWeight: 'bold' },
+    listEndSpacer: { height: 20 },
+
+    checkoutContainer: { backgroundColor: '#FFF', borderTopWidth: 1, borderColor: '#E2E8F0', padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : 16, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 15 },
+    totalsDetails: { marginBottom: 12 },
     totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    totalLabel: { color: COLORS.textSecondary, fontSize: SIZES.caption, fontWeight: '500', textTransform: 'uppercase' },
-    totalValue: { color: COLORS.textPrimary, fontSize: SIZES.body, fontWeight: '600' },
-    discountText: { color: COLORS.danger, fontWeight: '600' },
+    totalLabel: { fontSize: 11, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.5, textTransform: 'uppercase' },
+    totalValue: { fontSize: 14, fontWeight: '600' },
+    discountText: { color: '#EF4444' },
     
-    // Total Final y Botón
-    finalTotalBar: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: SIZES.small,
-        borderTopWidth: SIZES.borderWidth,
-        borderColor: COLORS.glassBorder,
-        marginBottom: SIZES.small,
-    },
-    finalTotalLabel: { color: COLORS.textPrimary, fontSize: SIZES.body, fontWeight: 'bold', textTransform: 'uppercase' },
-    finalTotalValue: { color: COLORS.primary, fontSize: SIZES.h3, fontWeight: 'bold' },
+    finalTotalBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    finalTotalLabel: { fontSize: 12, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 },
+    finalTotalValue: { fontSize: 26, fontWeight: '800', color: '#0F172A' },
+    subtotalText: { fontSize: 12, color: '#94A3B8', fontWeight: '500' },
     
-    checkoutButton: { 
-        flexDirection: 'row', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        paddingVertical: SIZES.medium, 
-        borderRadius: SIZES.radius, 
-        gap: SIZES.small, 
-        height: 56,
-        flex: 1,
-        marginLeft: SIZES.medium,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
-        shadowRadius: 6,
-        elevation: 8,
-    },
-    checkoutButtonDisabled: { 
-        backgroundColor: COLORS.disabled,
-        shadowOpacity: 0.1,
-        elevation: 2,
-    },
-    checkoutButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: SIZES.body, textTransform: 'uppercase' },
+    checkoutButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, height: 54, borderRadius: 27, gap: 10, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 6 },
+    checkoutButtonDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0, elevation: 0 },
+    checkoutButtonText: { color: '#FFF', fontWeight: 'bold', fontSize: 15, letterSpacing: 0.5 },
 });
 
 export default CreateSaleScreen;

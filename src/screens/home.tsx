@@ -163,6 +163,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                     <ToolCard icon="user-plus" title="Nuevo Cliente" color="#10B981" onPress={() => navigation.navigate('AddClient')} />
                     <ToolCard icon="map" title="Ruta" color="#F59E0B" onPress={() => navigation.navigate('ClientMap')} />
                     <ToolCard icon="bar-chart-2" title="Reportes" color="#EC4899" onPress={() => navigation.navigate('Reports')} />
+                        <ToolCard icon="star" title="Promociones" color="#e7de3fff" onPress={() => navigation.navigate('Promotions')} />
                 </View>
 
                 {/* --- ÚLTIMAS VENTAS (Diseño Corregido) --- */}

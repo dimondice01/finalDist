@@ -41,6 +41,8 @@ export interface CartItem extends Product {
     quantity: number;
     comision: number;
     precioOriginal?: number;
+    isGift?: boolean; // Identifica si es un regalo automático
+    descuentoPorCantidadAplicado?: number; // Guarda el descuento prorrateado para el PDF
 }
 export interface Rubro {
     id: string;
