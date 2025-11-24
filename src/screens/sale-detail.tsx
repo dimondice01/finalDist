@@ -262,6 +262,7 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
         setIsDebtModalOpen(false); 
     }, [syncData]);
 
+    // 🔥🔥🔥 LÓGICA DE BORRADO OPTIMISTA (CORREGIDA) 🔥🔥🔥
     const handleDelete = () => {
         if (!sale) return;
         Alert.alert(
@@ -272,17 +273,27 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
                 { 
                     text: "Eliminar", 
                     style: "destructive",
-                    onPress: async () => {
-                        try {
-                            // @ts-ignore
-                            await deleteSaleAndRevertStock(sale.id, sale.items as any[]);
-                            // ✅ REFRESCAMOS DATOS Y LUEGO SALIMOS
-                            // (Esto ayuda a que Home se entere si el contexto tardó en actualizar)
-                            navigation.navigate('Home'); 
-                            Toast.show({ type: 'success', text1: 'Venta eliminada' });
-                        } catch (error) {
-                            Toast.show({ type: 'error', text1: 'Error al eliminar' });
-                        }
+                    onPress: () => {
+                        // 1. NAVEGACIÓN INMEDIATA (OPTIMISTA)
+                        // Volvemos a la pantalla anterior (Reports, ClientDebts, etc.)
+                        // sin esperar a la DB.
+                        navigation.goBack(); 
+                        
+                        // 2. FEEDBACK VISUAL
+                        Toast.show({ type: 'info', text1: 'Procesando eliminación...', position: 'bottom' });
+
+                        // 3. OPERACIÓN EN SEGUNDO PLANO (BACKGROUND)
+                        // Llamamos a la función del context. Como el context actualiza el estado local
+                        // antes o durante la transacción, la lista en 'Reports' se refrescará sola.
+                        // @ts-ignore
+                        deleteSaleAndRevertStock(sale.id, sale.items as any[])
+                            .then(() => {
+                                Toast.show({ type: 'success', text1: 'Venta eliminada y stock restaurado', position: 'bottom' });
+                            })
+                            .catch((error: any) => {
+                                console.error("Error al eliminar venta:", error);
+                                Toast.show({ type: 'error', text1: 'Error crítico', text2: 'No se pudo eliminar la venta.', position: 'bottom' });
+                            });
                     }
                 }
             ]
@@ -489,7 +500,7 @@ const styles = StyleSheet.create({
         shadowRadius: 12,
         elevation: 8,
     },
-    summaryTop: { marginBottom: 10 }, // Quitamos flex row de aquí
+    summaryTop: { marginBottom: 10 }, 
     summaryLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '600', letterSpacing: 1, marginBottom: 2 },
     summaryTotal: { color: 'white', fontSize: 32, fontWeight: '800' },
     
@@ -506,7 +517,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10, 
         paddingVertical: 6, 
         borderRadius: 20,
-        // Permitir que crezca si es necesario
         alignSelf: 'flex-start' 
     },
     statusTextLight: { fontSize: 11, fontWeight: '700', marginLeft: 6, textTransform: 'uppercase' },

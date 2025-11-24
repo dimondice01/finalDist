@@ -26,7 +26,13 @@ import Toast from 'react-native-toast-message';
 import { auth, dbContainer } from '../db/firebase-service';
 
 // --- Definición de Interfaces Estrictas ---
-// (Mantenido sin cambios salvo img)
+
+// ✅ NUEVO: Interfaz para Listas de Precios
+export interface PriceList {
+    id: string;
+    nombre: string;
+}
+
 export interface Product {
     id: string;
     nombre: string;
@@ -35,7 +41,9 @@ export interface Product {
     stock?: number;
     categoriaId?: string;
     comisionEspecifica?: number;
-    img?: string; // <--- ✅ CORRECCIÓN: Agregado soporte para imágenes
+    img?: string; 
+    // ✅ NUEVO: Mapa de precios adicionales { "Mayorista": 100, "Kiosco": 120 }
+    preciosExtra?: { [key: string]: number };
 }
 export interface CartItem extends Product {
     quantity: number;
@@ -62,6 +70,9 @@ export interface Client {
     rubroId?: string;
     vendedorAsignadoId?: string;
     
+    // ✅ NUEVO: Lista de precios asignada al cliente
+    listaPreciosAsignada?: string;
+
     // ✅ INICIO CAMBIOS AFIP (Punto 1: Clientes)
     arca?: boolean; // Se mantiene por retrocompatibilidad
     requiereFacturaAfip?: boolean; // Nuevo campo unificado para Facturación
@@ -170,6 +181,7 @@ export interface IDataContext {
     sales: Sale[];
     routes: Route[];
     rubros: Rubro[];
+    priceLists: PriceList[]; // ✅ NUEVO: Listas de precios disponibles
     syncData: () => Promise<void>;
     refreshAllData: () => Promise<void>;
     isLoading: boolean;
@@ -197,6 +209,7 @@ const defaultContextValue: IDataContext = {
     sales: [],
     routes: [],
     rubros: [],
+    priceLists: [], // ✅ Default vacío
     zones: [],
     updateClient: async () => {},
     syncData: async () => { console.warn("Llamada a syncData por defecto"); },
@@ -225,6 +238,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [sales, setSales] = useState<Sale[]>([]);
     const [routes, setRoutes] = useState<Route[]>([]);
     const [rubros, setRubros] = useState<Rubro[]>([]);
+    const [priceLists, setPriceLists] = useState<PriceList[]>([]); // ✅ NUEVO ESTADO
     
     // --- BANDERAS DE CARGA (Sin cambios) ---
     const [isLoading, setIsLoading] = useState(true);
@@ -260,13 +274,14 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    // --- Carga inicial (Sin cambios) ---
+    // --- Carga inicial ---
     useEffect(() => {
         const loadDataFromStorage = async () => {
             // ...
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
-                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros'];
+                // ✅ AGREGADO: 'priceLists' a las claves de AsyncStorage
+                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros', 'priceLists'];
                 const storedData = await AsyncStorage.multiGet(keys);
                 const dataMap = new Map(storedData);
 
@@ -306,6 +321,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setDataState('sales', setSales, true);
                 setDataState('routes', setRoutes, true);
                 setDataState('rubros', setRubros);
+                setDataState('priceLists', setPriceLists); // ✅ Carga local de listas
 
                 console.log("Datos locales cargados.");
             } catch (e) {
@@ -403,6 +419,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             const promosPromise = getDocs(promosQuery);
             const allVendorsPromise = getDocs(collection(dbInstance, 'vendedores'));
             const rubrosPromise = getDocs(collection(dbInstance, 'rubros'));
+            // ✅ NUEVO: Promesa para descargar listas de precios
+            const priceListsPromise = getDocs(collection(dbInstance, 'listas_precios'));
 
             let finalData: IDataContext = { ...defaultContextValue, isLoading: true };
 
@@ -468,8 +486,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     } as Sale;
             };
 
-            const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap] = await Promise.all([
-                productsPromise, categoriesPromise, promosPromise, allVendorsPromise, rubrosPromise
+            // ✅ AGREGADO: priceListsPromise
+            const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap, priceListsSnap] = await Promise.all([
+                productsPromise, categoriesPromise, promosPromise, allVendorsPromise, rubrosPromise, priceListsPromise
             ]);
             
             finalData.products = productsSnap.docs.map(processFirebaseDoc) as Product[];
@@ -485,6 +504,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
             finalData.vendors = vendorsSnap.docs.map(processFirebaseDoc) as Vendor[];
             finalData.rubros = rubrosSnap.docs.map(processFirebaseDoc) as Rubro[];
+            
+            // ✅ PROCESAR LISTAS
+            finalData.priceLists = priceListsSnap.docs.map(processFirebaseDoc) as PriceList[];
 
             // Queries condicionales
             if (userRole === 'Reparto') {
@@ -597,6 +619,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 AsyncStorage.setItem('sales', JSON.stringify(finalData.sales)), 
                 AsyncStorage.setItem('routes', JSON.stringify(finalData.routes)),
                 AsyncStorage.setItem('rubros', JSON.stringify(finalData.rubros)),
+                // ✅ NUEVO: Guardar listas
+                AsyncStorage.setItem('priceLists', JSON.stringify(finalData.priceLists)),
             ]);
 
             // Actualizar estado de React (Sin cambios)
@@ -609,6 +633,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             setSales(finalData.sales);
             setRoutes(finalData.routes);
             setRubros(finalData.rubros);
+            setPriceLists(finalData.priceLists); // ✅ Actualizar estado
 
             if (showToast) {
                 Toast.show({ type: 'success', text1: 'Datos Sincronizados', text2: 'La información ha sido actualizada. 👋', position: 'bottom', visibilityTime: 3000 });
@@ -642,6 +667,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         let categoryListener: () => void = () => {}; 
         let promotionListener: () => void = () => {}; 
         let rubroListener: () => void = () => {};
+        let priceListListener: () => void = () => {}; // ✅ Listener para listas
 
         const dbInstance = dbContainer.instance;
         if (!dbInstance) { return; }
@@ -682,6 +708,13 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setRubros(updatedRubros.filter(r => r.id));
             });
 
+            // ✅ NUEVO LISTENER: Listas de precios
+            const priceListsQueryRef = collection(dbInstance, 'listas_precios');
+            priceListListener = onSnapshot(priceListsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+                const updatedLists = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as PriceList[];
+                setPriceLists(updatedLists);
+            });
+
             timeoutId = setTimeout(() => {
                 console.log('Timeout alcanzado. Forzando una verificación de datos.');
             }, 120000); 
@@ -693,6 +726,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             categoryListener();
             promotionListener();
             rubroListener();
+            priceListListener(); // ✅ Limpiar listener
             if (timeoutId) {
                 clearTimeout(timeoutId);
             }
@@ -919,16 +953,24 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     
     const deleteSaleAndRevertStock = useCallback(async (saleId: string, items: CartItem[]) => {
         
-        console.log(`DataContext: Eliminando venta ${saleId}. Stock de Firebase será manejado por Cloud Function.`);
+        console.log(`DataContext: Eliminando venta ${saleId} de forma OPTIMISTA.`);
 
         const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
         if (!dbInstance) { throw new Error("DB no inicializada."); }
         const saleRef = doc(dbInstance, "ventas", saleId);
         
-        // 1. MUTACIÓN OPTIMISTA LOCAL (Stock Reversión)
-        reintegrarStockLocalmente(items);
+        // --- GUARDAMOS COPIA PARA ROLLBACK (Por si falla Internet o algo raro) ---
+        const saleToDelete = sales.find(s => s.id === saleId);
 
-        // 2. REMOTE OPERATION: Delete the document
+        // 1. MUTACIÓN OPTIMISTA (¡Aquí está la magia!)
+        // A) Revertimos el stock visualmente
+        reintegrarStockLocalmente(items);
+        
+        // B) 🔥 ELIMINAMOS LA VENTA DE LA LISTA VISUAL INMEDIATAMENTE 🔥
+        // Esto hace que desaparezca de Reports al instante.
+        setSales(prevSales => prevSales.filter(s => s.id !== saleId));
+
+        // 2. OPERACIÓN REMOTA (FIREBASE)
         try {
             const deletePromise = deleteDoc(saleRef); 
 
@@ -955,9 +997,15 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             console.error("Error al intentar eliminar la venta de Firebase:", error);
             // Si la eliminación remota falla, revertimos la mutación optimista local de stock
             reintegrarStockLocalmente(items.map(item => ({...item, quantity: -item.quantity} as CartItem)));
+            
+            // B) Restauramos la venta en la lista
+            if (saleToDelete) {
+                setSales(prevSales => [...prevSales, saleToDelete]);
+            }
+            
             throw error; 
         }
-    }, [isOffline, reintegrarStockLocalmente]);
+    }, [isOffline, reintegrarStockLocalmente, sales]);
 
 
     // ======================================================
@@ -1033,6 +1081,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         routes,
         rubros, 
         zones: availableZones,
+        priceLists, // ✅ EXPORTADO
         updateClient: updateClient, 
         syncData,
         refreshAllData,

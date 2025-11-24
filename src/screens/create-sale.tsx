@@ -137,11 +137,11 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
 });
 
 // --- Componente Memoizado para el Item de Producto (ESTILO IOS PREMIUM) ---
-const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }: {
+const ProductCard = memo(({ item, cart, promotions, client, handleAddProduct }: {
     item: Product,
     cart: CartItem[],
     promotions: Promotion[],
-    clientId: string | string[] | undefined,
+    client: Client | undefined, 
     handleAddProduct: (product: Product) => void
 }) => {
     if (!item || !item.id) return null;
@@ -153,25 +153,34 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
             .reduce((sum, c) => sum + c.quantity, 0);
     }, [cart, item.id]);
 
-    // Lógica visual de precio especial (unitario)
-    const { displayPrice, originalPrice, isPromo } = useMemo(() => {
+    // ✅ Lógica visual de precio especial (Listas + Promociones)
+    const { displayPrice, originalPrice, isPromo, appliedList } = useMemo(() => {
+        // 1. Precio Base según Lista del Cliente
         let price = item.precio;
-        let original = item.precio;
+        let listName = null;
+
+        if (client?.listaPreciosAsignada && item.preciosExtra && item.preciosExtra[client.listaPreciosAsignada]) {
+            price = item.preciosExtra[client.listaPreciosAsignada];
+            listName = client.listaPreciosAsignada;
+        }
+
+        let original = price;
         let isPromo = false;
         
+        // 2. Aplicar Promoción (sobre el precio de lista)
         const promoAplicable = promotions.find(promo =>
             promo.tipo === 'precio_especial' &&
             promo.productoIds?.includes(item.id) &&
-            (!promo.clienteIds || promo.clienteIds.length === 0 || (clientId && promo.clienteIds.includes(clientId as string)))
+            (!promo.clienteIds || promo.clienteIds.length === 0 || (client && promo.clienteIds.includes(client.id)))
         );
         
         if (promoAplicable && promoAplicable.nuevoPrecio) {
             price = promoAplicable.nuevoPrecio;
-            original = item.precio;
+            original = listName ? (item.preciosExtra?.[listName] || item.precio) : item.precio; // Tachamos el precio de lista o base
             isPromo = true;
         }
-        return { displayPrice: price, originalPrice: original, isPromo };
-    }, [item, promotions, clientId]);
+        return { displayPrice: price, originalPrice: original, isPromo, appliedList: listName };
+    }, [item, promotions, client]);
 
     const handlePress = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -231,6 +240,12 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                             <Text style={productCardStyles.cardOriginalPrice}>${originalPrice.toLocaleString('es-AR')}</Text>
                         )}
                     </View>
+                    {/* Badge de Lista Aplicada */}
+                    {appliedList && !isPromo && (
+                        <Text style={{ fontSize: 10, color: COLORS.secondary, marginTop: 2, fontWeight: '600' }}>
+                            {appliedList}
+                        </Text>
+                    )}
                 </View>
 
                 <View style={productCardStyles.actionColumn}>
@@ -300,8 +315,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return vendors.find((v: Vendor) => v.firebaseAuthUid === currentUser.uid);
     }, [currentUser, vendors]);
 
+    // ✅ CORRECCIÓN: Devolvemos undefined en lugar de null
     const client = useMemo(() => {
-        if (!clientId || !clients) return null;
+        if (!clientId || !clients) return undefined;
         return clients.find((c: Client) => c.id === clientId) as (Client & { tipoDocumento: string, numeroDocumento: string, requiereFacturaAfip: boolean }) | undefined;
     }, [clientId, clients]);
 
@@ -311,12 +327,16 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         return selectedCategory ? selectedCategory.nombre : 'Todas las Categorías';
     }, [categoryFilter, categories]);
 
-    const getComision = useCallback((product: Product, quantity: number): number => {
+    // ✅ getComision Actualizado: Recibe 'effectivePrice' para calcular comisión sobre el precio real
+    const getComision = useCallback((product: Product, quantity: number, effectivePrice?: number): number => {
         if (isReposicion || isDevolucion) return 0;
         const comisionGeneral = currentVendedor?.comisionGeneral || 0;
-        const precio = product.precio || 0;
+        
+        // Usamos el precio efectivo si se pasa, sino el precio base del producto
+        const precio = effectivePrice !== undefined ? effectivePrice : (product.precio || 0);
         const costo = product.costo || 0;
         let comisionPorItem = 0;
+        
         if (product.comisionEspecifica && product.comisionEspecifica > 0) {
             comisionPorItem = product.comisionEspecifica;
         } else if (costo > 0 && precio > 0) {
@@ -329,24 +349,34 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     }, [currentVendedor, isReposicion, isDevolucion]);
 
 
-    // Efecto para cargar items del Catálogo
+    // ✅ Efecto para cargar items del Catálogo (RECALCULANDO PRECIOS SEGÚN LISTA)
     useEffect(() => {
         if (preselectedItems && preselectedItems.length > 0 && cart.length === 0 && !editMode) {
             const formattedItems: CartItem[] = preselectedItems.map((item) => {
                 const quantity = item.quantity || item.cantidad || 1;
-                const comision = getComision(item, quantity); 
+                
+                // 1. Recalcular precio base según lista del cliente
+                let effectivePrice = item.precio;
+                if (client?.listaPreciosAsignada && item.preciosExtra && item.preciosExtra[client.listaPreciosAsignada]) {
+                    effectivePrice = item.preciosExtra[client.listaPreciosAsignada];
+                }
+
+                // 2. Calcular comisión con este precio
+                const comision = getComision(item, quantity, effectivePrice); 
+                
                 return {
                     ...item,
+                    precio: effectivePrice, // Guardamos el precio correcto
                     quantity: quantity,
                     comision: comision,
-                    precioOriginal: item.precioOriginal ?? item.precio,
+                    precioOriginal: item.precioOriginal ?? effectivePrice, // Si venía con original bien, sino el nuevo
                     isGift: false 
                 };
             });
             setCart(formattedItems);
             Toast.show({ type: 'success', text1: 'Carrito Cargado', text2: `Se agregaron ${formattedItems.length} productos.`, position: 'bottom' });
         }
-    }, [preselectedItems, editMode, getComision]);
+    }, [preselectedItems, editMode, getComision, client]);
 
 
     // Efecto para editar venta
@@ -468,11 +498,20 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
 
 
     // --- Handlers UI ---
+    // ✅ handleAddProduct Actualizado: Detecta precio de lista y promo
     const handleAddProduct = useCallback((product: Product) => {
         const existingItem = cart.find(item => item.id === product.id && !item.isGift);
-        let precioFinal = product.precio;
-        let precioOriginal = product.precio;
         
+        // 1. Determinar Precio Base (Lista o General)
+        let precioBase = product.precio;
+        if (client?.listaPreciosAsignada && product.preciosExtra && product.preciosExtra[client.listaPreciosAsignada]) {
+            precioBase = product.preciosExtra[client.listaPreciosAsignada];
+        }
+
+        let precioFinal = precioBase;
+        let precioOriginal = precioBase;
+        
+        // 2. Aplicar Promoción
         if (!isReposicion && !isDevolucion) {
             const promoAplicable = promotions.find(promo =>
                 promo.tipo === 'precio_especial' &&
@@ -481,7 +520,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             );
             if (promoAplicable && promoAplicable.nuevoPrecio) {
                 precioFinal = promoAplicable.nuevoPrecio;
-                precioOriginal = product.precio;
+                precioOriginal = precioBase;
             }
         }
         setSelectedProduct({ ...product, precio: precioFinal, precioOriginal });
@@ -495,7 +534,9 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         if (!selectedProduct) return;
         
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        const comision = getComision(selectedProduct, quantity);
+        
+        // ✅ Calculamos comisión con el precio seleccionado (que ya incluye lógica de lista/promo)
+        const comision = getComision(selectedProduct, quantity, selectedProduct.precio);
         
         const cartItemToAdd: CartItem = { 
             ...selectedProduct, 
@@ -822,10 +863,10 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             item={item}
             cart={cart}
             promotions={promotions}
-            clientId={client?.id}
+            client={client} // ✅ Pasamos el objeto cliente completo
             handleAddProduct={handleAddProduct}
         />
-    ), [cart, promotions, client?.id, handleAddProduct]);
+    ), [cart, promotions, client, handleAddProduct]);
 
     if (isDataLoading && !client) {
         return (

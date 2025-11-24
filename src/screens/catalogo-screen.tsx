@@ -19,17 +19,15 @@ import {
   View
 } from 'react-native';
 
-// ✅ IMPORTANTE: Consumimos del Contexto, no de Firebase directo
-import { Product, useData } from '../../context/DataContext';
-import { COLORS, SIZES } from '../../styles/theme';
+import { PriceList, Product, useData } from '../../context/DataContext';
+import { COLORS } from '../../styles/theme';
 
-// (Eliminamos las interfaces locales Product/Category para usar las globales)
-
-// --- COMPONENTE DE TARJETA OPTIMIZADO (Sin cambios lógicos, solo props) ---
+// --- COMPONENTE DE TARJETA (Optimizado con Precio Dinámico) ---
 const ProductCard = React.memo(({ 
   item, 
   qty, 
   index, 
+  displayPrice, // ✅ Recibimos el precio calculado para mostrar
   onAdd, 
   onRemove,
   onImagePress, 
@@ -38,6 +36,7 @@ const ProductCard = React.memo(({
   item: Product, 
   qty: number, 
   index: number, 
+  displayPrice: number, // ✅ Nuevo prop
   onAdd: () => void, 
   onRemove: () => void,
   onImagePress: () => void,
@@ -68,14 +67,18 @@ const ProductCard = React.memo(({
               )}
               {qty > 0 && (
                   <View style={[styles.badgeContainer, { backgroundColor: COLORS.secondary }]}>
-                      <Text style={styles.badgeText}>{qty}</Text>
+                    <Text style={styles.badgeText}>{qty}</Text>
                   </View>
               )}
           </TouchableOpacity>
 
           <View style={styles.infoContainer}>
               <Text numberOfLines={2} style={styles.productName}>{item.nombre}</Text>
-              <Text style={[styles.productPrice, { color: COLORS.primary }]}>${item.precio.toFixed(2)}</Text>
+              
+              {/* Precio con estilo Premium */}
+              <Text style={[styles.productPrice, { color: COLORS.primary }]}>
+                  ${displayPrice.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+              </Text>
               
               {qty === 0 ? (
                   <TouchableOpacity style={styles.addButton} onPress={onAdd} activeOpacity={0.7}>
@@ -102,16 +105,62 @@ const ProductCard = React.memo(({
   );
 });
 
+// --- MODAL SELECTOR DE LISTA ---
+const PriceListSelectorModal = ({ visible, onClose, lists, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    lists: PriceList[]; 
+    selectedId: string;
+    onSelect: (id: string) => void;
+}) => {
+    const dataWithDefault = useMemo(() => [
+        { id: '', nombre: 'Precio Base (General)' }, 
+        ...lists
+    ], [lists]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+            <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
+                <View style={styles.modalContent}>
+                    <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>Seleccionar Lista de Precios</Text>
+                    </View>
+                    <FlatList 
+                        data={dataWithDefault} 
+                        keyExtractor={(item) => item.id || item.nombre} 
+                        renderItem={({ item }) => ( 
+                            <TouchableOpacity 
+                                style={styles.modalItem} 
+                                onPress={() => { onSelect(item.nombre === 'Precio Base (General)' ? '' : item.nombre); onClose(); }}
+                            >
+                                <Text style={[styles.modalItemText, (item.nombre === selectedId || (selectedId === '' && item.id === '')) ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>
+                                    {item.nombre}
+                                </Text>
+                                {(item.nombre === selectedId || (selectedId === '' && item.id === '')) && <Ionicons name="checkmark" size={20} color={COLORS.primary} />}
+                            </TouchableOpacity>
+                        )}
+                        ItemSeparatorComponent={() => <View style={styles.separatorModal} />} 
+                    />
+                </View>
+            </TouchableOpacity>
+        </Modal>
+    );
+};
+
 export default function CatalogoScreen() {
   const navigation = useNavigation();
   
-  // ✅ CORRECCIÓN MAESTRA: Usamos los datos globales ya cargados
-  const { products, categories, isLoading } = useData(); 
+  // ✅ EXTRAEMOS priceLists DEL CONTEXTO
+  const { products, categories, isLoading, priceLists } = useData(); 
 
-  // --- Estados Locales de UI ---
+  // --- Estados Locales ---
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({}); 
+
+  // ✅ ESTADO PARA LA LISTA SELECCIONADA (Visualización)
+  const [selectedPriceList, setSelectedPriceList] = useState(''); // '' = Base
+  const [priceModalVisible, setPriceModalVisible] = useState(false);
 
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [qtyModalVisible, setQtyModalVisible] = useState(false);
@@ -119,6 +168,14 @@ export default function CatalogoScreen() {
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
   const bottomBarAnim = useRef(new Animated.Value(150)).current; 
+
+  // --- Helper para obtener precio según lista ---
+  const getProductPrice = (product: Product) => {
+      if (selectedPriceList && product.preciosExtra && product.preciosExtra[selectedPriceList]) {
+          return Number(product.preciosExtra[selectedPriceList]);
+      }
+      return Number(product.precio);
+  };
 
   // --- Animación Barra Inferior ---
   useEffect(() => {
@@ -149,20 +206,13 @@ export default function CatalogoScreen() {
     });
   };
 
-  const addToCart = (id: string) => {
-    updateCartQty(id, (cart[id] || 0) + 1);
-  };
-
-  const removeFromCart = (id: string) => {
-    updateCartQty(id, (cart[id] || 0) - 1);
-  };
+  const addToCart = (id: string) => { updateCartQty(id, (cart[id] || 0) + 1); };
+  const removeFromCart = (id: string) => { updateCartQty(id, (cart[id] || 0) - 1); };
 
   const handleManualQtySubmit = () => {
     if (editingProductId) {
         const qty = parseInt(tempQty, 10);
-        if (!isNaN(qty)) {
-            updateCartQty(editingProductId, qty);
-        }
+        if (!isNaN(qty)) updateCartQty(editingProductId, qty);
     }
     setQtyModalVisible(false);
     setTempQty('');
@@ -175,10 +225,13 @@ export default function CatalogoScreen() {
       setQtyModalVisible(true);
   };
 
+  // ✅ Total calculado con la lista seleccionada (Estimación)
   const getTotalPrice = () => {
     return Object.entries(cart).reduce((total, [id, qty]) => {
       const product = products.find(p => p.id === id);
-      return total + (product ? product.precio * qty : 0);
+      if (!product) return total;
+      const price = getProductPrice(product);
+      return total + (price * qty);
     }, 0);
   };
 
@@ -187,7 +240,6 @@ export default function CatalogoScreen() {
       const product = products.find(p => p.id === id);
       return { ...product, cantidad: quantity }; 
     });
-
     // @ts-ignore 
     navigation.navigate('SelectClientForSale', { cartItems: itemsForSale });
   };
@@ -198,7 +250,21 @@ export default function CatalogoScreen() {
       
       {/* HEADER */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Catálogo</Text>
+        <View style={styles.headerTopRow}>
+            <Text style={styles.headerTitle}>Catálogo</Text>
+            
+            {/* ✅ BOTÓN SELECTOR DE LISTA (Estilo Pill) */}
+            <TouchableOpacity 
+                style={styles.priceListPill} 
+                onPress={() => setPriceModalVisible(true)}
+            >
+                <Ionicons name="pricetag" size={14} color={COLORS.secondary} />
+                <Text style={styles.priceListText} numberOfLines={1}>
+                    {selectedPriceList || 'Precio Base'}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+        </View>
         
         {/* BARRA DE BÚSQUEDA */}
         <View style={styles.searchBar}>
@@ -229,10 +295,7 @@ export default function CatalogoScreen() {
                     const isActive = (selectedCategory === null && item.id === 'all') || selectedCategory === item.id;
                     return (
                         <TouchableOpacity 
-                            style={[
-                                styles.chip, 
-                                isActive && { backgroundColor: COLORS.primary, borderColor: COLORS.primary } 
-                            ]}
+                            style={[styles.chip, isActive && styles.chipActive]}
                             onPress={() => setSelectedCategory(item.id === 'all' ? null : item.id)}
                         >
                             <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{item.nombre}</Text>
@@ -255,6 +318,7 @@ export default function CatalogoScreen() {
             item={item} 
             index={index} 
             qty={cart[item.id] || 0}
+            displayPrice={getProductPrice(item)} // ✅ Pasamos precio calculado
             onAdd={() => addToCart(item.id)}
             onRemove={() => removeFromCart(item.id)}
             onImagePress={() => setZoomImage(item.img || null)}
@@ -273,7 +337,7 @@ export default function CatalogoScreen() {
       {/* BARRA INFERIOR FLOTANTE */}
       <Animated.View style={[styles.bottomBar, { transform: [{ translateY: bottomBarAnim }] }]}>
          <View style={styles.bottomBarInfo}>
-             <Text style={styles.totalLabel}>Total Estimado:</Text>
+             <Text style={styles.totalLabel}>Total Estimado ({selectedPriceList || 'Base'}):</Text>
              <Text style={styles.totalValue}>${getTotalPrice().toFixed(2)}</Text>
              <Text style={styles.totalItems}>{Object.values(cart).reduce((a, b) => a + b, 0)} unidades</Text>
          </View>
@@ -281,8 +345,8 @@ export default function CatalogoScreen() {
             style={[styles.checkoutButton, { backgroundColor: COLORS.primary }]} 
             onPress={handleContinue}
          >
-             <Text style={styles.checkoutButtonText}>Seleccionar Cliente</Text>
-             <Ionicons name="person-outline" size={18} color="white" />
+             <Text style={styles.checkoutButtonText}>Continuar</Text>
+             <Ionicons name="arrow-forward" size={18} color="white" />
          </TouchableOpacity>
       </Animated.View>
 
@@ -330,114 +394,122 @@ export default function CatalogoScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* --- MODAL SELECTOR DE LISTA --- */}
+      <PriceListSelectorModal 
+        visible={priceModalVisible} 
+        onClose={() => setPriceModalVisible(false)} 
+        lists={priceLists} 
+        selectedId={selectedPriceList} 
+        onSelect={setSelectedPriceList} 
+      />
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.backgroundStart },
+  container: { flex: 1, backgroundColor: '#F9FAFB' }, // Fondo gris muy claro estilo iOS
   
   // HEADER
   header: { 
-    paddingHorizontal: SIZES.medium, 
-    paddingTop: (StatusBar.currentHeight || 0) + 10, 
-    paddingBottom: 10, 
-    backgroundColor: COLORS.backgroundEnd, 
+    paddingHorizontal: 16, 
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 10 : 10, 
+    paddingBottom: 12, 
+    backgroundColor: '#FFFFFF', 
     borderBottomWidth: 1, 
-    borderBottomColor: COLORS.glassBorder, 
-    elevation: 2, 
+    borderBottomColor: '#F1F5F9', 
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3,
     zIndex: 10 
   },
-  headerTitle: { 
-    fontSize: SIZES.h2, 
-    fontWeight: 'bold', 
-    color: COLORS.textPrimary, 
-    marginBottom: 10 
-  },
+  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E293B' },
   
+  // PILL PRECIO
+  priceListPill: {
+      flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', 
+      paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, gap: 6
+  },
+  priceListText: { fontSize: 13, fontWeight: '600', color: '#475569', maxWidth: 120 },
+
   // BUSCADOR
   searchBar: { 
-    flexDirection: 'row', 
-    backgroundColor: COLORS.backgroundStart, 
-    borderRadius: SIZES.radius, 
-    paddingHorizontal: SIZES.medium, 
-    height: 50, 
-    alignItems: 'center', 
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: COLORS.glassBorder,
+    flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 12, 
+    height: 44, alignItems: 'center', marginBottom: 12
   },
-  searchInput: {
-    flex: 1,
-    fontSize: SIZES.body,
-    color: COLORS.textPrimary,
-    height: '100%'
-  },
+  searchInput: { flex: 1, fontSize: 15, color: '#1E293B', height: '100%' },
 
-  chip: { paddingHorizontal: 16, paddingVertical: 6, backgroundColor: COLORS.backgroundEnd, borderRadius: 20, marginRight: 8, borderWidth: 1, borderColor: '#e0e0e0', height: 32 },
-  chipText: { color: COLORS.textSecondary, fontWeight: '600' },
-  chipTextActive: { color: '#fff' },
+  // CHIPS
+  chip: { paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#F8FAFC', borderRadius: 20, marginRight: 8, borderWidth: 1, borderColor: '#E2E8F0', height: 32 },
+  chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  chipText: { color: '#64748B', fontWeight: '600', fontSize: 13 },
+  chipTextActive: { color: '#FFF' },
   
-  listContent: { padding: 8, paddingBottom: 100 },
+  listContent: { padding: 8, paddingBottom: 120 },
   
   // TARJETA
   cardContainer: { flex: 1, margin: 6, maxWidth: '48%' }, 
-  card: { backgroundColor: COLORS.backgroundEnd, borderRadius: 16, overflow: 'hidden', elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, height: 250 },
+  card: { 
+      backgroundColor: '#FFF', borderRadius: 16, overflow: 'hidden', height: 260,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 3
+  },
   
-  imageContainer: { height: 130, width: '100%', backgroundColor: '#f0f0f0', position: 'relative' },
+  imageContainer: { height: 140, width: '100%', backgroundColor: '#F8FAFC', position: 'relative', justifyContent: 'center', alignItems: 'center' },
   productImage: { width: '100%', height: '100%' },
-  placeholderImage: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  placeholderImage: { opacity: 0.5 },
   
-  badgeContainer: { position: 'absolute', top: 8, right: 8, borderRadius: 12, minWidth: 24, height: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6, zIndex: 2 },
-  badgeText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
+  badgeContainer: { position: 'absolute', top: 8, right: 8, borderRadius: 10, minWidth: 22, height: 22, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 5 },
+  badgeText: { color: 'white', fontWeight: 'bold', fontSize: 11 },
   
   infoContainer: { padding: 10, flex: 1, justifyContent: 'space-between' },
-  productName: { fontSize: 13, fontWeight: '600', color: COLORS.textPrimary, marginBottom: 4, height: 34 },
-  productPrice: { fontSize: 15, fontWeight: 'bold' },
+  productName: { fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 4, height: 36, lineHeight: 18 },
+  productPrice: { fontSize: 16, fontWeight: '800' },
   
   // BOTONES
-  addButton: { marginTop: 8, backgroundColor: '#f3f4f6', paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
-  addButtonText: { color: '#4b5563', fontWeight: '600', fontSize: 13 },
+  addButton: { marginTop: 8, backgroundColor: '#F1F5F9', paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
+  addButtonText: { color: '#475569', fontWeight: '700', fontSize: 12 },
   
-  qtyControls: { 
-      flexDirection: 'row', 
-      alignItems: 'center', 
-      justifyContent: 'space-between', 
-      marginTop: 8, 
-      borderRadius: 8, 
-      padding: 4,
-      height: 36 
-  },
-  qtyBtn: { paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center', height: '100%' },
-  qtyNumberContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 4, marginHorizontal: 2, height: 28 },
+  qtyControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, borderRadius: 8, padding: 3, height: 34 },
+  qtyBtn: { width: 28, alignItems: 'center', justifyContent: 'center' },
+  qtyNumberContainer: { flex: 1, alignItems: 'center' },
   qtyText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
   
-  emptyState: { alignItems: 'center', marginTop: 50 },
+  emptyState: { alignItems: 'center', marginTop: 60 },
   
   // BARRA INFERIOR
-  bottomBar: { position: 'absolute', bottom: 20, left: 16, right: 16, backgroundColor: '#1f2937', borderRadius: 16, flexDirection: 'row', alignItems: 'center', padding: 16, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5 },
+  bottomBar: { 
+      position: 'absolute', bottom: 24, left: 16, right: 16, 
+      backgroundColor: '#1E293B', borderRadius: 20, flexDirection: 'row', alignItems: 'center', padding: 16, 
+      shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 10 
+  },
   bottomBarInfo: { flex: 1 },
-  totalLabel: { color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' },
-  totalValue: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  totalItems: { color: '#d1d5db', fontSize: 12 },
-  checkoutButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
-  checkoutButtonText: { color: 'white', fontWeight: 'bold', marginRight: 6, fontSize: 13 },
+  totalLabel: { color: '#94A3B8', fontSize: 10, textTransform: 'uppercase', fontWeight: '700' },
+  totalValue: { color: '#FFF', fontSize: 20, fontWeight: '800' },
+  totalItems: { color: '#CBD5E1', fontSize: 12, fontWeight: '500' },
+  checkoutButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 14 },
+  checkoutButtonText: { color: 'white', fontWeight: 'bold', marginRight: 6, fontSize: 14 },
 
-  // MODAL IMAGEN
-  modalImageContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },
+  // MODALES
+  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalContent: { width: '85%', backgroundColor: 'white', borderRadius: 24, padding: 0, overflow: 'hidden', maxHeight: '60%' },
+  modalHeader: { padding: 20, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', alignItems: 'center' },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#1E293B' },
+  modalItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, alignItems: 'center' },
+  modalItemText: { fontSize: 16, color: '#475569' },
+  separatorModal: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 16 },
+
+  modalImageContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   fullImage: { width: '100%', height: '80%' },
-  closeImageBtn: { position: 'absolute', top: 40, right: 20, padding: 10, zIndex: 20 },
+  closeImageBtn: { position: 'absolute', top: 50, right: 20, padding: 10, zIndex: 20 },
 
-  // MODAL CANTIDAD
   modalQtyOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  modalQtyBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalQtyContent: { width: '80%', backgroundColor: 'white', borderRadius: 16, padding: 20, elevation: 5 },
-  modalQtyTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, textAlign: 'center', color: COLORS.textPrimary },
-  qtyInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, fontSize: 24, textAlign: 'center', marginBottom: 20, color: COLORS.textPrimary },
-  modalQtyButtons: { flexDirection: 'row', justifyContent: 'space-between' },
-  modalBtn: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center', marginHorizontal: 5 },
-  cancelBtn: { backgroundColor: '#f3f4f6' },
-  confirmBtn: { backgroundColor: COLORS.primary || '#008080' },
-  cancelBtnText: { color: '#666', fontWeight: '600' },
+  modalQtyBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalQtyContent: { width: '80%', backgroundColor: 'white', borderRadius: 24, padding: 24, elevation: 10 },
+  modalQtyTitle: { fontSize: 18, fontWeight: '800', marginBottom: 20, textAlign: 'center', color: '#1E293B' },
+  qtyInput: { borderWidth: 2, borderColor: COLORS.primary, borderRadius: 12, padding: 10, fontSize: 28, textAlign: 'center', marginBottom: 24, color: '#1E293B', fontWeight: 'bold' },
+  modalQtyButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  modalBtn: { flex: 1, padding: 14, borderRadius: 12, alignItems: 'center' },
+  cancelBtn: { backgroundColor: '#F1F5F9' },
+  confirmBtn: { backgroundColor: COLORS.primary },
+  cancelBtnText: { color: '#64748B', fontWeight: '700' },
   confirmBtnText: { color: 'white', fontWeight: 'bold' },
 });
