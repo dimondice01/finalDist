@@ -136,7 +136,7 @@ const CategorySelectorModal = memo(({ visible, onClose, categories, selectedId, 
     );
 });
 
-// --- Componente Memoizado para el Item de Producto ---
+// --- Componente Memoizado para el Item de Producto (ESTILO IOS PREMIUM) ---
 const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }: {
     item: Product,
     cart: CartItem[],
@@ -193,19 +193,25 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
             activeOpacity={0.7}
             disabled={noStock} 
         >
-            {/* Diseño Estilo iOS: Limpio, Sombra Suave */}
-            <View style={productCardStyles.contentContainer}>
+            <View style={productCardStyles.cardContent}>
                 <View style={productCardStyles.infoColumn}>
                     <Text style={productCardStyles.cardTitle} numberOfLines={2}>{item.nombre}</Text>
                     
                     <View style={productCardStyles.metaRow}>
-                        <Text style={[
-                            productCardStyles.stockText, 
-                            lowStock && !noStock && productCardStyles.stockTextLow,
-                            noStock && productCardStyles.stockTextNoStock
+                        <View style={[
+                            productCardStyles.stockBadge,
+                            lowStock && !noStock ? { backgroundColor: '#FEF3C7' } : {},
+                            noStock ? { backgroundColor: '#FEE2E2' } : {}
                         ]}>
-                            Stock: {stock}
-                        </Text>
+                            <Text style={[
+                                productCardStyles.stockText, 
+                                lowStock && !noStock && productCardStyles.stockTextLow,
+                                noStock && productCardStyles.stockTextNoStock
+                            ]}>
+                                {noStock ? 'Sin Stock' : `Stock: ${stock}`}
+                            </Text>
+                        </View>
+
                         {isPromo && (
                             <View style={productCardStyles.promoBadge}>
                                 <Feather name="zap" size={10} color={COLORS.white} />
@@ -217,7 +223,7 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                     <View style={productCardStyles.priceRow}>
                         <Text style={[
                             productCardStyles.cardPrice, 
-                            { color: isPromo ? COLORS.primary : '#1C1C1E' }
+                            { color: isPromo ? COLORS.primary : '#1F2937' }
                         ]}>
                             ${displayPrice.toLocaleString('es-AR')}
                         </Text>
@@ -227,7 +233,6 @@ const ProductCard = memo(({ item, cart, promotions, clientId, handleAddProduct }
                     </View>
                 </View>
 
-                {/* Columna de Acción Derecha */}
                 <View style={productCardStyles.actionColumn}>
                     {quantityInCart > 0 ? (
                         <View style={productCardStyles.quantityBadge}>
@@ -350,7 +355,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             const saleToEdit = sales.find((s: BaseSale) => s.id === saleId);
             if (saleToEdit) {
                 setOriginalSale(saleToEdit);
-                // Al editar, aseguramos que precioOriginal esté seteado
                 const cartItems = (saleToEdit.items || []).map((item: CartItem) => ({
                     ...item,
                     precioOriginal: item.precioOriginal ?? item.precio
@@ -402,7 +406,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         const requiredGifts = new Map<string, number>();
 
         giftPromos.forEach(promo => {
-            // Contar triggers en el carrito (solo items MANUALES)
             const triggerItems = newCart.filter(item => promo.productoIds?.includes(item.id) && !item.isGift);
             const totalTriggerQty = triggerItems.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -421,7 +424,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             }
         });
 
-        // Borrar o actualizar regalos existentes
         newCart = newCart.map(item => {
             if (item.isGift) {
                 const originalId = item.id.replace('gift_', '');
@@ -442,7 +444,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             return item;
         }).filter(Boolean) as CartItem[];
 
-        // Agregar nuevos regalos
         requiredGifts.forEach((qty, giftId) => {
             const productData = allProducts.find(p => p.id === giftId);
             if (productData) {
@@ -452,7 +453,6 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     id: `gift_${giftId}`,
                     nombre: `(REGALO) ${productData.nombre}`, 
                     quantity: qty,
-                    // IMPORTANTE: Precio real aquí, se descuenta 100% en el cálculo final
                     precio: productData.precio, 
                     precioOriginal: productData.precio,
                     costo: productData.costo,
@@ -525,14 +525,15 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setCurrentQuantity('1');
     }, [selectedProduct]);
 
-    // ============================================================================
-    // 💰💰 LÓGICA DE TOTALES Y DESCUENTOS (FIXED) 💰💰
+   // ============================================================================
+    // 💰💰 LÓGICA DE TOTALES Y DESCUENTOS (BLINDADA Y ESTRICTA) 💰💰
     // ============================================================================
     const { subtotal, totalComision, totalCosto, totalFinal, totalDescuentoPromociones, itemsConDescuentosAplicados } = useMemo(() => {
+        // CASO ESPECIAL: Reposición o Devolución (Costos directos, sin venta pública)
         if (isReposicion || isDevolucion) {
-            const costo = cart.reduce((acc, item) => acc + (item.costo || 0) * item.quantity, 0);
+            const costo = cart.reduce((acc, item) => acc + (Number(item.costo) || 0) * Number(item.quantity), 0);
             return {
-                subtotal: 0,
+                subtotal: 0, 
                 totalComision: 0,
                 totalCosto: costo,
                 totalFinal: 0,
@@ -541,61 +542,73 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             };
         }
 
-        let sub = 0;
-        let comision = 0;
-        let costo = 0;
-        let totalDescuentoVisual = 0; 
+        // INICIALIZACIÓN DE ACUMULADORES
+        let subTotalBruto = 0; // Esto acumulará Precio LISTA * Cantidad
+        let comisionTotal = 0;
+        let costoTotal = 0;
+        
+        // Mapa para rastrear descuentos por ID de producto
         const itemDiscounts = new Map<string, number>(); 
 
-        // 1. Subtotales BASE usando Precio ORIGINAL (Para que el ticket muestre el valor real antes de desc)
+        // 1. PRIMERA PASADA: CÁLCULO DE SUBTOTAL BRUTO (PRECIO LISTA) Y GAP DE PRECIOS
         cart.forEach(item => {
-            const basePrice = item.precioOriginal ?? item.precio;
-            sub += basePrice * item.quantity;
-            comision += item.comision;
-            costo += (item.costo || 0) * item.quantity;
+            const qty = Number(item.quantity || 0);
+            // IMPORTANTE: Priorizamos precioOriginal. Si no existe, usamos precio actual.
+            // Esto asegura que el subtotal se base en el precio "de lista".
+            const precioLista = Number(item.precioOriginal) > 0 ? Number(item.precioOriginal) : Number(item.precio);
+            const precioCobrado = Number(item.precio);
+            const costoUnitario = Number(item.costo || 0);
+
+            // Acumulamos el Subtotal BRUTO
+            subTotalBruto += precioLista * qty;
             
-            // Si hay precio especial, la diferencia se suma al descuento total visual
-            if (basePrice > item.precio) {
-                totalDescuentoVisual += (basePrice - item.precio) * item.quantity;
+            // Acumulamos costos y comisiones
+            comisionTotal += Number(item.comision || 0);
+            costoTotal += costoUnitario * qty;
+            
+            // DETECCIÓN DE PRECIO ESPECIAL (GAP):
+            // Si el precio de lista es mayor al cobrado (ej: Promo manual o precio especial), la diferencia es descuento.
+            if (precioLista > precioCobrado) {
+                const gapDiscount = (precioLista - precioCobrado) * qty;
+                const current = itemDiscounts.get(item.id) || 0;
+                itemDiscounts.set(item.id, current + gapDiscount);
             }
         });
 
+        // 2. SEGUNDA PASADA: CÁLCULO DE PROMOCIONES COMPLEJAS (Lleva X Paga Y, Porcentajes)
         const manualItems = cart.filter(i => !i.isGift);
 
         promotions.forEach(promo => {
+            // Validar cliente
             if (promo.clienteIds && promo.clienteIds.length > 0 && client && !promo.clienteIds.includes(client.id)) return;
             
             const matchingItems = manualItems.filter(item => promo.productoIds?.includes(item.id));
             if (matchingItems.length === 0) return;
 
-            const totalQty = matchingItems.reduce((sum, item) => sum + item.quantity, 0);
+            const totalQty = matchingItems.reduce((sum, item) => sum + Number(item.quantity), 0);
 
-            // LLEVA X PAGA Y (Agrupado y Descontando los más baratos del grupo total)
+            // --- LLEVA X PAGA Y ---
             if (promo.tipo === 'LLEVA_X_PAGA_Y' && promo.condicion?.cantidadMinima && promo.beneficio?.cantidadAPagar) {
-                const X = promo.condicion.cantidadMinima;
-                const Y = promo.beneficio.cantidadAPagar;
+                const X = Number(promo.condicion.cantidadMinima);
+                const Y = Number(promo.beneficio.cantidadAPagar);
                 
-                if (totalQty >= X) {
+                if (totalQty >= X && X > 0) {
                     const itemsGratisPorLote = X - Y;
                     const lotes = Math.floor(totalQty / X);
                     const totalGratis = lotes * itemsGratisPorLote;
 
                     if (totalGratis > 0) {
-                        // Expandimos todas las unidades para ordenar por precio y descontar las baratas
+                        // Aplanamos unidades para descontar las más baratas
                         let allUnits: { id: string, price: number }[] = [];
                         matchingItems.forEach(item => {
-                            // Usamos el precio "actual" de venta (puede ser el especial) para calcular el descuento monetario
-                            const unitPrice = item.precio; 
-                            for(let i=0; i<item.quantity; i++) allUnits.push({ id: item.id, price: unitPrice });
+                            const unitPrice = Number(item.precio); // Usamos precio actual para descontar
+                            const q = Number(item.quantity);
+                            for(let i=0; i<q; i++) allUnits.push({ id: item.id, price: unitPrice });
                         });
                         
-                        // Orden ascendente (baratos primero)
-                        allUnits.sort((a, b) => a.price - b.price);
-
-                        // Tomar las N primeras
+                        allUnits.sort((a, b) => a.price - b.price); // Baratos primero
                         const freeUnits = allUnits.slice(0, totalGratis);
 
-                        // Acumular valor de descuento por ID
                         freeUnits.forEach(unit => {
                             const current = itemDiscounts.get(unit.id) || 0;
                             itemDiscounts.set(unit.id, current + unit.price);
@@ -603,14 +616,14 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                     }
                 }
             } 
-            // DESCUENTO %
+            // --- DESCUENTO % POR CANTIDAD ---
             else if (promo.tipo === 'DESCUENTO_POR_CANTIDAD' && promo.condicion?.cantidadMinima) {
-                const minQty = promo.condicion.cantidadMinima;
-                const pct = promo.beneficio?.porcentajeDescuento || 0;
+                const minQty = Number(promo.condicion.cantidadMinima);
+                const pct = Number(promo.beneficio?.porcentajeDescuento || 0);
 
                 if (totalQty >= minQty && pct > 0) {
                     matchingItems.forEach(item => {
-                        const itemTotal = item.precio * item.quantity;
+                        const itemTotal = Number(item.precio) * Number(item.quantity);
                         const discountVal = itemTotal * (pct / 100);
                         const curr = itemDiscounts.get(item.id) || 0;
                         itemDiscounts.set(item.id, curr + discountVal);
@@ -619,57 +632,45 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             }
         });
 
-        let totalDescuentoSurtido = 0;
+        // 3. TERCERA PASADA: CONSTRUCCIÓN FINAL Y SUMA DE DESCUENTOS
+        let totalDescuentoAcumulado = 0;
         
-        // 3. Construcción final de items para DB/PDF
         const itemsFinales = cart.map(item => {
-            const basePrice = item.precioOriginal ?? item.precio;
+            const precioLista = Number(item.precioOriginal) > 0 ? Number(item.precioOriginal) : Number(item.precio);
+            const qty = Number(item.quantity);
 
-            // Regalo: Descuento = 100% del precio base
+            // Si es regalo, el descuento es el 100% del precio de lista
             if (item.isGift) {
-                const giftDiscount = basePrice * item.quantity;
-                totalDescuentoSurtido += giftDiscount;
+                const giftDiscount = precioLista * qty;
+                totalDescuentoAcumulado += giftDiscount;
                 return {
                     ...item,
-                    // Guardamos precio ORIGINAL (alto)
-                    precio: basePrice, 
-                    precioOriginal: basePrice,
-                    // Guardamos descuento TOTAL (para que neto sea 0)
+                    precio: precioLista, // En BD guardamos precio lista
+                    precioOriginal: precioLista,
                     descuentoPorCantidadAplicado: giftDiscount
                 };
             }
             
-            // Descuentos por volumen
-            const volumeDiscount = itemDiscounts.get(item.id) || 0;
-            totalDescuentoSurtido += volumeDiscount;
-
-            // Diferencia por precio especial
-            let specialPriceDiscount = 0;
-            if (basePrice > item.precio) {
-                specialPriceDiscount = (basePrice - item.precio) * item.quantity;
-            }
-
-            const totalItemDiscount = volumeDiscount + specialPriceDiscount;
+            // Si es item normal, recuperamos sus descuentos acumulados
+            const totalDiscountForItem = itemDiscounts.get(item.id) || 0;
+            totalDescuentoAcumulado += totalDiscountForItem;
 
             return {
                 ...item,
-                // Guardamos precio ORIGINAL
-                precio: basePrice, 
-                precioOriginal: basePrice,
-                // Acumulamos TODO el descuento en este campo
-                descuentoPorCantidadAplicado: totalItemDiscount 
+                precio: precioLista, // En BD guardamos precio lista
+                precioOriginal: precioLista,
+                descuentoPorCantidadAplicado: totalDiscountForItem 
             };
         });
 
-        // Recalculamos el total de descuentos sumando los individuales de itemsFinales para precisión
-        const finalTotalDiscount = itemsFinales.reduce((acc, i) => acc + (i.descuentoPorCantidadAplicado || 0), 0);
-
+        // RESULTADO FINAL
+        // Total Final = Subtotal Bruto - Descuentos
         return {
-            subtotal: sub,
-            totalComision: comision,
-            totalCosto: costo,
-            totalFinal: sub - finalTotalDiscount,
-            totalDescuentoPromociones: finalTotalDiscount,
+            subtotal: subTotalBruto, // Ahora esto es el valor REAL de la mercancía sin descuentos
+            totalComision: comisionTotal,
+            totalCosto: costoTotal,
+            totalFinal: subTotalBruto - totalDescuentoAcumulado,
+            totalDescuentoPromociones: totalDescuentoAcumulado,
             itemsConDescuentosAplicados: itemsFinales
         };
 
@@ -943,12 +944,10 @@ const productCardStyles = StyleSheet.create({
         borderRadius: 16, 
         marginBottom: 12, 
         marginHorizontal: 4,
-        // iOS Shadows
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.06,
         shadowRadius: 8,
-        // Android
         elevation: 3,
         borderWidth: 1,
         borderColor: '#F2F4F7',
@@ -960,7 +959,7 @@ const productCardStyles = StyleSheet.create({
     },
     cardDisabled: { opacity: 0.5 },
     
-    contentContainer: {
+    cardContent: {
         flexDirection: 'row',
         padding: 16,
         alignItems: 'center',
@@ -970,8 +969,10 @@ const productCardStyles = StyleSheet.create({
 
     cardTitle: { fontSize: 16, fontWeight: '600', color: '#1E293B', marginBottom: 6, letterSpacing: 0.2 },
     
-    metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-    stockText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginRight: 8 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 },
+    
+    stockBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: '#F1F5F9' },
+    stockText: { fontSize: 12, color: '#64748B', fontWeight: '500' },
     stockTextLow: { color: '#D97706', fontWeight: '700' },
     stockTextNoStock: { color: '#EF4444', fontWeight: '800' },
     
@@ -1000,8 +1001,6 @@ const productCardStyles = StyleSheet.create({
         shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4
     },
     quantityText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
-    editIcon: { marginLeft: 0 }, // no longer used but kept for interface compat if needed
-    inCartControls: {}, // kept for compat
 });
 
 const modalStyles = StyleSheet.create({
