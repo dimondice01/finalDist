@@ -14,6 +14,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
 import { SelectClientForSaleScreenProps } from '../navigation/AppNavigator';
@@ -55,12 +56,51 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
     const { clients: allClients = [], isLoading } = useData();
     const [searchQuery, setSearchQuery] = useState('');
 
-    // 1. RECUPERAR EL CARRITO DEL CATÁLOGO (SI EXISTE)
-    // Si venimos del Home (botón "Nueva Venta"), esto será undefined.
-    // Si venimos del Catálogo, tendrá los productos.
-    const cartItemsFromCatalog = route.params?.cartItems;
+    // ==============================================================================
+    // 🧠 LÓGICA DE "TRADUCCIÓN" (El Cerebro de la Integración)
+    // ==============================================================================
+    const cartItemsFromCatalog = useMemo(() => {
+        // OPCIÓN 1: Venimos del Catálogo Interno (Ya es un objeto, lo usamos directo)
+        if (route.params?.cartItems) {
+            return route.params.cartItems;
+        }
+        
+        // OPCIÓN 2: Venimos de WhatsApp (Es un texto sucio, lo limpiamos aquí)
+        // El link trae: data="[{id:'...', quantity:5}]"
+        if (route.params?.data) {
+            try {
+                // 1. Convertimos Texto -> Objeto
+                const parsed = JSON.parse(route.params.data);
+                
+                // 2. Validamos que sea útil
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    // 3. Avisamos al usuario que funcionó
+                    setTimeout(() => {
+                        Toast.show({
+                            type: 'success',
+                            text1: 'Pedido de WhatsApp Recibido',
+                            text2: `Se cargaron ${parsed.length} productos automáticamente.`,
+                            position: 'bottom',
+                            visibilityTime: 4000
+                        });
+                    }, 500);
+                    return parsed; // Devolvemos los datos limpios
+                }
+            } catch (e) {
+                console.error("Error parseando pedido de WhatsApp:", e);
+                Toast.show({
+                    type: 'error',
+                    text1: 'Error de Enlace',
+                    text2: 'El formato del pedido de WhatsApp no es válido.',
+                    position: 'bottom'
+                });
+                return undefined;
+            }
+        }
+        return undefined;
+    }, [route.params]);
 
-    // Filtrado de clientes
+    // Filtrado de clientes (Igual que siempre)
     const filteredClients = useMemo(() => {
         let clientsToFilter = Array.isArray(allClients) ? allClients : [];
         clientsToFilter = clientsToFilter.filter(c => c && c.id);
@@ -77,14 +117,15 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
         return clientsToFilter;
     }, [searchQuery, allClients]);
 
-    // 2. NAVEGACIÓN A CREATE SALE CON DATOS
+    // 2. NAVEGACIÓN A CREATE SALE CON DATOS LIMPIOS
     const handleSelectClient = useCallback((client: Client) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         
-        // Navegamos pasando el ID del cliente Y los items preseleccionados (si hay)
+        // Aquí ocurre la magia: Le pasamos a CreateSale los datos ya procesados
+        // CreateSale ni se entera si vinieron de WhatsApp o del Catálogo interno.
         navigation.navigate('CreateSale', { 
             clientId: client.id,
-            // @ts-ignore - CreateSale debe aceptar esta prop en AppNavigator
+            // @ts-ignore - CreateSale recibe 'preselectedItems' que son los items limpios
             preselectedItems: cartItemsFromCatalog 
         }); 
     }, [navigation, cartItemsFromCatalog]);
@@ -114,17 +155,17 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
                     <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>
-                    {cartItemsFromCatalog ? 'ASIGNAR CARRITO A...' : 'SELECCIONAR CLIENTE'}
+                    {cartItemsFromCatalog ? 'ASIGNAR PEDIDO A...' : 'SELECCIONAR CLIENTE'}
                 </Text>
                  <View style={styles.headerButton} />
             </View>
 
-            {/* Aviso si traemos carrito */}
+            {/* Aviso Visual si hay un pedido en espera */}
             {cartItemsFromCatalog && cartItemsFromCatalog.length > 0 && (
                 <View style={styles.cartNotice}>
                     <Feather name="shopping-cart" size={16} color={COLORS.white} />
                     <Text style={styles.cartNoticeText}>
-                        {cartItemsFromCatalog.length} productos seleccionados
+                        PEDIDO EXTERNO: {cartItemsFromCatalog.length} items
                     </Text>
                 </View>
             )}
@@ -209,19 +250,25 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     
-    // Aviso de carrito
+    // Aviso de carrito (Estilo WhatsApp)
     cartNotice: {
-        backgroundColor: COLORS.primary,
+        backgroundColor: '#25D366', // Verde WhatsApp para identificar visualmente el origen
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: 8,
+        paddingVertical: 10,
         gap: 8,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+        elevation: 3,
     },
     cartNoticeText: {
         color: COLORS.white,
         fontWeight: 'bold',
         fontSize: 14,
+        letterSpacing: 0.5
     },
 
     controlsContainer: { 

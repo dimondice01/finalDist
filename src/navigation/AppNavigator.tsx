@@ -46,7 +46,8 @@ export type RootStackParamList = {
     SaleDetail: { saleId: string; clientName: string }; 
     AddClient: undefined;
     EditClient: { clientId: string}; 
-    SelectClientForSale: { cartItems?: any[] } | undefined;
+    // ✅ CORREGIDO: Agregamos 'data' para el link de WhatsApp
+    SelectClientForSale: { cartItems?: any[]; data?: string } | undefined;
     CreateSale: {
         clientId: string;
         clientName?: string; 
