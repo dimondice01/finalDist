@@ -10,6 +10,7 @@ import {
   Modal,
   Platform,
   SafeAreaView,
+  Share, // 1. Importamos Share
   StatusBar,
   StyleSheet,
   Text,
@@ -20,14 +21,18 @@ import {
 } from 'react-native';
 
 import { PriceList, Product, useData } from '../../context/DataContext';
+import { auth } from '../../db/firebase-service'; // 2. Importamos Auth
 import { COLORS } from '../../styles/theme';
 
-// --- COMPONENTE DE TARJETA (Optimizado con Precio Dinámico) ---
+// ⚠️ REEMPLAZA ESTO CON TU DOMINIO REAL DE VERCEL O FIREBASE HOSTING
+const WEB_APP_URL = "https://distribuidora-1de93.web.app"; 
+
+// --- COMPONENTE DE TARJETA ---
 const ProductCard = React.memo(({ 
   item, 
   qty, 
   index, 
-  displayPrice, // ✅ Recibimos el precio calculado para mostrar
+  displayPrice, 
   onAdd, 
   onRemove,
   onImagePress, 
@@ -36,7 +41,7 @@ const ProductCard = React.memo(({
   item: Product, 
   qty: number, 
   index: number, 
-  displayPrice: number, // ✅ Nuevo prop
+  displayPrice: number, 
   onAdd: () => void, 
   onRemove: () => void,
   onImagePress: () => void,
@@ -75,7 +80,6 @@ const ProductCard = React.memo(({
           <View style={styles.infoContainer}>
               <Text numberOfLines={2} style={styles.productName}>{item.nombre}</Text>
               
-              {/* Precio con estilo Premium */}
               <Text style={[styles.productPrice, { color: COLORS.primary }]}>
                   ${displayPrice.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
               </Text>
@@ -149,8 +153,6 @@ const PriceListSelectorModal = ({ visible, onClose, lists, selectedId, onSelect 
 
 export default function CatalogoScreen() {
   const navigation = useNavigation();
-  
-  // ✅ EXTRAEMOS priceLists DEL CONTEXTO
   const { products, categories, isLoading, priceLists } = useData(); 
 
   // --- Estados Locales ---
@@ -158,8 +160,7 @@ export default function CatalogoScreen() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({}); 
 
-  // ✅ ESTADO PARA LA LISTA SELECCIONADA (Visualización)
-  const [selectedPriceList, setSelectedPriceList] = useState(''); // '' = Base
+  const [selectedPriceList, setSelectedPriceList] = useState(''); 
   const [priceModalVisible, setPriceModalVisible] = useState(false);
 
   const [zoomImage, setZoomImage] = useState<string | null>(null);
@@ -169,7 +170,7 @@ export default function CatalogoScreen() {
 
   const bottomBarAnim = useRef(new Animated.Value(150)).current; 
 
-  // --- Helper para obtener precio según lista ---
+  // --- Helper para obtener precio ---
   const getProductPrice = (product: Product) => {
       if (selectedPriceList && product.preciosExtra && product.preciosExtra[selectedPriceList]) {
           return Number(product.preciosExtra[selectedPriceList]);
@@ -225,7 +226,6 @@ export default function CatalogoScreen() {
       setQtyModalVisible(true);
   };
 
-  // ✅ Total calculado con la lista seleccionada (Estimación)
   const getTotalPrice = () => {
     return Object.entries(cart).reduce((total, [id, qty]) => {
       const product = products.find(p => p.id === id);
@@ -244,6 +244,24 @@ export default function CatalogoScreen() {
     navigation.navigate('SelectClientForSale', { cartItems: itemsForSale });
   };
 
+  // 🚀 3. FUNCIÓN PARA COMPARTIR CATÁLOGO PERSONALIZADO
+  const handleShareCatalog = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    // Generamos el link: tudominio.com/catalogo/Lista?v=UID
+    const listPath = selectedPriceList ? `/${encodeURIComponent(selectedPriceList)}` : '';
+    const link = `${WEB_APP_URL}/catalogo${listPath}?v=${currentUser.uid}`;
+
+    try {
+      await Share.share({
+        message: `Hola! 👋 Te comparto mi catálogo digital${selectedPriceList ? ` (${selectedPriceList})` : ''}. Miralo y haceme tu pedido por acá: \n\n${link}`,
+      });
+    } catch (error) {
+      console.log("Error sharing:", error);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
@@ -253,17 +271,26 @@ export default function CatalogoScreen() {
         <View style={styles.headerTopRow}>
             <Text style={styles.headerTitle}>Catálogo</Text>
             
-            {/* ✅ BOTÓN SELECTOR DE LISTA (Estilo Pill) */}
-            <TouchableOpacity 
-                style={styles.priceListPill} 
-                onPress={() => setPriceModalVisible(true)}
-            >
-                <Ionicons name="pricetag" size={14} color={COLORS.secondary} />
-                <Text style={styles.priceListText} numberOfLines={1}>
-                    {selectedPriceList || 'Precio Base'}
-                </Text>
-                <Ionicons name="chevron-down" size={14} color={COLORS.textSecondary} />
-            </TouchableOpacity>
+            {/* Botonera Header (Lista + Compartir) */}
+            <View style={styles.headerActions}>
+                <TouchableOpacity 
+                    style={styles.priceListPill} 
+                    onPress={() => setPriceModalVisible(true)}
+                >
+                    <Text style={styles.priceListText} numberOfLines={1}>
+                        {selectedPriceList || 'Base'}
+                    </Text>
+                    <Ionicons name="chevron-down" size={12} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+
+                {/* ✅ BOTÓN COMPARTIR LINK */}
+                <TouchableOpacity 
+                    style={styles.shareBtn} 
+                    onPress={handleShareCatalog}
+                >
+                    <Ionicons name="share-outline" size={20} color="white" />
+                </TouchableOpacity>
+            </View>
         </View>
         
         {/* BARRA DE BÚSQUEDA */}
@@ -318,7 +345,7 @@ export default function CatalogoScreen() {
             item={item} 
             index={index} 
             qty={cart[item.id] || 0}
-            displayPrice={getProductPrice(item)} // ✅ Pasamos precio calculado
+            displayPrice={getProductPrice(item)}
             onAdd={() => addToCart(item.id)}
             onRemove={() => removeFromCart(item.id)}
             onImagePress={() => setZoomImage(item.img || null)}
@@ -408,7 +435,7 @@ export default function CatalogoScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' }, // Fondo gris muy claro estilo iOS
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
   
   // HEADER
   header: { 
@@ -424,12 +451,22 @@ const styles = StyleSheet.create({
   headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E293B' },
   
+  headerActions: { flexDirection: 'row', gap: 8 },
+
   // PILL PRECIO
   priceListPill: {
       flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', 
-      paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, gap: 6
+      paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, gap: 6,
+      borderWidth: 1, borderColor: '#E2E8F0'
   },
-  priceListText: { fontSize: 13, fontWeight: '600', color: '#475569', maxWidth: 120 },
+  priceListText: { fontSize: 12, fontWeight: '700', color: '#475569', maxWidth: 100 },
+
+  // BOTON SHARE
+  shareBtn: {
+      width: 36, height: 36, borderRadius: 18, backgroundColor: '#10B981', // Verde Whatsapp/Share
+      justifyContent: 'center', alignItems: 'center',
+      shadowColor: '#10B981', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3
+  },
 
   // BUSCADOR
   searchBar: { 

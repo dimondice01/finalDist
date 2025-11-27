@@ -1,6 +1,5 @@
 // src/screens/route-detail.tsx
-
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -48,7 +47,6 @@ const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => 
 };
 
 const optimizeInvoices = (invoices: Invoice[]): Invoice[] => {
-    // Filtramos solo los que tienen ubicación para ordenarlos
     const withLoc = invoices.filter(i => i.location?.latitude && i.location?.longitude);
     const withoutLoc = invoices.filter(i => !i.location?.latitude || !i.location?.longitude);
 
@@ -106,14 +104,14 @@ interface Invoice {
     saldoPendiente: number;
     pagoEfectivo?: number;
     pagoTransferencia?: number;
-    estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda';
+    estadoVisita: 'Pendiente' | 'Pagada' | 'Anulada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo';
     location?: { latitude: number; longitude: number };
     telefono?: string;
     items: ProductItem[];
 }
 
 // =================================================================================
-// MODAL DE GESTIÓN DE ENTREGA (LÓGICA ORIGINAL)
+// MODAL DE GESTIÓN DE ENTREGA (ESTILO CHECKOUT PREMIUM)
 // =================================================================================
 
 interface DeliveryModalProps {
@@ -158,12 +156,9 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                 } else {
                     Toast.show({ type: 'error', text1: 'Datos incompletos', text2: 'La venta no tiene productos.' });
                 }
-            } else {
-                 Toast.show({ type: 'error', text1: 'Error', text2: 'Venta no encontrada en base de datos.' });
             }
         } catch (error) {
             console.error("Error fetching sale:", error);
-            Toast.show({ type: 'error', text1: 'Error de conexión' });
         } finally {
             setIsLoadingItems(false);
         }
@@ -217,6 +212,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
         let newQty = item.quantity + delta;
         if (newQty < 0) newQty = 0;
         if (newQty > maxStock) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             Toast.show({ type: 'info', text1: 'Stock Máximo', text2: 'No puedes entregar más de lo cargado.' });
             newQty = maxStock;
         }
@@ -229,21 +225,23 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
     };
 
     const handleConfirmTransaction = async () => {
-        if (totalPagado > totalVentaNuevo) {
+        if (totalPagado > totalVentaNuevo + 10) { // Tolerancia $10
             Alert.alert("Montos Incorrectos", `El pago (${formatCurrency(totalPagado)}) supera el total (${formatCurrency(totalVentaNuevo)}).`);
             return;
         }
 
         setIsSaving(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
         try {
             await firestore().runTransaction(async (transaction) => {
                 const routeRef = firestore().collection('rutas').doc(routeId);
                 const saleRef = firestore().collection('ventas').doc(invoice.id);
 
                 const routeDoc = await transaction.get(routeRef);
-                if (!routeDoc.exists()) throw new Error("Ruta no encontrada");
+                if (!routeDoc.exists) throw new Error("Ruta no encontrada");
 
-                // 1. STOCK
+                // 1. STOCK (Devolución de lo NO entregado)
                 for (const item of items) {
                     if (!item.id) continue;
                     const cargado = item.originalQuantity || 0;
@@ -273,7 +271,8 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                     pagoEfectivo: parseFloat(pagoEfectivo.replace(',', '.')) || 0,
                     pagoTransferencia: parseFloat(pagoTransferencia.replace(',', '.')) || 0,
                     saldoPendiente: Number(saldoRestante),
-                    estado: nuevoEstado === 'Adeuda' ? 'Pendiente de Entrega' : nuevoEstado, 
+                    estado: nuevoEstado === 'Adeuda' || nuevoEstado === 'Pagada' ? nuevoEstado : 'Pendiente de Entrega', // Mapeo seguro
+                    estadoVisita: nuevoEstado, // Guardamos el estado interno de la visita
                     fechaUltimoPago: firestore.FieldValue.serverTimestamp()
                 };
                 transaction.update(saleRef, saleDataUpdate);
@@ -299,7 +298,6 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                 transaction.update(routeRef, { facturas: updatedFacturas });
             });
 
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             Toast.show({ type: 'success', text1: 'Entrega Registrada' });
             onSuccess();
             onClose();
@@ -315,6 +313,8 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={modalStyles.container}>
                 <View style={modalStyles.content}>
+                    
+                    {/* Header Modal */}
                     <View style={modalStyles.header}>
                         <View>
                             <Text style={modalStyles.title}>Gestionar Entrega</Text>
@@ -325,9 +325,10 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                         </TouchableOpacity>
                     </View>
 
+                    {/* Lista de Productos */}
                     <View style={modalStyles.sectionHeader}>
                         <Text style={modalStyles.sectionTitle}>PRODUCTOS</Text>
-                        <Text style={modalStyles.sectionInfo}>(Ajustar rechazos)</Text>
+                        <Text style={modalStyles.sectionInfo}>(Ajustar si hubo rechazo)</Text>
                     </View>
 
                     {isLoadingItems ? (
@@ -362,6 +363,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                         />
                     )}
 
+                    {/* Resumen Financiero */}
                     <View style={modalStyles.summaryContainer}>
                         <View style={modalStyles.summaryRow}>
                             <Text style={modalStyles.summaryLabel}>Original:</Text>
@@ -373,19 +375,50 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                         </View>
                     </View>
 
+                    {/* Sección Pago */}
                     <View style={modalStyles.paymentSection}>
                         <Text style={modalStyles.sectionTitle}>REGISTRAR PAGO</Text>
                         <View style={modalStyles.inputRow}>
-                            <Feather name="dollar-sign" size={20} color={COLORS.textSecondary} style={{ marginRight: 10 }} />
-                            <TextInput style={modalStyles.input} placeholder="Efectivo" keyboardType="numeric" value={pagoEfectivo} onChangeText={setPagoEfectivo} />
+                            <Feather name="dollar-sign" size={20} color={COLORS.success} style={{ marginRight: 10 }} />
+                            <TextInput 
+                                style={modalStyles.input} 
+                                placeholder="Efectivo" 
+                                keyboardType="numeric" 
+                                value={pagoEfectivo} 
+                                onChangeText={setPagoEfectivo} 
+                                placeholderTextColor={COLORS.textSecondary}
+                            />
                         </View>
                         <View style={modalStyles.inputRow}>
-                            <Feather name="credit-card" size={20} color={COLORS.textSecondary} style={{ marginRight: 10 }} />
-                            <TextInput style={modalStyles.input} placeholder="Transferencia" keyboardType="numeric" value={pagoTransferencia} onChangeText={setPagoTransferencia} />
+                            <Feather name="credit-card" size={20} color={COLORS.secondary} style={{ marginRight: 10 }} />
+                            <TextInput 
+                                style={modalStyles.input} 
+                                placeholder="Transferencia" 
+                                keyboardType="numeric" 
+                                value={pagoTransferencia} 
+                                onChangeText={setPagoTransferencia} 
+                                placeholderTextColor={COLORS.textSecondary}
+                            />
                         </View>
                     </View>
 
+                    {/* Footer Actions */}
                     <View style={modalStyles.footer}>
+                        <View style={modalStyles.statusPreview}>
+                            <Text style={modalStyles.statusLabel}>Estado final:</Text>
+                            <View style={[modalStyles.statusBadge, 
+                                nuevoEstado === 'Pagada' ? { backgroundColor: '#DCFCE7' } : 
+                                nuevoEstado === 'Adeuda' ? { backgroundColor: '#FEF3C7' } : 
+                                { backgroundColor: '#FEE2E2' }
+                            ]}>
+                                <Text style={[modalStyles.statusText, 
+                                    nuevoEstado === 'Pagada' ? { color: '#166534' } : 
+                                    nuevoEstado === 'Adeuda' ? { color: '#B45309' } : 
+                                    { color: '#991B1B' }
+                                ]}>{nuevoEstado.toUpperCase()}</Text>
+                            </View>
+                        </View>
+
                         <TouchableOpacity 
                             style={[modalStyles.confirmBtn, isSaving && { opacity: 0.7 }]}
                             onPress={handleConfirmTransaction}
@@ -399,7 +432,6 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
         </Modal>
     );
 };
-
 
 // =================================================================================
 // PANTALLA PRINCIPAL (ROUTE DETAIL)
@@ -454,8 +486,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         return { ...r, facturas: enrichedInvoices };
     }, [routeId, routes, clients, sales]);
 
-    // --- ACCIONES ---
-
     const handleSuccessUpdate = async () => {
         await syncData();
     };
@@ -506,12 +536,9 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 { 
                     text: "Sí, Optimizar (Distancia)", 
                     onPress: () => {
-                        // 1. Optimizamos
                         const optimized = optimizeInvoices(pendientes);
-                        // 2. Iniciamos navegación
                         startNavigation(optimized);
                         
-                        // 3. 🚀 AUTO-LAUNCH MAPA (Primer Cliente)
                         if (optimized.length > 0) {
                             const first = optimized[0];
                             setTimeout(() => {
@@ -534,13 +561,10 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         const nextIndex = navIndex + 1;
         if (nextIndex < navQueue.length) {
             setNavIndex(nextIndex);
-            
-            // 🚀 AUTO-LAUNCH MAPA (Siguiente Cliente)
             const nextItem = navQueue[nextIndex];
             setTimeout(() => {
                  handleNavigate(nextItem.location?.latitude, nextItem.location?.longitude, nextItem.clienteNombre);
-            }, 400); // Pequeño delay para que la UI se actualice primero
-            
+            }, 400); 
         } else {
             Alert.alert("Fin del Recorrido", "Has pasado por todas las paradas planificadas.");
             setIsNavMode(false);
@@ -572,7 +596,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const totalVisitas = routeData.facturas.length;
     const visitadas = routeData.facturas.filter(f => f.estadoVisita !== 'Pendiente').length;
 
-    // --- RENDERIZADO ---
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
@@ -588,7 +611,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 </View>
             </View>
 
-            {/* BOTÓN HERO: INICIAR RECORRIDO */}
             <View style={styles.heroContainer}>
                 <TouchableOpacity style={styles.startRouteBtn} onPress={handleStartRoute}>
                     <Feather name="navigation" size={20} color={COLORS.white} />
@@ -640,7 +662,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
 
                             <View style={styles.quickActions}>
                                 <TouchableOpacity style={styles.qaBtn} onPress={() => handleCall(item.telefono)}><Feather name="phone" size={18} color={COLORS.primary} /></TouchableOpacity>
-                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleWhatsApp(item.telefono, item.clienteNombre)}><Feather name="message-circle" size={18} color="#25D366" /></TouchableOpacity>
+                                <TouchableOpacity style={styles.qaBtn} onPress={() => handleWhatsApp(item.telefono, item.clienteNombre)}><Ionicons name="logo-whatsapp" size={18} color="#25D366" /></TouchableOpacity>
                                 <TouchableOpacity style={styles.qaBtn} onPress={() => handleNavigate(item.location?.latitude, item.location?.longitude, item.clienteNombre)}><Feather name="map" size={18} color={COLORS.secondary} /></TouchableOpacity>
                             </View>
 
@@ -663,17 +685,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 </View>
             )}
 
-            {/* MODAL GESTION DE ENTREGA (ORIGINAL) */}
-            {selectedInvoice && (
-                <DeliveryModal 
-                    visible={deliveryModalVisible}
-                    invoice={selectedInvoice}
-                    routeId={routeData.id}
-                    onClose={() => setDeliveryModalVisible(false)}
-                    onSuccess={handleSuccessUpdate}
-                />
-            )}
-
             {/* NUEVO MODAL DE NAVEGACIÓN (COPILOTO) */}
             <Modal visible={isNavMode} transparent animationType="slide" onRequestClose={() => setIsNavMode(false)}>
                 <View style={navStyles.overlay}>
@@ -690,7 +701,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
 
                         {navQueue[navIndex] && (() => {
                             const currentInv = navQueue[navIndex];
-                            // Obtenemos el estado actualizado desde routeData si existe para reflejar cambios
                             const freshInv = routeData.facturas.find(f => f.id === currentInv.id) || currentInv;
                             const isCompleted = freshInv.estadoVisita !== 'Pendiente';
 
@@ -740,6 +750,16 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     </View>
                 </View>
             </Modal>
+            
+            {selectedInvoice && (
+                <DeliveryModal 
+                    visible={deliveryModalVisible}
+                    invoice={selectedInvoice}
+                    routeId={routeData.id}
+                    onClose={() => setDeliveryModalVisible(false)}
+                    onSuccess={handleSuccessUpdate}
+                />
+            )}
 
         </SafeAreaView>
     );
@@ -773,8 +793,8 @@ const navStyles = StyleSheet.create({
 
 const modalStyles = StyleSheet.create({
     container: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-    content: { backgroundColor: '#F2F2F7', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', paddingBottom: 30 },
-    header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+    content: { backgroundColor: '#F9FAFB', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', paddingBottom: 30 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
     title: { fontSize: 20, fontWeight: 'bold', color: COLORS.textPrimary },
     subtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
     closeBtn: { padding: 5 },
@@ -782,7 +802,7 @@ const modalStyles = StyleSheet.create({
     sectionTitle: { fontSize: 12, fontWeight: '900', color: '#8E8E93', letterSpacing: 1 },
     sectionInfo: { fontSize: 11, color: COLORS.primary },
     list: { maxHeight: 250 },
-    itemRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, marginHorizontal: 20, marginBottom: 8, borderRadius: 12 },
+    itemRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, marginHorizontal: 20, marginBottom: 8, borderRadius: 12, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, shadowOffset: {width: 0, height: 2} },
     itemName: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
     itemPriceUnit: { fontSize: 12, color: COLORS.textSecondary },
     qtyContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F2F2F7', borderRadius: 8, marginHorizontal: 10 },
@@ -790,14 +810,18 @@ const modalStyles = StyleSheet.create({
     qtyBtnDisabled: { backgroundColor: '#F2F2F7', opacity: 0.3 },
     qtyText: { width: 30, textAlign: 'center', fontWeight: 'bold', fontSize: 14 },
     itemSubtotal: { width: 70, textAlign: 'right', fontWeight: 'bold', fontSize: 14 },
-    summaryContainer: { padding: 20, backgroundColor: '#FFF', marginVertical: 10 },
+    summaryContainer: { padding: 20, backgroundColor: '#FFF', marginVertical: 10, borderRadius: 12, marginHorizontal: 20 },
     summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
     summaryLabel: { fontSize: 14, color: COLORS.textSecondary },
     summaryValue: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary },
     paymentSection: { paddingHorizontal: 20 },
     inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 15, height: 50, marginBottom: 10, borderWidth: 1, borderColor: '#E5E5EA' },
     input: { flex: 1, fontSize: 16, color: COLORS.textPrimary, height: '100%' },
-    footer: { padding: 20, backgroundColor: '#FFF', marginTop: 10 },
+    footer: { padding: 20, backgroundColor: '#FFF', marginTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
+    statusPreview: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15},
+    statusLabel: {fontSize: 14, color: COLORS.textSecondary},
+    statusBadge: {paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8},
+    statusText: {fontWeight: 'bold', fontSize: 12},
     confirmBtn: { backgroundColor: COLORS.primary, height: 50, borderRadius: 14, justifyContent: 'center', alignItems: 'center', shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
     confirmBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }
 });
