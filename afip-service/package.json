@@ -17,5 +17,8 @@
     "soap": "^1.6.0",
     "xml-crypto": "^6.1.2",
     "xmlbuilder": "^15.1.1"
+  },
+  "devDependencies": {
+    "firebase-tools": "^14.26.0"
   }
 }

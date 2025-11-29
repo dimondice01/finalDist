@@ -1,7 +1,8 @@
 /**
  * afip-service/index.js
- * Servicio AFIP Homologación: WSAA + WSFE Dummy
- * INCLUYE: Gestión, extracción y almacenamiento REAL del Token y Sign en Firestore.
+ * Servicio AFIP Profesional - Producción / Homologación
+ * Soporta: Monotributo (C) y Responsable Inscripto (A/B)
+ * Versión: Golden Master (Auto-detect + Array Fix + RG 5616)
  */
 
 const admin = require("firebase-admin");
@@ -9,52 +10,61 @@ const functions = require("firebase-functions");
 const soap = require("soap");
 const xmlbuilder = require("xmlbuilder");
 const forge = require("node-forge");
-const fs = require("fs"); 
-const path = require("path"); 
-
-const { HttpsError } = require("firebase-functions/lib/providers/https");
+const fs = require("fs");
+const path = require("path");
 
 // Inicializa Firebase
-admin.initializeApp();
+if (!admin.apps.length) {
+    admin.initializeApp();
+}
 const db = admin.firestore();
 
-// ----------------------------------------------------------------------
-// CONFIGURACIÓN AFIP
-// ----------------------------------------------------------------------
-// 🚨 ATENCIÓN: REEMPLAZA ESTE VALOR POR TU CUIT REAL
-const CUIT_EMISOR = "27278612932"; 
+// ==============================================================================
+// ⚙️ CONFIGURACIÓN DEL NEGOCIO (¡TOCA AQUÍ!)
+// ==============================================================================
 
-// Rutas de archivos y Endpoints
+// 1. TU IDENTIDAD FISCAL
+const CUIT_EMISOR = "27278612932"; // Tu CUIT sin guiones
+
+// 2. TU CONDICIÓN TRIBUTARIA ACTUAL
+// Opciones: 'MONOTRIBUTO' (Solo Factura C) | 'RESPONSABLE_INSCRIPTO' (Facturas A y B)
+// ⚠️ ALERTA: Si estás en Monotributo, DEJA ESTO EN 'MONOTRIBUTO'.
+// El sistema forzará Factura C automáticamente para evitar rechazos de AFIP.
+const CONDICION_EMISOR = "MONOTRIBUTO"; 
+
+// 3. PUNTO DE VENTA (Sácalo de la web de AFIP -> Puntos de Venta)
+// Asegúrate de que este número esté dado de alta como "Web Services"
+const PTO_VTA = 5; 
+
+// ==============================================================================
+// 🔐 CONFIGURACIÓN TÉCNICA (NO TOCAR)
+// ==============================================================================
+const WSDL_URL = "https://wswhomo.afip.gov.ar/wsfev1/service.asmx?WSDL"; // Homologación
+const WSAA_WSDL = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms?WSDL"; // Homologación
+
 const CERT_PATH = path.join(__dirname, "certificado-afip.crt");
-const KEY_PATH = path.join(__dirname,  "tuClave.key");
-const WSDL_URL = "https://wswhomo.afip.gov.ar/wsfev1/service.asmx?WSDL";
-const WSAA_WSDL = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms?WSDL";
-
-// Referencia al documento de Firestore donde guardaremos el TA.
-const TA_PATH = "arca_afip/wsfe_ta"; 
-const TA_DOC_REF = db.doc(TA_PATH); 
+const KEY_PATH = path.join(__dirname, "tuClave.key");
+const TA_DOC_REF = db.doc("arca_afip/wsfe_ta");
 
 // ----------------------------------------------------------------------
-// FUNCIÓN AUXILIAR 1: Genera el TA, EXTRAE TOKEN/SIGN y lo guarda en Firestore
+// 1. GENERACIÓN DE TICKET DE ACCESO (WSAA)
 // ----------------------------------------------------------------------
 async function _generateTA() {
-    console.log("WSAA:: Generando nuevo TA y guardando en Firestore");
+    console.log("WSAA:: Generando nuevo Ticket de Acceso...");
 
     if (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH)) {
-        throw new Error("Faltan credenciales AFIP (cert.pem o key.pem)");
+        throw new Error("FATAL: No se encuentran certificado-afip.crt o tuClave.key");
     }
 
     const certPem = fs.readFileSync(CERT_PATH, "utf8");
     const keyPem = fs.readFileSync(KEY_PATH, "utf8");
-
     const certObj = forge.pki.certificateFromPem(certPem);
     const keyObj = forge.pki.privateKeyFromPem(keyPem);
 
-    // Construir Login Ticket Request (LTR)
-    const uniqueId = Math.floor(Date.now() / 1000);
-    const generationTime = new Date(Date.now() - 600000).toISOString(); 
-    const expirationTime = new Date(Date.now() + 12 * 60 * 60 * 1000); // Objeto Date nativo
-    const expirationTimeISO = expirationTime.toISOString();
+    // Sal aleatoria para evitar error "alreadyAuthenticated" en pruebas rápidas
+    const uniqueId = Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 999999);
+    const generationTime = new Date(Date.now() - 600000).toISOString();
+    const expirationTime = new Date(Date.now() + 12 * 60 * 60 * 1000);
 
     const loginTicketRequest = xmlbuilder
         .create("loginTicketRequest", { encoding: "UTF-8" })
@@ -62,209 +72,297 @@ async function _generateTA() {
         .ele("header")
         .ele("uniqueId", uniqueId).up()
         .ele("generationTime", generationTime).up()
-        .ele("expirationTime", expirationTimeISO).up()
+        .ele("expirationTime", expirationTime.toISOString()).up()
         .up()
         .ele("service", "wsfe")
         .end({ pretty: true });
 
-    // Firmar con PKCS#7
     const p7 = forge.pkcs7.createSignedData();
     p7.content = forge.util.createBuffer(loginTicketRequest, "utf8");
     p7.addCertificate(certObj);
-    p7.addSigner({
-        key: keyObj,
-        certificate: certObj,
-        digestAlgorithm: forge.pki.oids.sha256
-    });
+    p7.addSigner({ key: keyObj, certificate: certObj, digestAlgorithm: forge.pki.oids.sha256 });
     p7.sign();
 
-    // CMS Base64
     const cms = forge.util.encode64(forge.asn1.toDer(p7.toAsn1()).getBytes());
-
-    // Enviar a WSAA
     const client = await soap.createClientAsync(WSAA_WSDL);
     const [result] = await client.loginCmsAsync({ in0: cms });
-    
     const xml = result.loginCmsReturn;
-    
-    // 🛑 LÓGICA DE EXTRACCIÓN DE TOKEN Y SIGN DEL XML 🛑
+
+    // Extracción robusta con Regex
     const tokenMatch = xml.match(/<token>(.*?)<\/token>/);
     const signMatch = xml.match(/<sign>(.*?)<\/sign>/);
 
-    const token = tokenMatch ? tokenMatch[1] : null;
-    const sign = signMatch ? signMatch[1] : null;
-
-    if (!token || !sign) {
-        console.error("XML de respuesta de AFIP:", xml);
-        throw new Error("Error al parsear Token o Sign del XML de WSAA. El XML puede estar incompleto o malformado.");
+    if (!tokenMatch || !signMatch) {
+        throw new Error("Error parseando respuesta WSAA: " + xml);
     }
-    // 🛑 FIN LÓGICA DE EXTRACCIÓN 🛑
 
     const taData = {
-        token: token, // ⬅️ VALOR REAL
-        sign: sign,   // ⬅️ VALOR REAL
-        expirationTime: expirationTime, // Date object (para guardar en Firestore)
-        xml: xml,
-        timestamp: admin.firestore.FieldValue.serverTimestamp()
+        token: tokenMatch[1],
+        sign: signMatch[1],
+        xml,
+        expirationTime: expirationTime.toISOString(), // Guardamos como string ISO por seguridad
+        timestamp: new Date() // Fecha JS nativa (Fix para emulador)
     };
 
-    // Guardar en Firestore
     await TA_DOC_REF.set(taData);
-
-    return taData; // Retorna con expirationTime como Date nativo, Token y Sign reales
+    return taData;
 }
 
-
 // ----------------------------------------------------------------------
-// FUNCIÓN AUXILIAR 2: Verifica y retorna un TA válido (o genera uno nuevo)
+// 2. OBTENER TICKET VÁLIDO (Cache vs Nuevo)
 // ----------------------------------------------------------------------
 async function _getValidTA() {
     const taSnapshot = await TA_DOC_REF.get();
-    const now = new Date();
     
     if (taSnapshot.exists) {
         const taData = taSnapshot.data();
+        const expirationDate = new Date(taData.expirationTime); 
         
-        // Convertir Timestamp de Firestore a Date nativo
-        const expTime = taData.expirationTime.toDate(); 
-        
-        // 1. Si está expirado (damos un margen de 1 minuto)
-        if (expTime.getTime() - now.getTime() < 60000) {
-            console.log("WSAA:: TA expirado o no encontrado. Renovando...");
-            return _generateTA();
+        // Si faltan más de 5 minutos para que expire, lo usamos
+        if (expirationDate > new Date(Date.now() + 5 * 60000)) {
+            return taData;
         }
-        
-        console.log("WSAA:: TA existente y válido. Reutilizando.");
-        // Asegurar que el objeto retornado tenga Date nativo (solo por consistencia, no es estrictamente necesario aquí)
-        taData.expirationTime = expTime;
-        return taData;
     }
-    
-    // Si no existe, generamos uno nuevo
-    console.log("WSAA:: TA no encontrado. Generando por primera vez...");
     return _generateTA();
 }
 
-
 // ----------------------------------------------------------------------
-// FUNCIÓN 1 — Test FEDummy
+// 3. OBTENER ÚLTIMO COMPROBANTE AUTORIZADO
 // ----------------------------------------------------------------------
-exports.afipTestConnection = functions.https.onCall(async () => {
-    // ... (El cuerpo de esta función no cambia) ...
-});
-
-
-// ----------------------------------------------------------------------
-// FUNCIÓN 2 — WSAA: Obtener Ticket de Acceso (TA)
-// ----------------------------------------------------------------------
-exports.afipGetTA = functions.https.onRequest(async (req, res) => {
-    res.set('Access-Control-Allow-Origin', '*'); 
-    if (req.method === 'OPTIONS') {
-        res.set('Access-Control-Allow-Methods', 'GET, POST');
-        res.set('Access-Control-Allow-Headers', 'Content-Type');
-        res.set('Access-Control-Max-Age', '3600');
-        return res.status(204).send('');
-    }
-
+async function _getUltimoComprobante(client, token, sign, ptoVta, cbteTipo) {
+    const args = {
+        Auth: { Token: token, Sign: sign, Cuit: CUIT_EMISOR },
+        PtoVta: ptoVta,
+        CbteTipo: cbteTipo
+    };
+    
     try {
-        const taData = await _generateTA(); 
-
-        return res.status(200).json({
-            status: "ok",
-            xml: taData.xml,
-            token: taData.token, // ⬅️ Nuevo
-            sign: taData.sign,   // ⬅️ Nuevo
-            expirationTime: taData.expirationTime.toISOString(), 
-        });
-
-    } catch (err) {
-        console.error("WSAA:: Error:", err);
-        return res.status(500).json({ error: err.message, stack: err.stack });
-    }
-});
-
-
-// ----------------------------------------------------------------------
-// FUNCIÓN: Emitir facturas de reparto (modo test/homologación)
-// ----------------------------------------------------------------------
-exports.emitirFacturasReparto = functions.https.onCall(async (data, context) => {
-  const ventas = data.ventas; 
-  
-  if (!ventas || !Array.isArray(ventas)) {
-    throw new HttpsError("invalid-argument", "Se esperaba un array de ventas.");
-  }
-
-  const resultados = [];
-
-  for (const venta of ventas) {
-    try {
-      if (venta.facturaAfip) {
-        // 🟢 Modo homologación: generar CAE dummy
-        const resultadoAfip = await emitirFacturaAFIP(venta, null, null);
-
-        // Guardar en Firestore
-        await admin.firestore().collection("ventas").doc(venta.id).update({
-          afipCAE: resultadoAfip.cae,
-          afipFechaVtoCAE: resultadoAfip.vtoCAE,
-          afipNumeroComprobante: resultadoAfip.numero,
-          afipEstado: "emitido",
-          afipResultado: "ok",
-        });
-
-        resultados.push({ ventaId: venta.id, status: "AFIP-HOMO", detalle: resultadoAfip });
-      } else {
-        // Comprobante interno
-        const comprobante = await emitirComprobanteInterno(venta);
-        await admin.firestore().collection("ventas").doc(venta.id).update({
-          afipEstado: "no_afip",
-          afipResultado: "interno",
-          afipNumeroComprobante: comprobante.numeroComprobanteInterno,
-        });
-        resultados.push({ ventaId: venta.id, status: "Interno", detalle: comprobante });
-      }
+        const [result] = await client.FECompUltimoAutorizadoAsync(args);
+        if (result.FECompUltimoAutorizadoResult.Errors) {
+            throw new Error("Error AFIP Ultimo Comp: " + JSON.stringify(result.FECompUltimoAutorizadoResult.Errors));
+        }
+        return result.FECompUltimoAutorizadoResult.CbteNro || 0;
     } catch (error) {
-      console.error(`Error al procesar venta ${venta.id}:`, error);
-      resultados.push({ ventaId: venta.id, status: "Error", detalle: error.message });
+        console.error("Error obteniendo último comprobante:", error);
+        throw error;
     }
-  }
-
-  return resultados;
-});
+}
 
 // ----------------------------------------------------------------------
-// AUXILIAR: Emitir Factura AFIP (modo test/homologación con CAE dummy)
+// 4. FUNCIÓN CLOUD: EMISIÓN DE LOTE DE FACTURAS
+// ----------------------------------------------------------------------
+exports.emitirFacturasReparto = functions.https.onCall(async (data) => {
+    const ventas = data.ventas;
+    if (!ventas || !Array.isArray(ventas)) {
+        throw new functions.https.HttpsError("invalid-argument", "Se requiere un array de ventas.");
+    }
+
+    const resultados = [];
+    
+    // Obtenemos credenciales UNA sola vez para todo el lote para optimizar
+    let authData;
+    try {
+        authData = await _getValidTA();
+    } catch (e) {
+        console.error("Error de Autenticación AFIP:", e);
+        throw new functions.https.HttpsError("internal", "Error autenticando con AFIP: " + e.message);
+    }
+
+    // Procesamos venta por venta
+    for (const venta of ventas) {
+        try {
+            if (venta.facturaAfip) {
+                const resultadoAfip = await emitirFacturaAFIP(venta, authData.token, authData.sign);
+                
+                // Guardamos en Firestore
+                await db.collection("ventas").doc(venta.id).update({
+                    afipCAE: resultadoAfip.cae,
+                    afipFechaVtoCAE: resultadoAfip.vtoCAE,
+                    afipNumeroComprobante: resultadoAfip.numero,
+                    afipLetra: resultadoAfip.tipoLetra, // 'A', 'B' o 'C'
+                    afipEstado: "emitido",
+                    afipResultado: "A"
+                });
+
+                resultados.push({ ventaId: venta.id, status: "OK", detalle: resultadoAfip });
+            } else {
+                resultados.push({ ventaId: venta.id, status: "Ignorado", detalle: "No requiere factura" });
+            }
+        } catch (error) {
+            console.error(`Error venta ${venta.id}:`, error);
+            // Si falla, guardamos el error en la venta
+            await db.collection("ventas").doc(venta.id).update({
+                afipEstado: "error",
+                afipErrorDetalle: error.message
+            }).catch(e => console.log("No se pudo actualizar error en DB (posiblemente venta no existe):", e));
+
+            resultados.push({ ventaId: venta.id, status: "Error", detalle: error.message });
+        }
+    }
+
+    return resultados;
+});
+
+
+// ----------------------------------------------------------------------
+// 🧠 CEREBRO DE FACTURACIÓN (Lógica Smart A/B/C + RG 5616)
 // ----------------------------------------------------------------------
 async function emitirFacturaAFIP(venta, token, sign) {
-  console.log(`WSFE:: Modo HOMOLOGACIÓN para venta ${venta.id}, cliente ${venta.clienteNombre}`);
+    const client = await soap.createClientAsync(WSDL_URL);
+    
+    // --- 1. Determinar Letra y Tipo de Comprobante ---
+    let CBTE_TIPO = 11; // Por defecto C (Monotributo)
 
-  const PTO_VTA = 5;   
-  const CBTE_TIPO = 11; 
-  const FchHoy = new Date().toISOString().substring(0,10).replace(/-/g, '');
-  
-  // --- 1. Forzar CUIT y Condición IVA de prueba
-  const DocTipo = 99;         // CUIT de prueba AFIP
-  const DocNro = "0";         // CUIT dummy
-  const CondicionIVA = 5;     // Consumidor Final
+    // Dato que viene del Frontend (add-client.tsx)
+    // Valores posibles: 'CF' (Consumidor Final), 'MT' (Monotributo), 'RI' (Resp. Inscripto), 'EX' (Exento)
+    const clienteCondicion = venta.clienteCondicionIVA || 'CF'; 
 
-  // --- 2. Generar número de comprobante dummy
-  const ProximoCbte = 1;
+    if (CONDICION_EMISOR === "MONOTRIBUTO") {
+        // 🔒 LÓGICA BLINDADA:
+        // Si yo soy Monotributista, el sistema SIEMPRE emitirá 'C' (Tipo 11).
+        // No importa si el cliente es Coca Cola (RI). Se le hace Factura C.
+        CBTE_TIPO = 11; 
+    } else {
+        // Si en el futuro cambias a 'RESPONSABLE_INSCRIPTO', se activa esto:
+        if (clienteCondicion === 'RI') {
+            CBTE_TIPO = 1; // Factura A (Solo a otros RI)
+        } else {
+            CBTE_TIPO = 6; // Factura B (A Monotributistas, Exentos y Cons. Final)
+        }
+    }
 
-  // --- 3. Calcular importes
-  const ImpTotal = venta.totalVenta || 0;
-  const ImpNeto = ImpTotal;
-  const ImpIVA = 0;
+    // --- 2. Matemática de Importes ---
+    const totalCobrado = parseFloat(venta.totalVenta);
+    let impNeto = 0;
+    let impIVA = 0;
+    let impTotal = totalCobrado.toFixed(2);
+    let arrayAlicuotas = null;
 
-  // --- 4. Generar CAE dummy (homologación)
-  const caeDummy = "12345678901234";
-  const vtoDummy = new Date(Date.now() + 10*24*60*60*1000); // 10 días
-  const vtoCAE = vtoDummy.toISOString().substring(0,10);
+    if (CBTE_TIPO === 11) {
+        // Factura C: Neto es igual al Total (No se discrimina IVA)
+        impNeto = totalCobrado.toFixed(2);
+        impIVA = 0;
+    } else {
+        // Facturas A y B (Solo Resp. Inscripto): Despejar IVA (21%)
+        impNeto = (totalCobrado / 1.21).toFixed(2);
+        impIVA = (totalCobrado - parseFloat(impNeto)).toFixed(2);
+        
+        // Ajuste fino de centavos para evitar rechazo matemático
+        if (Math.abs((parseFloat(impNeto) + parseFloat(impIVA)) - totalCobrado) > 0.001) {
+            impIVA = (totalCobrado - parseFloat(impNeto)).toFixed(2);
+        }
 
-  console.log(`WSFE:: CAE dummy generado: ${caeDummy}, Vto: ${vtoCAE}, Nro: ${ProximoCbte}`);
+        arrayAlicuotas = {
+            AlicIva: [{ Id: 5, BaseImp: impNeto, Importe: impIVA }] // Id 5 = 21%
+        };
+    }
 
-  return {
-    cae: caeDummy,
-    vtoCAE,
-    numero: ProximoCbte,
-    resultado: "A",
-  };
+    // --- 3. Datos del Receptor (Cliente) ---
+    // AFIP requiere: 80=CUIT, 96=DNI, 99=Consumidor Final
+    let docTipo = 99;
+    let docNro = "0";
+    
+    // Nueva normativa RG 5616: Condición IVA Receptor obligatorio
+    // 1=IVA Resp Inscripto, 5=Consumidor Final, 6=Monotributo
+    let condicionIvaReceptorId = 5; 
+
+    if (venta.clienteCuit && venta.clienteCuit.length > 5) {
+        const limpio = venta.clienteCuit.replace(/\D/g, '');
+        
+        // Determinamos Tipo Doc
+        if (limpio.length === 11) {
+            docTipo = 80; // CUIT
+            docNro = limpio;
+        } else {
+            docTipo = 96; // DNI
+            docNro = limpio;
+        }
+
+        // Mapeamos la condición de la App a los códigos de AFIP
+        if (clienteCondicion === 'RI') condicionIvaReceptorId = 1;
+        else if (clienteCondicion === 'MT') condicionIvaReceptorId = 6;
+        else condicionIvaReceptorId = 5; // Por defecto CF
+    }
+
+    // --- 4. Obtener Número y Fechas ---
+    const ultimoNro = await _getUltimoComprobante(client, token, sign, PTO_VTA, CBTE_TIPO);
+    const proximoNro = ultimoNro + 1;
+    
+    const now = new Date();
+    now.setHours(now.getHours() - 3); // Ajuste UTC-3 Argentina
+    const fchServ = now.toISOString().substring(0, 10).replace(/-/g, '');
+
+    // --- 5. Payload ---
+    const payload = {
+        Auth: { Token: token, Sign: sign, Cuit: CUIT_EMISOR },
+        FeCAEReq: {
+            FeCabReq: {
+                CantReg: 1,
+                PtoVta: PTO_VTA,
+                CbteTipo: CBTE_TIPO
+            },
+            FeDetReq: {
+                FECAEDetRequest: {
+                    Concepto: 1, // 1 = Productos
+                    DocTipo: docTipo,
+                    DocNro: docNro,
+                    CbteDesde: proximoNro,
+                    CbteHasta: proximoNro,
+                    CbteFch: fchServ,
+                    ImpTotal: impTotal,
+                    ImpTotConc: 0,
+                    ImpNeto: impNeto,
+                    ImpOpEx: 0,
+                    ImpTrib: 0,
+                    ImpIVA: (CBTE_TIPO === 11) ? 0 : impIVA,
+                    MonId: 'PES',
+                    MonCotiz: 1,
+                    // Si es C, no va IVA. Si es A/B, sí va.
+                    ...(CBTE_TIPO !== 11 && { Iva: arrayAlicuotas }),
+                    // Campo obligatorio RG 5616
+                    CondicionIVAReceptorId: condicionIvaReceptorId
+                }
+            }
+        }
+    };
+
+    console.log(`WSFE:: Emitiendo ${CBTE_TIPO === 11 ? 'Factura C' : (CBTE_TIPO === 1 ? 'Factura A' : 'Factura B')} #${proximoNro} a Doc: ${docNro}`);
+
+    // --- 6. Disparo ---
+    let response;
+    try {
+        const res = await client.FECAESolicitarAsync(payload);
+        response = res[0];
+    } catch (err) {
+        throw new Error("Fallo SOAP AFIP: " + err.message);
+    }
+
+    // --- 7. Validación y Respuesta (Fix Array/Objeto) ---
+    const rootResult = response.FECAESolicitarResult;
+    if (rootResult.Errors) {
+        const err = Array.isArray(rootResult.Errors.Err) ? rootResult.Errors.Err[0] : rootResult.Errors.Err;
+        throw new Error(`AFIP Error Global (${err.Code}): ${err.Msg}`);
+    }
+
+    // AFIP a veces devuelve array si mandamos lote, a veces objeto. Normalizamos.
+    let detalle = rootResult.FeDetResp.FECAEDetResponse;
+    if (Array.isArray(detalle)) detalle = detalle[0];
+
+    if (rootResult.FeCabResp.Resultado === "R") {
+        let motivo = "Desconocido";
+        if (detalle.Observaciones) {
+            const obs = Array.isArray(detalle.Observaciones.Obs) ? detalle.Observaciones.Obs[0] : detalle.Observaciones.Obs;
+            motivo = `(${obs.Code}) ${obs.Msg}`;
+        }
+        throw new Error(`AFIP Rechazó: ${motivo}`);
+    }
+
+    console.log(`WSFE:: ✅ ÉXITO! CAE: ${detalle.CAE}`);
+
+    return {
+        cae: detalle.CAE,
+        vtoCAE: detalle.CAEFchVto,
+        numero: proximoNro,
+        tipoLetra: CBTE_TIPO === 11 ? 'C' : (CBTE_TIPO === 1 ? 'A' : 'B')
+    };
 }

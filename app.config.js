@@ -53,7 +53,7 @@ module.exports = ({ config }) => {
                 "compileSdkVersion": 36,
                 "targetSdkVersion": 36,
                 "buildToolsVersion": "34.0.0",
-                "ndk": "26.1.10900962",
+                "ndk": "26.1.10909125",
                 "cmake": "3.22.1"
             },
             "web": {

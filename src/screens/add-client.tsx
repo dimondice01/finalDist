@@ -31,11 +31,10 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Toast from 'react-native-toast-message';
 
-import { AddClientScreenProps } from '../navigation/AppNavigator';
-// ✅ Importamos PriceList
 import { PriceList, Rubro, useData, Zone } from '../../context/DataContext';
 import { auth, dbContainer } from '../../db/firebase-service';
 import { COLORS, SIZES } from '../../styles/theme';
+import { AddClientScreenProps } from '../navigation/AppNavigator';
 
 interface LocationCoords { latitude: number; longitude: number; }
 
@@ -47,6 +46,14 @@ const DOCUMENT_TYPES: { id: DocumentType; nombre: string; }[] = [
     { id: 'CUIT', nombre: 'CUIT' },
     { id: 'CUIL', nombre: 'CUIL' },
     { id: 'PAS', nombre: 'Pasaporte' },
+];
+
+// ✅ CONSTANTE NUEVA: Condiciones IVA
+const CONDICIONES_IVA = [
+    { id: 'CF', nombre: 'Consumidor Final' },
+    { id: 'MT', nombre: 'Monotributo' },
+    { id: 'RI', nombre: 'Responsable Inscripto' },
+    { id: 'EX', nombre: 'Exento' },
 ];
 
 // --- MODALES ---
@@ -71,6 +78,33 @@ const DocumentTypeSelectorModal = ({ visible, onClose, selectedId, onSelect }: {
                 <View style={[modalStyles.modalContent, { maxHeight: '80%', padding: 0 }]}>
                     <View style={modalStyles.modalHeader}><Text style={modalStyles.modalTitle}>TIPO DE DOCUMENTO *</Text></View>
                     <FlatList data={DOCUMENT_TYPES} keyExtractor={(item) => item.id} renderItem={renderItem} ItemSeparatorComponent={() => <View style={modalStyles.separatorModal} />} contentContainerStyle={{ paddingHorizontal: SIZES.medium }} />
+                    <TouchableOpacity onPress={onClose} style={modalStyles.modalCloseButton}><Text style={modalStyles.modalCloseText}>Cerrar</Text></TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+};
+
+// ✅ NUEVO MODAL: Condición IVA
+const FiscalConditionSelectorModal = ({ visible, onClose, selectedId, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    selectedId: string;
+    onSelect: (id: string) => void;
+}) => {
+    const renderItem = useCallback(({ item }: { item: { id: string, nombre: string } }) => (
+        <TouchableOpacity style={modalStyles.modalItem} onPress={() => { onSelect(item.id); onClose(); }}>
+            <Text style={[modalStyles.modalItemText, item.id === selectedId ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>{item.nombre}</Text>
+            {selectedId === item.id && <Feather name="check" size={SIZES.h3} color={COLORS.primary} />}
+        </TouchableOpacity>
+    ), [selectedId, onSelect, onClose]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.modalOverlay}>
+                <View style={[modalStyles.modalContent, { maxHeight: '80%', padding: 0 }]}>
+                    <View style={modalStyles.modalHeader}><Text style={modalStyles.modalTitle}>CONDICIÓN IVA *</Text></View>
+                    <FlatList data={CONDICIONES_IVA} keyExtractor={(item) => item.id} renderItem={renderItem} ItemSeparatorComponent={() => <View style={modalStyles.separatorModal} />} contentContainerStyle={{ paddingHorizontal: SIZES.medium }} />
                     <TouchableOpacity onPress={onClose} style={modalStyles.modalCloseButton}><Text style={modalStyles.modalCloseText}>Cerrar</Text></TouchableOpacity>
                 </View>
             </View>
@@ -136,15 +170,14 @@ const RubroSelectorModal = ({ visible, onClose, rubros, selectedId, onSelect }: 
     );
 };
 
-// ✅ 4. NUEVO: Modal Lista de Precios
+// 4. Modal Lista de Precios
 const PriceListSelectorModal = ({ visible, onClose, lists, selectedId, onSelect }: {
     visible: boolean;
     onClose: () => void;
     lists: PriceList[]; 
     selectedId: string;
-    onSelect: (id: string) => void; // Aquí pasamos el NOMBRE de la lista como ID (según lógica web)
+    onSelect: (id: string) => void;
 }) => {
-    // En la Web guardamos el NOMBRE de la lista (ej: "Mayorista") como referencia
     const dataWithDefaultOption: PriceList[] = useMemo(() => [
         { id: '', nombre: 'Precio Base (General)' }, 
         ...lists
@@ -152,7 +185,6 @@ const PriceListSelectorModal = ({ visible, onClose, lists, selectedId, onSelect 
 
     const renderItem = useCallback(({ item }: { item: PriceList }) => ( 
         <TouchableOpacity style={modalStyles.modalItem} onPress={() => { onSelect(item.nombre === 'Precio Base (General)' ? '' : item.nombre); onClose(); }}>
-            {/* Usamos item.nombre como identificador si no es el default */}
             <Text style={[modalStyles.modalItemText, (item.nombre === selectedId || (selectedId === '' && item.id === '')) ? { fontWeight: 'bold', color: COLORS.primary } : {}]}>
                 {item.nombre}
             </Text>
@@ -183,18 +215,18 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [email, setEmail] = useState('');
     const [zonaId, setZonaId] = useState('');
     const [rubroId, setRubroId] = useState('');
-    
-    // ✅ NUEVO ESTADO: Lista de precios
     const [listaPreciosAsignada, setListaPreciosAsignada] = useState(''); 
 
     const [isArca, setIsArca] = useState(false);
+    // ✅ ESTADO NUEVO: Condición IVA
+    const [condicionIva, setCondicionIva] = useState('CF'); 
+    
     const [tipoDocumento, setTipoDocumento] = useState<DocumentType>('SC'); 
     const [numeroDocumento, setNumeroDocumento] = useState('');
     
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     
-    // ✅ Extraemos priceLists
     const { availableZones, vendors, refreshAllData, rubros, priceLists, isOffline } = useData();
     const currentUser = auth.currentUser;
     
@@ -205,8 +237,9 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [isZoneModalVisible, setIsZoneModalVisible] = useState(false); 
     const [isRubroModalVisible, setIsRubroModalVisible] = useState(false);
     const [isDocumentTypeModalVisible, setIsDocumentTypeModalVisible] = useState(false);
-    // ✅ Modal lista
     const [isPriceListModalVisible, setIsPriceListModalVisible] = useState(false);
+    // ✅ NUEVO: Modal Visibility
+    const [isFiscalModalVisible, setIsFiscalModalVisible] = useState(false);
 
     // --- Memos ---
     const currentVendedor = useMemo(() => {
@@ -241,10 +274,15 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         return selectedType ? selectedType.nombre : 'Seleccionar Tipo Doc *';
     }, [tipoDocumento]);
 
-    // ✅ Memo Nombre Lista
     const selectedPriceListName = useMemo(() => {
         return listaPreciosAsignada || 'Precio Base (General)';
     }, [listaPreciosAsignada]);
+
+    // ✅ MEMO NUEVO: Nombre Condición IVA
+    const selectedFiscalConditionName = useMemo(() => {
+        const cond = CONDICIONES_IVA.find(c => c.id === condicionIva);
+        return cond ? cond.nombre : 'Consumidor Final';
+    }, [condicionIva]);
 
 
     // --- Callbacks ---
@@ -286,6 +324,8 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
 
         const finalTipoDocumento = isArca ? tipoDocumento : 'SC';
         const finalNumeroDocumento = isArca ? numeroDocumento.trim() : '';
+        // ✅ DEFINIMOS LA CONDICIÓN IVA FINAL
+        const finalCondicionIva = isArca ? condicionIva : 'CF';
 
         try {
             const newClientData = {
@@ -305,7 +345,9 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 tipoDocumento: finalTipoDocumento, 
                 numeroDocumento: finalNumeroDocumento,
                 
-                // ✅ GUARDAMOS LA LISTA
+                // ✅ GUARDAMOS CONDICIÓN IVA
+                condicionIva: finalCondicionIva,
+
                 listaPreciosAsignada: listaPreciosAsignada || '',
 
                 fechaCreacion: serverTimestamp(),
@@ -329,7 +371,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     }, [
         nombre, zonaId, rubroId, direccion, barrio, localidad, telefono, email, 
         location, currentUser, isSubmitting, refreshAllData, navigation, isOffline, isArca,
-        tipoDocumento, numeroDocumento, listaPreciosAsignada // ✅ Dependencia añadida
+        tipoDocumento, numeroDocumento, listaPreciosAsignada, condicionIva // ✅ Dependencia nueva
     ]);
 
 
@@ -391,7 +433,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     </TouchableOpacity>
                 </View>
 
-                {/* ✅ NUEVO: Selector Lista de Precios */}
+                {/* Selector Lista de Precios */}
                 <View style={styles.pickerContainer}>
                     <Feather name="tag" size={SIZES.h3} color={COLORS.secondary} style={styles.inputIcon} />
                     <TouchableOpacity style={styles.pickerButton} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsPriceListModalVisible(true); }}>
@@ -411,6 +453,15 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
 
                 {isArca && (
                     <>
+                        {/* ✅ NUEVO: Selector Condición IVA */}
+                        <View style={styles.pickerContainer}>
+                            <Feather name="award" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
+                            <TouchableOpacity style={styles.pickerButton} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsFiscalModalVisible(true); }}>
+                                <Text style={[styles.pickerButtonText, { color: COLORS.textPrimary }]}>{selectedFiscalConditionName}</Text>
+                                <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
+                            </TouchableOpacity>
+                        </View>
+
                         <View style={styles.pickerContainer}>
                             <Feather name="file-text" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
                             <TouchableOpacity style={styles.pickerButton} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsDocumentTypeModalVisible(true); }}>
@@ -452,9 +503,11 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
             <ZoneSelectorModal visible={isZoneModalVisible} onClose={() => setIsZoneModalVisible(false)} zones={zonasDelVendedor} selectedId={zonaId} onSelect={setZonaId} />
             <RubroSelectorModal visible={isRubroModalVisible} onClose={() => setIsRubroModalVisible(false)} rubros={rubrosOrdenados} selectedId={rubroId} onSelect={setRubroId} />
             <DocumentTypeSelectorModal visible={isDocumentTypeModalVisible} onClose={() => setIsDocumentTypeModalVisible(false)} selectedId={tipoDocumento} onSelect={setTipoDocumento} />
-            
-            {/* ✅ NUEVO: Modal de Precio */}
             <PriceListSelectorModal visible={isPriceListModalVisible} onClose={() => setIsPriceListModalVisible(false)} lists={priceLists} selectedId={listaPreciosAsignada} onSelect={setListaPreciosAsignada} />
+            
+            {/* ✅ NUEVO: Modal Selector Fiscal */}
+            <FiscalConditionSelectorModal visible={isFiscalModalVisible} onClose={() => setIsFiscalModalVisible(false)} selectedId={condicionIva} onSelect={setCondicionIva} />
+
         </KeyboardAvoidingView>
     );
 };

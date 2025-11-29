@@ -1,136 +1,65 @@
-// testEmitir.js
-import { initializeApp } from "firebase/app";
-import { getFunctions, httpsCallable } from "firebase/functions";
+const { initializeApp } = require("firebase/app");
+const { getFunctions, httpsCallable, connectFunctionsEmulator } = require("firebase/functions");
 
-// 🔹 Config de Firebase (reemplazá con tus datos)
+// 1. CREDENCIALES REALES (Extraídas de tu proyecto)
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROJECT_ID.firebaseapp.com",
-  projectId: "TU_PROJECT_ID",
-  storageBucket: "TU_PROJECT_ID.appspot.com",
-  messagingSenderId: "TU_MESSAGING_SENDER_ID",
-  appId: "TU_APP_ID",
+  apiKey: "AIzaSyD3KA2Ud41g3AGvMI387xG6EIjaZ11KNls", // Tu API Key real
+  authDomain: "distribuidora-1de93.firebaseapp.com",
+  projectId: "distribuidora-1de93", // Tu ID de Proyecto correcto
 };
 
-// Inicializamos la app
+// 2. Inicializar Cliente
 const app = initializeApp(firebaseConfig);
-
-// Obtenemos el servicio de Functions
 const functions = getFunctions(app);
 
-// Referencia a la Cloud Function
+// 🚨 CONECTAR AL EMULADOR LOCAL (Puerto 5001)
+// Esto es vital para que no intente ir a la nube de Google
+connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+
+console.log("🚀 Conectado al Emulador de Functions (127.0.0.1:5001)");
+
+// 3. Referencia a la función (Debe coincidir con tu export en index.js)
 const emitirFacturas = httpsCallable(functions, "emitirFacturasReparto");
 
-// 🔹 Lote de ventas de ejemplo
+// 4. DATOS DE PRUEBA (Simulando una venta real)
+// Usamos un ID único para no confundirnos en los logs
+const idPrueba = "TEST-" + Math.floor(Math.random() * 1000);
+
 const ventasLote = [
   {
-    id: "venta1",
-    facturaAfip: true,
-    clienteId: "iJZ3jZBDOtiDWF3jyw6m",
-    clienteNombre: "Cliente Prueba AFIP",
-    estado: "Pendiente de Entrega",
-    fecha: "2025-11-14T17:03:22-03:00",
+    id: idPrueba,
+    facturaAfip: true,          // <--- ¡EL GATILLO! Esto activa tu código nuevo
+    clienteId: "CLIENTE_TEST",
+    clienteNombre: "Cliente Homologacion",
+    clienteCuit: "20111111112", // CUIT de prueba válido (Persona Física)
+    totalVenta: 150.00,         // Monto simple
     items: [
-      {
-        id: "GBdn4G09dEoCYiNzPBj5",
-        nombre: "BOLITA CHOCOLATE 2.5K",
-        categoriaId: "t3tH3v8ekWtcvEnIwLu0",
-        precio: 17100,
-        precioOriginal: 17100,
-        costo: 10800,
-        quantity: 1,
-        stock: 39,
-        codigoDeBarras: "",
-        comision: 0,
-        comisionEspecifica: null,
-        descuentoPorCantidadAplicado: 0,
-        observaciones: "",
-        numeroDocumento: "20111111112",
-        tipoDocumento: "CUIT",
-      },
-    ],
-    saldoPendiente: 17100,
-    totalCosto: 10800,
-    totalComision: 0,
-    totalDescuentoPromociones: 0,
-    totalVenta: 17100,
-    tipo: "venta",
-    vendedorId: "oWLAdPUPwLWR8p2bxocP67rF4I83",
-    vendedorName: "Analia Gaitan",
-  },
-  {
-    id: "venta2",
-    facturaAfip: false,
-    clienteId: "iJZ3jZBDOtiDWF3jyw7n",
-    clienteNombre: "Cliente Interno",
-    estado: "Pendiente de Entrega",
-    fecha: "2025-11-14T17:05:10-03:00",
-    items: [
-      {
-        id: "ABcd4E08fFpCYiNzQPr6",
-        nombre: "GALLETAS VARIAS 1K",
-        categoriaId: "u4vH3v9ekWtcvEnIwLu1",
-        precio: 5000,
-        precioOriginal: 5000,
-        costo: 3000,
-        quantity: 2,
-        stock: 50,
-        codigoDeBarras: "",
-        comision: 0,
-        comisionEspecifica: null,
-        descuentoPorCantidadAplicado: 0,
-        observaciones: "",
-        numeroDocumento: "20122222223",
-        tipoDocumento: "CUIT",
-      },
-    ],
-    saldoPendiente: 10000,
-    totalCosto: 6000,
-    totalComision: 0,
-    totalDescuentoPromociones: 0,
-    totalVenta: 10000,
-    tipo: "venta",
-    vendedorId: "oWLAdPUPwLWR8p2bxocP67rF4I84",
-    vendedorName: "Juan Perez",
-  },
-  {
-    id: "venta3",
-    facturaAfip: true,
-    clienteId: "iJZ3jZBDOtiDWF3jyw8o",
-    clienteNombre: "Cliente AFIP 2",
-    estado: "Pendiente de Entrega",
-    fecha: "2025-11-14T17:10:05-03:00",
-    items: [
-      {
-        id: "CDef5G10gHpCYiNzRQr7",
-        nombre: "JUGO NARANJA 1L",
-        categoriaId: "v5wI3x0ekWtcvEnIwLu2",
-        precio: 1200,
-        precioOriginal: 1200,
-        costo: 700,
-        quantity: 5,
-        stock: 25,
-        codigoDeBarras: "",
-        comision: 0,
-        comisionEspecifica: null,
-        descuentoPorCantidadAplicado: 0,
-        observaciones: "",
-        numeroDocumento: "20133333334",
-        tipoDocumento: "CUIT",
-      },
-    ],
-    saldoPendiente: 6000,
-    totalCosto: 3500,
-    totalComision: 0,
-    totalDescuentoPromociones: 0,
-    totalVenta: 6000,
-    tipo: "venta",
-    vendedorId: "oWLAdPUPwLWR8p2bxocP67rF4I85",
-    vendedorName: "Maria Lopez",
-  },
+      { 
+        nombre: "Producto Test AFIP", 
+        quantity: 1, 
+        precio: 150.00 
+      }
+    ]
+  }
 ];
 
-// 🔹 Llamada a la CF
+// 5. EJECUCIÓN
+console.log(`📨 Enviando venta de prueba (${idPrueba}) al Backend...`);
+
 emitirFacturas({ ventas: ventasLote })
-  .then(res => console.log("Resultados del lote:", res.data))
-  .catch(err => console.error("Error:", err));
+  .then((result) => {
+    console.log("\n✅ ¡ÉXITO! RESPUESTA DEL BACKEND:");
+    console.log("---------------------------------------------------");
+    console.log(JSON.stringify(result.data, null, 2));
+    console.log("---------------------------------------------------");
+    
+    // Verificación rápida para ti
+    const primerResultado = result.data[0];
+    if (primerResultado && primerResultado.detalle && primerResultado.detalle.cae) {
+      console.log(`🎉 CAE OBTENIDO: ${primerResultado.detalle.cae}`);
+    }
+  })
+  .catch((error) => {
+    console.error("\n❌ ERROR AL EMITIR:");
+    console.error(error);
+  });
