@@ -1,12 +1,7 @@
-// src/screens/LoginScreen.tsx
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-
 import React, { useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
-    Image,
     KeyboardAvoidingView,
     Platform,
     StatusBar,
@@ -17,54 +12,69 @@ import {
     View
 } from 'react-native';
 
-// --- Importamos SIZES y COLORS del tema centralizado ---
-import { COLORS, SIZES } from '../../styles/theme';
-
-// --- Contexto y DB ---
-import { auth } from '../../db/firebase-service'; // Importa la instancia NATIVA
-
-// --- Navegación ---
+// --- Importaciones del Proyecto ---
+import { auth } from '../../db/firebase-service';
 import { LoginScreenProps } from '../navigation/AppNavigator';
+
+// --- COLORES DE MARCA (NOAR ERP) ---
+const BRAND = {
+    dark: '#0F172A',   // Slate 900
+    primary: '#FBBF24', // Amber 400 (La N)
+    accent: '#D97706', // Amber 600 (ERP)
+    gray: '#94A3B8',   // Slate 400
+    bg: '#F8FAFC',     // Slate 50
+    white: '#FFFFFF',
+    error: '#EF4444'
+};
+
+// --- COMPONENTE LOGO NATIVO (NOAR ERP) ---
+const NoarLogoLogin = () => (
+  <View style={styles.logoContainer}>
+      {/* Icono Cuadrado con Sombra */}
+      <View style={styles.logoIconBox}>
+          <Text style={styles.logoSymbol}>N</Text>
+      </View>
+      
+      {/* Texto Corporativo */}
+      <View style={styles.brandContainer}>
+          <Text style={styles.brandName}>
+              NOAR <Text style={styles.brandSuffix}>ERP</Text>
+          </Text>
+          <Text style={styles.brandSlogan}>SISTEMA INTEGRAL</Text>
+      </View>
+  </View>
+);
 
 const LoginScreen = ({ navigation }: LoginScreenProps) => { 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false); 
-    const [loadingMessage, setLoadingMessage] = useState(''); 
+    const [errorMsg, setErrorMsg] = useState('');
 
     const handleLogin = async () => {
+        setErrorMsg('');
         if (!email || !password) {
-            Alert.alert("Campos incompletos", "Por favor, ingrese su email y contraseña.");
+            setErrorMsg("Por favor, completa todos los campos.");
             return;
         }
 
         setLoading(true);
-        setLoadingMessage('Iniciando sesión...');
-
         try {
-            // --- ¡Esto ya es correcto! Usa la instancia nativa ---
             await auth.signInWithEmailAndPassword(email.trim(), password);
-            
-            setTimeout(() => {
-                setLoading(false);
-            }, 1000); 
-
+            // La navegación es automática gracias al AuthListener en App.tsx
         } catch (error: any) {
             setLoading(false);
-            console.error("Error en handleLogin:", error.code, error.message);
+            console.error("Login Error:", error.code);
             
-            let friendlyMessage = "Ocurrió un error inesperado.";
-            if (error.code === 'auth/user-not-found' || 
-                error.code === 'auth/wrong-password' || 
-                error.code === 'auth/invalid-credential') {
-                friendlyMessage = "Email o contraseña incorrectos.";
-            } else if (error.code === 'auth/invalid-email') {
-                friendlyMessage = "El formato del email no es válido.";
+            if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+                setErrorMsg("Credenciales incorrectas.");
+            } else if (error.code === 'auth/too-many-requests') {
+                setErrorMsg("Demasiados intentos. Espera un momento.");
             } else if (error.code === 'auth/network-request-failed') {
-                friendlyMessage = "Error de red. Revisa tu conexión a internet.";
+                setErrorMsg("Sin conexión a internet.");
+            } else {
+                setErrorMsg("Error al iniciar sesión.");
             }
-            
-            Alert.alert("Error de autenticación", friendlyMessage);
         }
     };
 
@@ -72,169 +82,145 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
         <KeyboardAvoidingView 
             style={styles.container} 
             behavior={Platform.OS === "ios" ? "padding" : "height"}
-            keyboardVerticalOffset={Platform.OS === "ios" ? 0 : -100} 
         >
-            {/* STATUS BAR: Estilo oscuro para un look más moderno en el fondo claro */}
-            <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundStart} />
+            <StatusBar barStyle="dark-content" backgroundColor={BRAND.bg} />
             
-            {/* GRADIENTE: Usamos el mismo color para ambos puntos para un fondo plano y limpio (Gray-50) */}
-            <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={styles.background} />
-            
-            {/* --- CONTENIDO CENTRADO --- */}
-            <View style={styles.contentContainer}>
-                <Image
-                    source={require('../../assets/images/icon_login.png')}
-                    style={styles.logo}
-                />
-                <Text style={styles.title}>Bienvenido</Text>
-                <Text style={styles.subtitle}>Inicia sesión para continuar</Text>
-                
-                <View style={styles.formContainer}>
-                    <View style={styles.inputContainer}>
-                        {/* Ícono usando textSecondary para ser sutil */}
-                        <Feather name="mail" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Email"
-                            placeholderTextColor={COLORS.textSecondary}
-                            value={email}
-                            onChangeText={setEmail}
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            returnKeyType="next"
-                        />
+            <View style={styles.content}>
+                {/* Logo */}
+                <NoarLogoLogin />
+
+                {/* Títulos */}
+                <View style={styles.headerText}>
+                    <Text style={styles.title}>Bienvenido</Text>
+                    <Text style={styles.subtitle}>Inicia sesión para operar</Text>
+                </View>
+
+                {/* Formulario */}
+                <View style={styles.form}>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>USUARIO</Text>
+                        <View style={styles.inputWrapper}>
+                            <Feather name="user" size={20} color={BRAND.gray} style={{ marginRight: 10 }} />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="ej: vendedor@noar.com"
+                                placeholderTextColor={BRAND.gray}
+                                value={email}
+                                onChangeText={setEmail}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                            />
+                        </View>
                     </View>
-                    <View style={styles.inputContainer}>
-                        {/* Ícono usando textSecondary para ser sutil */}
-                        <Feather name="lock" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Contraseña"
-                            placeholderTextColor={COLORS.textSecondary}
-                            value={password}
-                            onChangeText={setPassword}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            returnKeyType="go"
-                            onSubmitEditing={handleLogin}
-                        />
+
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>CONTRASEÑA</Text>
+                        <View style={styles.inputWrapper}>
+                            <Feather name="lock" size={20} color={BRAND.gray} style={{ marginRight: 10 }} />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="••••••••"
+                                placeholderTextColor={BRAND.gray}
+                                value={password}
+                                onChangeText={setPassword}
+                                secureTextEntry
+                            />
+                        </View>
                     </View>
+
+                    {errorMsg ? (
+                        <View style={styles.errorBox}>
+                            <Feather name="alert-triangle" size={16} color={BRAND.error} />
+                            <Text style={styles.errorText}>{errorMsg}</Text>
+                        </View>
+                    ) : null}
+
                     <TouchableOpacity 
-                        style={[styles.button, loading && styles.buttonDisabled]} 
-                        onPress={handleLogin} 
+                        style={styles.button} 
+                        onPress={handleLogin}
                         disabled={loading}
+                        activeOpacity={0.9}
                     >
                         {loading ? (
-                            <>
-                                {/* Nota: Para un buen UX, el spinner debe ser BLANCO en el botón primary (verde oscuro) */}
-                                <ActivityIndicator size="small" color={COLORS.white} /> 
-                                <Text style={styles.buttonTextLoading}>{loadingMessage}</Text>
-                            </>
+                            <ActivityIndicator color={BRAND.white} />
                         ) : (
-                            <Text style={styles.buttonText}>Iniciar Sesión</Text>
+                            <Text style={styles.buttonText}>Ingresar</Text>
                         )}
                     </TouchableOpacity>
+                </View>
+
+                {/* Footer */}
+                <View style={styles.footer}>
+                    <Text style={styles.footerText}>© 2025 Noar ERP Systems</Text>
                 </View>
             </View>
         </KeyboardAvoidingView>
     );
 };
 
-// --- ESTILOS MEJORADOS USANDO SIZES y la nueva paleta de COLORS ---
 const styles = StyleSheet.create({
-    container: { 
-        flex: 1, 
-        // Usamos backgroundEnd por si el gradiente es desactivado, aunque backgroundStart es el color principal
-        backgroundColor: COLORS.backgroundStart, 
+    container: { flex: 1, backgroundColor: BRAND.bg },
+    content: { flex: 1, justifyContent: 'center', paddingHorizontal: 32 },
+    
+    // Estilos Logo
+    logoContainer: { alignItems: 'center', marginBottom: 40 },
+    logoIconBox: {
+        width: 80, height: 80,
+        backgroundColor: BRAND.dark,
+        borderRadius: 24,
+        justifyContent: 'center', alignItems: 'center',
+        marginBottom: 20,
+        // Sombra suave estilo Apple
+        shadowColor: BRAND.dark, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.2, shadowRadius: 20,
+        elevation: 10,
     },
-    background: { 
-        position: 'absolute', 
-        left: 0, 
-        right: 0, 
-        top: 0, 
-        height: '100%' 
+    logoSymbol: { fontSize: 40, fontWeight: '900', color: BRAND.primary },
+    brandContainer: { alignItems: 'center' },
+    brandName: { fontSize: 28, fontWeight: '900', color: BRAND.dark, letterSpacing: -1 },
+    brandSuffix: { fontSize: 28, fontWeight: '300', color: BRAND.accent },
+    brandSlogan: { fontSize: 10, fontWeight: '700', color: BRAND.gray, letterSpacing: 4, marginTop: 5 },
+
+    // Textos
+    headerText: { alignItems: 'center', marginBottom: 30 },
+    title: { fontSize: 24, fontWeight: '800', color: '#1E293B', marginBottom: 5 },
+    subtitle: { fontSize: 16, color: '#64748B', fontWeight: '500' },
+
+    // Formulario
+    form: { width: '100%' },
+    inputGroup: { marginBottom: 20 },
+    label: { fontSize: 11, fontWeight: '800', color: BRAND.gray, marginBottom: 8, paddingLeft: 4 },
+    inputWrapper: {
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: BRAND.white,
+        borderRadius: 16,
+        borderWidth: 1, borderColor: '#E2E8F0',
+        height: 56, paddingHorizontal: 16,
+        shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 2
     },
-    contentContainer: {
-        flex: 1,
-        justifyContent: 'center', // Centra todo el contenido
-        alignItems: 'center',
-        paddingHorizontal: SIZES.large, // Usa la escala de 8 puntos
+    input: { flex: 1, fontSize: 16, fontWeight: '600', color: '#334155' },
+
+    // Botón
+    button: {
+        height: 56,
+        backgroundColor: BRAND.dark,
+        borderRadius: 16,
+        justifyContent: 'center', alignItems: 'center',
+        marginTop: 10,
+        shadowColor: BRAND.dark, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 15, elevation: 8,
     },
-    logo: { 
-        width: 180, 
-        height: 80, 
-        resizeMode: 'contain', 
-        marginBottom: SIZES.xl, // Espacio estandarizado
+    buttonText: { color: BRAND.white, fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+
+    // Error
+    errorBox: { 
+        flexDirection: 'row', alignItems: 'center', gap: 8, 
+        backgroundColor: '#FEF2F2', borderColor: '#FECACA', borderWidth: 1, 
+        padding: 12, borderRadius: 12, marginBottom: 20 
     },
-    title: { 
-        fontSize: SIZES.h1, // Usa h1 para el título principal
-        fontWeight: 'bold', 
-        color: COLORS.textPrimary, 
-        marginBottom: SIZES.small, // 8 puntos de espacio
-    },
-    subtitle: { 
-        fontSize: SIZES.body, // Usa body para el texto estándar
-        color: COLORS.textSecondary, 
-        marginBottom: SIZES.xl, // Espacio estandarizado antes del formulario
-        lineHeight: SIZES.large, // Mejora la legibilidad (24)
-    },
-    formContainer: { 
-        width: '100%' 
-    },
-    inputContainer: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        backgroundColor: COLORS.backgroundEnd, // Fondo blanco limpio para inputs
-        borderRadius: SIZES.radius, // 12 puntos de radio
-        borderWidth: SIZES.borderWidth, 
-        borderColor: COLORS.glassBorder, // Borde gris suave
-        marginBottom: SIZES.medium, // 16 puntos de espacio
-        paddingHorizontal: SIZES.medium, // 16 puntos de padding interno
-        height: 52, // Altura estándar (aprox. 52, que es un múltiplo de 8 si contamos padding)
-    },
-    inputIcon: { 
-        marginRight: SIZES.small // 8 puntos de espacio
-    },
-    input: { 
-        flex: 1, 
-        color: COLORS.textPrimary, 
-        fontSize: SIZES.body, 
-        height: '100%', 
-    },
-    button: { 
-        flexDirection: 'row', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        backgroundColor: COLORS.primary, // Verde Esmeralda
-        padding: SIZES.medium, // 16 puntos
-        borderRadius: SIZES.radius, // 12 puntos
-        marginTop: SIZES.large, // 24 puntos de margen superior
-        height: 52, // Misma altura que inputs
-        // Sombra de marca sutil para un efecto "elevado" (UX: hace el botón más clickeable)
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 5,
-        elevation: 6,
-    },
-    buttonDisabled: {
-        backgroundColor: COLORS.disabled,
-        shadowOpacity: 0, 
-        elevation: 0,
-    },
-    buttonText: { 
-        color: COLORS.white, // Blanco para alto contraste
-        fontSize: SIZES.body, 
-        fontWeight: 'bold', 
-    },
-    buttonTextLoading: { 
-        color: COLORS.white, // Blanco para alto contraste
-        fontSize: SIZES.body, 
-        fontWeight: 'bold', 
-        marginLeft: SIZES.small, // Espacio del spinner
-    },
+    errorText: { color: BRAND.error, fontSize: 14, fontWeight: '600' },
+
+    // Footer
+    footer: { position: 'absolute', bottom: 40, width: '100%', alignItems: 'center', alignSelf: 'center' },
+    footerText: { fontSize: 12, color: '#CBD5E1', fontWeight: '600' }
 });
 
 export default LoginScreen;

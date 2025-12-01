@@ -31,6 +31,23 @@ import { COLORS } from '../../styles/theme';
 const { width } = Dimensions.get('window');
 const GRID_CARD_WIDTH = (width - 48 - 16) / 2; 
 
+// --- COMPONENTE LOGO HEADER (Adaptado al Tema) ---
+const NoarHeaderLogo = () => (
+    <View style={styles.logoContainer}>
+        {/* Isotipo */}
+        <View style={styles.logoIconBox}>
+            <Text style={styles.logoSymbol}>N</Text>
+        </View>
+        {/* Logotipo Textual */}
+        <View>
+            <Text style={styles.brandName}>
+                NOAR <Text style={styles.brandSuffix}>ERP</Text>
+            </Text>
+            <Text style={styles.brandSlogan}>SISTEMA INTEGRAL</Text>
+        </View>
+    </View>
+);
+
 // --- INTERFACES ---
 interface ToolCardProps {
     icon: keyof typeof Feather.glyphMap;
@@ -75,7 +92,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
         return [...sales]
             .sort((a, b) => getDate(b) - getDate(a))
             .slice(0, 5);
-    }, [sales]); // Al actualizarse 'sales' (por delete optimista), esto se recalcula solo
+    }, [sales]); 
 
     const onRefresh = useCallback(async () => {
         setIsRefreshing(true);
@@ -125,14 +142,18 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                 contentContainerStyle={styles.scrollContent}
                 refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />}
             >
-                {/* --- HEADER --- */}
+                {/* --- HEADER CON LOGO GRANDE --- */}
                 <View style={styles.header}>
                     <View>
-                        <Text style={styles.greeting}>Hola,</Text>
-                        <Text style={styles.userName} numberOfLines={1}>
-                            {currentVendedor?.nombreCompleto?.split(' ')[0] || 'Vendedor'}
+                        {/* LOGO PRINCIPAL */}
+                        <NoarHeaderLogo />
+                        
+                        {/* NOMBRE DEL VENDEDOR (Pequeño) */}
+                        <Text style={styles.greeting}>
+                            Hola, <Text style={styles.userName}>{currentVendedor?.nombreCompleto?.split(' ')[0] || 'Vendedor'}</Text>
                         </Text>
                     </View>
+
                     <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
                         <Feather name="power" size={20} color={COLORS.textSecondary} />
                     </TouchableOpacity>
@@ -141,12 +162,12 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                 {/* --- MI CARTERA --- */}
                 <TouchableOpacity activeOpacity={0.95} onPress={() => navigation.navigate('ClientList')} style={styles.mainCardContainer}>
                     <LinearGradient
-                        colors={['#0F766E', '#134E4A']} 
+                        colors={[COLORS.textPrimary, '#1e293b']} // Usamos textPrimary para mantener la identidad oscura
                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                         style={styles.mainCardGradient}
                     >
                         <View style={styles.mainCardContent}>
-                            <View style={styles.iconCircle}><Feather name="users" size={22} color="#0F766E" /></View>
+                            <View style={styles.iconCircle}><Feather name="users" size={22} color={COLORS.textPrimary} /></View>
                             <View>
                                 <Text style={styles.mainCardTitle}>Mis Clientes</Text>
                                 <Text style={styles.mainCardSubtitle}>Gestionar cartera</Text>
@@ -157,16 +178,16 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                 </TouchableOpacity>
 
                 {/* --- ACCESOS RÁPIDOS --- */}
-                <Text style={styles.sectionHeader}>Accesos Rápidos</Text>
+                <Text style={styles.sectionHeader}>Herramientas</Text>
                 <View style={styles.toolsGrid}>
                     <ToolCard icon="grid" title="Catálogo" color="#6366F1" onPress={() => navigation.navigate('Catalogo')} />
                     <ToolCard icon="user-plus" title="Nuevo Cliente" color="#10B981" onPress={() => navigation.navigate('AddClient')} />
                     <ToolCard icon="map" title="Ruta" color="#F59E0B" onPress={() => navigation.navigate('ClientMap')} />
                     <ToolCard icon="bar-chart-2" title="Reportes" color="#EC4899" onPress={() => navigation.navigate('Reports')} />
-                        <ToolCard icon="star" title="Promociones" color="#e7de3fff" onPress={() => navigation.navigate('Promotions')} />
+                    <ToolCard icon="star" title="Promociones" color={COLORS.primary} onPress={() => navigation.navigate('Promotions')} />
                 </View>
 
-                {/* --- ÚLTIMAS VENTAS (Diseño Corregido) --- */}
+                {/* --- ÚLTIMAS VENTAS --- */}
                 <View style={styles.recentSectionHeader}>
                     <Text style={styles.sectionHeader}>Últimas Ventas</Text>
                     <TouchableOpacity onPress={() => navigation.navigate('Reports')}>
@@ -193,16 +214,14 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                                 style={styles.saleCard}
                                 onPress={() => navigation.navigate('SaleDetail', { saleId: item.id, clientName: clientNameDisplay })}
                             >
-                                {/* Parte Superior: Fecha y Monto */}
                                 <View>
                                     <Text style={styles.saleDate}>{formatDate(item.fecha)}</Text>
                                     <Text style={styles.saleAmount}>{formatCurrency(item.totalVenta)}</Text>
                                     <Text style={styles.saleClient} numberOfLines={1}>{clientNameDisplay}</Text>
                                 </View>
                                 
-                                {/* Parte Inferior: Estado (Para que no sobresalga) */}
                                 <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-                                    <Feather name={statusStyle.icon} size={12} color={statusStyle.text} />
+                                    <Feather name={statusStyle.icon} size={10} color={statusStyle.text} />
                                     <Text style={[styles.statusText, { color: statusStyle.text }]} numberOfLines={1}>
                                         {item.estado}
                                     </Text>
@@ -217,7 +236,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             
             {/* --- FAB --- */}
             <TouchableOpacity activeOpacity={0.9} style={styles.fabContainer} onPress={() => navigation.navigate('SelectClientForSale')}>
-                <View style={styles.fabContent}>
+                <View style={[styles.fabContent, { backgroundColor: COLORS.textPrimary }]}> 
                     <Feather name="plus" size={24} color="white" />
                     <Text style={styles.fabText}>Nueva Venta</Text>
                 </View>
@@ -230,7 +249,7 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
 const ToolCard = ({ icon, title, color, onPress }: ToolCardProps) => (
     <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={styles.toolCardWrapper}>
         <View style={[styles.toolIconContainer, { backgroundColor: color + '15' }]}> 
-            <Feather name={icon} size={26} color={color} />
+            <Feather name={icon} size={24} color={color} />
         </View>
         <Text style={styles.toolCardTitle}>{title}</Text>
     </TouchableOpacity>
@@ -241,44 +260,57 @@ const styles = StyleSheet.create({
     scrollContent: { paddingBottom: 100 },
     fullScreenLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
     
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: (StatusBar.currentHeight || 20) + 16, paddingBottom: 24, backgroundColor: '#F8FAFC' },
-    greeting: { fontSize: 14, color: '#64748B', fontWeight: '500' },
-    userName: { fontSize: 26, fontWeight: '800', color: '#1E293B', letterSpacing: -0.5 },
-    logoutButton: { padding: 10, backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 4 },
+    // --- HEADER STYLES ---
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: (StatusBar.currentHeight || 20) + 16, paddingBottom: 20, backgroundColor: '#F8FAFC' },
+    
+    // Logo Styles
+    logoContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+    logoIconBox: { width: 28, height: 28, backgroundColor: COLORS.textPrimary, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+    logoSymbol: { color: COLORS.primary, fontSize: 16, fontWeight: '900' },
+    brandName: { fontSize: 20, fontWeight: '900', color: COLORS.textPrimary, letterSpacing: -0.5, lineHeight: 22 },
+    brandSuffix: { fontWeight: '300', color: COLORS.primary }, // Usamos Primary del tema como acento
+    brandSlogan: { fontSize: 8, fontWeight: '700', color: COLORS.textSecondary, letterSpacing: 2, textTransform: 'uppercase' },
 
-    mainCardContainer: { marginHorizontal: 24, marginBottom: 32, borderRadius: 24, shadowColor: '#0F766E', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.35, shadowRadius: 20, elevation: 12, backgroundColor: '#fff' },
-    mainCardGradient: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 24, borderRadius: 24, height: 120 },
+    // Greeting Styles
+    greeting: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '500', marginTop: 2 },
+    userName: { fontWeight: '700', color: COLORS.textPrimary },
+
+    logoutButton: { padding: 10, backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
+
+    // --- CARDS ---
+    mainCardContainer: { marginHorizontal: 24, marginBottom: 32, borderRadius: 24, shadowColor: COLORS.textPrimary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 8, backgroundColor: '#fff' },
+    mainCardGradient: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 24, borderRadius: 24, height: 110 },
     mainCardContent: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-    iconCircle: { backgroundColor: 'rgba(255,255,255,0.95)', width: 50, height: 50, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
-    arrowCircle: { backgroundColor: 'rgba(255,255,255,0.2)', width: 32, height: 32, borderRadius: 50, justifyContent: 'center', alignItems: 'center' },
-    mainCardTitle: { color: 'white', fontSize: 18, fontWeight: '700', marginBottom: 2 },
-    mainCardSubtitle: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '500' },
+    iconCircle: { backgroundColor: 'rgba(255,255,255,0.95)', width: 48, height: 48, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+    arrowCircle: { backgroundColor: 'rgba(255,255,255,0.15)', width: 32, height: 32, borderRadius: 50, justifyContent: 'center', alignItems: 'center' },
+    mainCardTitle: { color: 'white', fontSize: 18, fontWeight: '800', marginBottom: 2 },
+    mainCardSubtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '500' },
 
-    sectionHeader: { fontSize: 18, fontWeight: '700', color: '#1E293B', marginLeft: 24, marginBottom: 16 },
-    recentSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 24, marginTop: 16, marginBottom: 16 },
-    seeAllText: { color: COLORS.primary, fontWeight: '600', fontSize: 14 },
+    sectionHeader: { fontSize: 17, fontWeight: '800', color: COLORS.textPrimary, marginLeft: 24, marginBottom: 16 },
+    recentSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 24, marginTop: 24, marginBottom: 16 },
+    seeAllText: { color: COLORS.primary, fontWeight: '700', fontSize: 13 },
 
-    toolsGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 24, justifyContent: 'space-between', gap: 16, marginBottom: 32 },
-    toolCardWrapper: { width: GRID_CARD_WIDTH, backgroundColor: '#FFFFFF', padding: 18, borderRadius: 22, alignItems: 'flex-start', justifyContent: 'space-between', height: 120, shadowColor: '#64748B', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 6, marginBottom: 16 },
-    toolIconContainer: { width: 48, height: 48, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-    toolCardTitle: { color: '#334155', fontWeight: '700', fontSize: 15 },
+    toolsGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 24, justifyContent: 'space-between', gap: 12, marginBottom: 32 },
+    toolCardWrapper: { width: GRID_CARD_WIDTH, backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, alignItems: 'flex-start', justifyContent: 'space-between', height: 110, shadowColor: '#64748B', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2, marginBottom: 4 },
+    toolIconContainer: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+    toolCardTitle: { color: '#334155', fontWeight: '700', fontSize: 14 },
 
     recentListContent: { paddingLeft: 24, paddingRight: 10 },
-    saleCard: { backgroundColor: '#FFFFFF', width: 160, height: 160, marginRight: 16, borderRadius: 20, padding: 16, justifyContent: 'space-between', shadowColor: '#64748B', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 5, marginBottom: 24 },
+    saleCard: { backgroundColor: '#FFFFFF', width: 150, height: 150, marginRight: 14, borderRadius: 20, padding: 14, justifyContent: 'space-between', shadowColor: '#64748B', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 2, marginBottom: 24, borderWidth: 1, borderColor: '#F1F5F9' },
     
-    saleDate: { fontSize: 11, color: '#94A3B8', fontWeight: '600', marginBottom: 4 },
-    saleAmount: { fontSize: 18, fontWeight: '800', color: '#1E293B', marginBottom: 4 },
-    saleClient: { fontSize: 13, fontWeight: '600', color: '#64748B' },
+    saleDate: { fontSize: 10, color: '#94A3B8', fontWeight: '600', marginBottom: 4 },
+    saleAmount: { fontSize: 16, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 4 },
+    saleClient: { fontSize: 12, fontWeight: '600', color: '#64748B' },
     
-    statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, alignSelf: 'flex-start' },
-    statusText: { fontSize: 10, fontWeight: '700', marginLeft: 4, textTransform: 'uppercase' },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, alignSelf: 'flex-start', gap: 4 },
+    statusText: { fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
     
     emptyState: { marginLeft: 24, padding: 20 },
     emptyStateText: { color: '#94A3B8', fontStyle: 'italic' },
 
-    fabContainer: { position: 'absolute', bottom: 32, alignSelf: 'center', shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 10, borderRadius: 30 },
-    fabContent: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F766E', paddingVertical: 16, paddingHorizontal: 32, borderRadius: 30 },
-    fabText: { color: 'white', fontWeight: '700', fontSize: 16, marginLeft: 10 },
+    fabContainer: { position: 'absolute', bottom: 30, alignSelf: 'center', shadowColor: COLORS.textPrimary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 16, elevation: 8, borderRadius: 30 },
+    fabContent: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 28, borderRadius: 30 },
+    fabText: { color: 'white', fontWeight: '800', fontSize: 16, marginLeft: 8 },
 });
 
 export default HomeScreen;
