@@ -12,30 +12,27 @@ import {
     View
 } from 'react-native';
 
-// --- Importaciones del Proyecto ---
+// --- Importaciones ---
 import { auth } from '../../db/firebase-service';
 import { LoginScreenProps } from '../navigation/AppNavigator';
 
-// --- COLORES DE MARCA (NOAR ERP) ---
+// --- COLORES DE MARCA ---
 const BRAND = {
-    dark: '#0F172A',   // Slate 900
-    primary: '#FBBF24', // Amber 400 (La N)
-    accent: '#D97706', // Amber 600 (ERP)
-    gray: '#94A3B8',   // Slate 400
-    bg: '#F8FAFC',     // Slate 50
+    dark: '#0F172A',   
+    primary: '#FBBF24', 
+    accent: '#D97706', 
+    gray: '#94A3B8',   
+    bg: '#F8FAFC',     
     white: '#FFFFFF',
     error: '#EF4444'
 };
 
-// --- COMPONENTE LOGO NATIVO (NOAR ERP) ---
+// --- COMPONENTE LOGO NATIVO ---
 const NoarLogoLogin = () => (
   <View style={styles.logoContainer}>
-      {/* Icono Cuadrado con Sombra */}
       <View style={styles.logoIconBox}>
           <Text style={styles.logoSymbol}>N</Text>
       </View>
-      
-      {/* Texto Corporativo */}
       <View style={styles.brandContainer}>
           <Text style={styles.brandName}>
               NOAR <Text style={styles.brandSuffix}>ERP</Text>
@@ -51,6 +48,10 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
     const [loading, setLoading] = useState(false); 
     const [errorMsg, setErrorMsg] = useState('');
 
+    // Estados para UX de placeholder
+    const [isEmailFocused, setIsEmailFocused] = useState(false);
+    const [isPasswordFocused, setIsPasswordFocused] = useState(false);
+
     const handleLogin = async () => {
         setErrorMsg('');
         if (!email || !password) {
@@ -61,11 +62,9 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
         setLoading(true);
         try {
             await auth.signInWithEmailAndPassword(email.trim(), password);
-            // La navegación es automática gracias al AuthListener en App.tsx
         } catch (error: any) {
             setLoading(false);
             console.error("Login Error:", error.code);
-            
             if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
                 setErrorMsg("Credenciales incorrectas.");
             } else if (error.code === 'auth/too-many-requests') {
@@ -86,44 +85,49 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
             <StatusBar barStyle="dark-content" backgroundColor={BRAND.bg} />
             
             <View style={styles.content}>
-                {/* Logo */}
                 <NoarLogoLogin />
 
-                {/* Títulos */}
                 <View style={styles.headerText}>
                     <Text style={styles.title}>Bienvenido</Text>
                     <Text style={styles.subtitle}>Inicia sesión para operar</Text>
                 </View>
 
-                {/* Formulario */}
                 <View style={styles.form}>
+                    
+                    {/* EMAIL INPUT */}
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>USUARIO</Text>
-                        <View style={styles.inputWrapper}>
-                            <Feather name="user" size={20} color={BRAND.gray} style={{ marginRight: 10 }} />
+                        <View style={[styles.inputWrapper, isEmailFocused && styles.inputFocused]}>
+                            <Feather name="user" size={20} color={isEmailFocused ? BRAND.dark : BRAND.gray} style={{ marginRight: 10 }} />
                             <TextInput
                                 style={styles.input}
-                                placeholder="ej: vendedor@noar.com"
+                                placeholder={isEmailFocused ? '' : "ej: vendedor@noar.com"}
                                 placeholderTextColor={BRAND.gray}
                                 value={email}
                                 onChangeText={setEmail}
-                                autoCapitalize="none"
+                                autoCapitalize="none" // Minuscula siempre
                                 keyboardType="email-address"
+                                onFocus={() => setIsEmailFocused(true)}
+                                onBlur={() => setIsEmailFocused(false)}
                             />
                         </View>
                     </View>
 
+                    {/* PASSWORD INPUT */}
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>CONTRASEÑA</Text>
-                        <View style={styles.inputWrapper}>
-                            <Feather name="lock" size={20} color={BRAND.gray} style={{ marginRight: 10 }} />
+                        <View style={[styles.inputWrapper, isPasswordFocused && styles.inputFocused]}>
+                            <Feather name="lock" size={20} color={isPasswordFocused ? BRAND.dark : BRAND.gray} style={{ marginRight: 10 }} />
                             <TextInput
                                 style={styles.input}
-                                placeholder="••••••••"
+                                placeholder={isPasswordFocused ? '' : "••••••••"}
                                 placeholderTextColor={BRAND.gray}
                                 value={password}
                                 onChangeText={setPassword}
                                 secureTextEntry
+                                autoCapitalize="none" // Minuscula siempre (clave para passwords)
+                                onFocus={() => setIsPasswordFocused(true)}
+                                onBlur={() => setIsPasswordFocused(false)}
                             />
                         </View>
                     </View>
@@ -149,7 +153,6 @@ const LoginScreen = ({ navigation }: LoginScreenProps) => {
                     </TouchableOpacity>
                 </View>
 
-                {/* Footer */}
                 <View style={styles.footer}>
                     <Text style={styles.footerText}>© 2025 Noar ERP Systems</Text>
                 </View>
@@ -162,7 +165,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: BRAND.bg },
     content: { flex: 1, justifyContent: 'center', paddingHorizontal: 32 },
     
-    // Estilos Logo
+    // Logo
     logoContainer: { alignItems: 'center', marginBottom: 40 },
     logoIconBox: {
         width: 80, height: 80,
@@ -170,7 +173,6 @@ const styles = StyleSheet.create({
         borderRadius: 24,
         justifyContent: 'center', alignItems: 'center',
         marginBottom: 20,
-        // Sombra suave estilo Apple
         shadowColor: BRAND.dark, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.2, shadowRadius: 20,
         elevation: 10,
     },
@@ -197,7 +199,11 @@ const styles = StyleSheet.create({
         height: 56, paddingHorizontal: 16,
         shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 2
     },
-    input: { flex: 1, fontSize: 16, fontWeight: '600', color: '#334155' },
+    inputFocused: {
+        borderColor: BRAND.dark, // Highlight al escribir
+        borderWidth: 1.5
+    },
+    input: { flex: 1, fontSize: 16, fontWeight: '600', color: '#334155', height: '100%' },
 
     // Botón
     button: {

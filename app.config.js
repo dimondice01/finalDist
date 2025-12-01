@@ -7,7 +7,7 @@ module.exports = ({ config }) => {
 
     return {
         "expo": {
-            "name": "Distribuidora",
+            "name": "Noar ERP",
             "slug": "Distribuidora",
             "version": "1.0.0",
             "orientation": "portrait",
