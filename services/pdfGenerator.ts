@@ -51,13 +51,21 @@ export const generatePdf = async (
         return acc + (precioBase * item.quantity);
     }, 0);
 
+    // ✅ CORRECCIÓN AQUÍ: 
+    // Priorizamos el argumento 'vendorName', pero si falla (viene vacío o undefined),
+    // usamos 'sale.vendedorName' (que guardaste en BD) o 'sale.vendedorNombre'.
+    // Solo si todo falla, ponemos 'Vendedor'.
+    const finalVendorName = vendorName || sale.vendedorName || sale.vendedorNombre || 'Vendedor';
+
     const invoiceData = {
         saleId: sale.id?.substring(0, 8) || 'N/A',
         saleDate: formatDate(sale.fecha),
         clientName: client?.nombreCompleto || client?.nombre || 'Consumidor Final',
         clientAddress: client?.direccion || '-',
         clientZone: client?.barrio || client?.localidad || '-',
-        vendorName: vendorName || 'Vendedor',
+        
+        vendorName: finalVendorName, // <-- Usamos la variable corregida
+        
         items: sale.items || [], 
         totalVenta: sale.totalVenta || 0,
         observaciones: sale.observaciones || '',
@@ -233,7 +241,7 @@ const generateHtml = (invoiceData: {
                             </div>
                         </div>
 
-                        <span class="distributor-details">F, La Rioja</span>
+                        <span class="distributor-details">Francisco 2, La Rioja</span>
                         <span class="distributor-details">Tel: (3804) 798844</span>
                     </div>
 

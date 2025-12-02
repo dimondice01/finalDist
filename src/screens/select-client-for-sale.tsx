@@ -2,9 +2,10 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     FlatList,
     Platform,
     StatusBar,
@@ -20,10 +21,17 @@ import Toast from 'react-native-toast-message';
 import { SelectClientForSaleScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
-import { Client, useData } from '../../context/DataContext';
+import { Client, useData } from '../../context/DataContext'; // ✅ Importamos Product
 import { COLORS, SIZES } from '../../styles/theme';
 
-// --- Componente Memoizado para el Item de la Lista ---
+// --- Interfaces para el Link Mágico ---
+interface WhatsAppItem {
+    id: string;
+    quantity: number;
+    cantidad?: number; // Soporte para legacy o typos
+}
+
+// --- Componente Memoizado para el Item de la Lista (CLIENTE) ---
 const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect: (client: Client) => void }) => {
     if (!item || !item.id) return null;
 
@@ -33,7 +41,7 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
 
     return (
         <TouchableOpacity
-            style={styles.card} 
+            style={styles.card}
             onPress={handlePress}
             activeOpacity={0.8}
         >
@@ -53,54 +61,101 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
 
 // --- PANTALLA PRINCIPAL ---
 const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScreenProps) => {
-    const { clients: allClients = [], isLoading } = useData();
+    // ✅ TRAEMOS 'products' PARA LA HIDRATACIÓN
+    const { clients: allClients = [], products, isLoading } = useData();
     const [searchQuery, setSearchQuery] = useState('');
+    const [hasHydrationError, setHasHydrationError] = useState(false);
 
     // ==============================================================================
-    // 🧠 LÓGICA DE "TRADUCCIÓN" (El Cerebro de la Integración)
+    // 🧠 LÓGICA DE "HIDRATACIÓN" (Data Hydration Layer)
     // ==============================================================================
-    const cartItemsFromCatalog = useMemo(() => {
-        // OPCIÓN 1: Venimos del Catálogo Interno (Ya es un objeto, lo usamos directo)
+    const hydratedCartItems = useMemo(() => {
+        // CASO A: Catálogo Interno (Ya vienen completos, pasamos directo)
         if (route.params?.cartItems) {
             return route.params.cartItems;
         }
-        
-        // OPCIÓN 2: Venimos de WhatsApp (Es un texto sucio, lo limpiamos aquí)
-        // El link trae: data="[{id:'...', quantity:5}]"
-        if (route.params?.data) {
+
+        // CASO B: Magic Link de WhatsApp (JSON sucio -> Objetos Product Completos)
+        if (route.params?.data && products.length > 0) {
             try {
-                // 1. Convertimos Texto -> Objeto
-                const parsed = JSON.parse(route.params.data);
+                // 1. Parsing seguro
+                const rawData: WhatsAppItem[] = JSON.parse(route.params.data);
                 
-                // 2. Validamos que sea útil
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    // 3. Avisamos al usuario que funcionó
-                    setTimeout(() => {
-                        Toast.show({
-                            type: 'success',
-                            text1: 'Pedido de WhatsApp Recibido',
-                            text2: `Se cargaron ${parsed.length} productos automáticamente.`,
-                            position: 'bottom',
-                            visibilityTime: 4000
-                        });
-                    }, 500);
-                    return parsed; // Devolvemos los datos limpios
+                if (!Array.isArray(rawData)) throw new Error("Formato inválido");
+
+                // 2. Hidratación (Cruce con Catalogo Local)
+                const hydrated = rawData.map(rawItem => {
+                    const cleanId = rawItem.id.trim();
+                    const qty = rawItem.quantity || rawItem.cantidad || 1;
+
+                    // BUSCAMOS EN LA FUENTE DE LA VERDAD (Contexto)
+                    const fullProduct = products.find(p => p.id === cleanId);
+
+                    if (!fullProduct) {
+                        console.warn(`[Hydration] Producto ID ${cleanId} no encontrado en catálogo local.`);
+                        return null; 
+                    }
+
+                    // RETORNAMOS EL PRODUCTO COMPLETO + CANTIDAD
+                    // Esto permite que CreateSale calcule precios, comisiones y costos correctamente.
+                    return {
+                        ...fullProduct,
+                        quantity: qty,
+                        // Forzamos precioOriginal para que CreateSale detecte si hay cambio de lista
+                        precioOriginal: fullProduct.precio 
+                    };
+                }).filter(Boolean); // Eliminamos nulos (productos no encontrados)
+
+                // 3. Validación de Integridad
+                if (hydrated.length === 0 && rawData.length > 0) {
+                    setHasHydrationError(true);
+                    return undefined; // Falló todo
                 }
+
+                if (hydrated.length < rawData.length) {
+                    // UX: Avisar que algunos productos no se encontraron
+                     setTimeout(() => {
+                        Toast.show({
+                            type: 'info',
+                            text1: 'Atención',
+                            text2: 'Algunos productos del enlace no existen en tu catálogo.',
+                            visibilityTime: 5000
+                        });
+                     }, 1000);
+                }
+
+                return hydrated;
+
             } catch (e) {
-                console.error("Error parseando pedido de WhatsApp:", e);
-                Toast.show({
-                    type: 'error',
-                    text1: 'Error de Enlace',
-                    text2: 'El formato del pedido de WhatsApp no es válido.',
-                    position: 'bottom'
-                });
+                console.error("Error hidratando pedido de WhatsApp:", e);
+                setHasHydrationError(true);
                 return undefined;
             }
         }
         return undefined;
-    }, [route.params]);
+    }, [route.params, products]); // Dependencia clave: products
 
-    // Filtrado de clientes (Igual que siempre)
+    // Efecto de Feedback Inicial (UX)
+    useEffect(() => {
+        if (hydratedCartItems && hydratedCartItems.length > 0) {
+             Toast.show({
+                type: 'success',
+                text1: 'Pedido Importado 🪄',
+                text2: `Se reconocieron ${hydratedCartItems.length} productos del enlace.`,
+                position: 'bottom',
+                visibilityTime: 3000
+            });
+        } else if (hasHydrationError) {
+             Alert.alert(
+                "Error de Enlace", 
+                "No se pudieron cargar los productos del enlace. Verifique que su catálogo esté actualizado.",
+                [{ text: "Entendido" }]
+            );
+        }
+    }, [hydratedCartItems, hasHydrationError]);
+
+
+    // Filtrado de clientes
     const filteredClients = useMemo(() => {
         let clientsToFilter = Array.isArray(allClients) ? allClients : [];
         clientsToFilter = clientsToFilter.filter(c => c && c.id);
@@ -117,18 +172,23 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
         return clientsToFilter;
     }, [searchQuery, allClients]);
 
-    // 2. NAVEGACIÓN A CREATE SALE CON DATOS LIMPIOS
+    // 2. NAVEGACIÓN A CREATE SALE CON DATOS HIDRATADOS
     const handleSelectClient = useCallback((client: Client) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         
-        // Aquí ocurre la magia: Le pasamos a CreateSale los datos ya procesados
-        // CreateSale ni se entera si vinieron de WhatsApp o del Catálogo interno.
+        // UX: Bloqueo si hay error en hidratación
+        if (route.params?.data && !hydratedCartItems) {
+            Alert.alert("Error", "El pedido es inválido. Intente abrir el enlace nuevamente.");
+            return;
+        }
+
+        // Pasamos 'hydratedCartItems' que ahora son objetos Product completos
         navigation.navigate('CreateSale', { 
             clientId: client.id,
-            // @ts-ignore - CreateSale recibe 'preselectedItems' que son los items limpios
-            preselectedItems: cartItemsFromCatalog 
+            // @ts-ignore 
+            preselectedItems: hydratedCartItems 
         }); 
-    }, [navigation, cartItemsFromCatalog]);
+    }, [navigation, hydratedCartItems, route.params]);
 
     const renderClientItem = useCallback(({ item }: { item: Client }) => (
         <ClientSelectItemCard item={item} onSelect={handleSelectClient} />
@@ -139,7 +199,7 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
             <View style={styles.loadingContainer}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loadingText}>Cargando clientes...</Text>
+                <Text style={styles.loadingText}>Cargando datos...</Text>
             </View>
         );
     }
@@ -155,17 +215,17 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
                     <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>
-                    {cartItemsFromCatalog ? 'ASIGNAR PEDIDO A...' : 'SELECCIONAR CLIENTE'}
+                    {hydratedCartItems ? 'ASIGNAR PEDIDO A...' : 'SELECCIONAR CLIENTE'}
                 </Text>
                  <View style={styles.headerButton} />
             </View>
 
-            {/* Aviso Visual si hay un pedido en espera */}
-            {cartItemsFromCatalog && cartItemsFromCatalog.length > 0 && (
+            {/* Aviso Visual Importante */}
+            {hydratedCartItems && hydratedCartItems.length > 0 && (
                 <View style={styles.cartNotice}>
-                    <Feather name="shopping-cart" size={16} color={COLORS.white} />
+                    <Feather name="link" size={16} color={COLORS.white} />
                     <Text style={styles.cartNoticeText}>
-                        PEDIDO EXTERNO: {cartItemsFromCatalog.length} items
+                        Pedido de WhatsApp: {hydratedCartItems.length} items listos
                     </Text>
                 </View>
             )}
@@ -176,7 +236,7 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
                     <Feather name="search" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
                     <TextInput
                         style={styles.input}
-                        placeholder="Buscar por nombre..."
+                        placeholder="Buscar cliente..."
                         placeholderTextColor={COLORS.textSecondary}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
@@ -250,23 +310,23 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     
-    // Aviso de carrito (Estilo WhatsApp)
+    // Aviso de carrito mejorado
     cartNotice: {
-        backgroundColor: '#25D366', // Verde WhatsApp para identificar visualmente el origen
+        backgroundColor: COLORS.primary, // Usamos el primario para denotar que es parte del flujo de la app
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: 10,
+        paddingVertical: 12,
         gap: 8,
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 2,
-        elevation: 3,
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 4,
     },
     cartNoticeText: {
         color: COLORS.white,
-        fontWeight: 'bold',
+        fontWeight: '600',
         fontSize: 14,
         letterSpacing: 0.5
     },
