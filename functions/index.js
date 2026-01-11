@@ -112,7 +112,16 @@ exports.revertirStockPorVentaEliminada = onDocumentDeleted("ventas/{ventaId}", a
     return null;
 });
 
+// ==================================================================
+// MÓDULO MERCADOPAGO (Importado)
+// ==================================================================
+const mpModule = require('./mercadopago');
 
+exports.obtenerTerminales = mpModule.obtenerTerminales;
+exports.configurarPoint = mpModule.configurarPoint;
+exports.cobrarConPoint = mpModule.cobrarConPoint;
+exports.generarCobroQR = mpModule.generarCobroQR;
+exports.webhookMercadoPago = mpModule.webhookMercadoPago;
 // ----------------------------------------------------------------------
 // FUNCIÓN 3: AJUSTAR STOCK NETO (al editar la venta) - ¡NUEVA!
 // ----------------------------------------------------------------------

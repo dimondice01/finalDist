@@ -1,5 +1,5 @@
 // src/screens/route-detail.tsx
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -12,6 +12,7 @@ import {
     Modal,
     Platform,
     SafeAreaView,
+    ScrollView,
     StatusBar,
     StyleSheet,
     Text,
@@ -21,8 +22,11 @@ import {
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 
-// --- FIREBASE NATIVO ---
+// --- FIREBASE ---
 import firestore from '@react-native-firebase/firestore';
+// Usamos funciones nativas de React Native Firebase para evitar errores de contexto
+import functions from '@react-native-firebase/functions';
+import { auth } from '../../db/firebase-service';
 
 // --- CONTEXTO Y UTILS ---
 import { useData } from '../../context/DataContext';
@@ -34,7 +38,7 @@ const formatCurrency = (value?: number) =>
         ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         : '$0,00';
 
-// --- UTILIDADES DE RUTA (Algoritmo) ---
+// --- UTILIDADES DE RUTA ---
 const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; 
     const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -111,7 +115,7 @@ interface Invoice {
 }
 
 // =================================================================================
-// MODAL DE GESTIÓN DE ENTREGA (ESTILO CHECKOUT PREMIUM)
+// MODAL DE GESTIÓN DE ENTREGA
 // =================================================================================
 
 interface DeliveryModalProps {
@@ -120,19 +124,26 @@ interface DeliveryModalProps {
     invoice: Invoice;
     routeId: string;
     onSuccess: () => void;
+    externalPosId?: string; 
 }
 
-const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: DeliveryModalProps) => {
+const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, externalPosId }: DeliveryModalProps) => {
     const [items, setItems] = useState<ProductItem[]>([]);
     const [pagoEfectivo, setPagoEfectivo] = useState('');
     const [pagoTransferencia, setPagoTransferencia] = useState('');
     const [isLoadingItems, setIsLoadingItems] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
+    // --- ESTADOS MP ---
+    const [mpLoading, setMpLoading] = useState(false);
+    const [mpStatus, setMpStatus] = useState('');
+
     useEffect(() => {
         if (visible && invoice) {
             setPagoEfectivo(invoice.pagoEfectivo ? invoice.pagoEfectivo.toString() : '');
             setPagoTransferencia(invoice.pagoTransferencia ? invoice.pagoTransferencia.toString() : '');
+            setMpStatus('');
+            setMpLoading(false);
             
             const hasItems = invoice.items && invoice.items.length > 0;
 
@@ -144,11 +155,35 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
         }
     }, [visible, invoice]);
 
+    // Listener Realtime (Detectar Pago Webhook)
+    useEffect(() => {
+        if (!visible || !invoice?.id) return;
+
+        const unsubscribe = firestore().collection('ventas').doc(invoice.id).onSnapshot(
+            (docSnap) => {
+                const data = docSnap.data();
+                if (data && (data.estado === 'Pagada' || (data.saldoPendiente || 0) <= 10)) {
+                    if (!isSaving) {
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        Toast.show({ type: 'success', text1: '¡Pago Acreditado!', text2: 'Detectado automáticamente.' });
+                        setTimeout(() => {
+                            onSuccess();
+                            onClose();
+                        }, 1500);
+                    }
+                }
+            },
+            (error) => console.log("Listener Error:", error)
+        );
+
+        return () => unsubscribe();
+    }, [visible, invoice?.id, isSaving]);
+
     const fetchFullSale = async (saleId: string) => {
         setIsLoadingItems(true);
         try {
             const saleDoc = await firestore().collection('ventas').doc(saleId).get();
-            if (saleDoc.exists()) {
+            if (saleDoc.exists()) { // TS: .exists es propiedad en nativo
                 const saleData = saleDoc.data();
                 const saleItems = saleData?.items || [];
                 if (saleItems.length > 0) {
@@ -224,8 +259,75 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
         }
     };
 
+    // --- LÓGICA MERCADOPAGO POINT (Nativo) ---
+    const handlePointPayment = async () => {
+        setMpLoading(true);
+        setMpStatus('Buscando Point...');
+
+        try {
+            // Usamos functions() nativo
+            const obtenerTerminales = functions().httpsCallable('obtenerTerminales');
+            const resDevices: any = await obtenerTerminales();
+            
+            // En nativo, la data suele venir directa en .data
+            const devices = resDevices.data?.devices || resDevices.data || [];
+
+            if (!Array.isArray(devices) || devices.length === 0) {
+                throw new Error("No hay terminales vinculadas.");
+            }
+
+            const targetDevice = devices[0].id;
+            setMpStatus(`Enviando a ${devices[0].name}...`);
+
+            // Enviar Orden
+            const cobrarConPoint = functions().httpsCallable('cobrarConPoint');
+            await cobrarConPoint({
+                deviceId: targetDevice,
+                amount: saldoRestante,
+                externalReference: invoice.id
+            });
+
+            setMpStatus('Esperando tarjeta en el Point...');
+
+        } catch (error: any) {
+            console.error(error);
+            Alert.alert("Error Point", error.message || "Error desconocido");
+            setMpLoading(false);
+        }
+    };
+
+    // --- LÓGICA QR FIJO (Nativo) ---
+    const handleQrPayment = async () => {
+        if (!externalPosId) {
+            Alert.alert("Sin Caja Asignada", "Tu usuario no tiene una Caja MP configurada.");
+            return;
+        }
+
+        setMpLoading(true);
+        setMpStatus('Activando QR del Camión...');
+
+        try {
+            const activarQrFijo = functions().httpsCallable('activarQrFijo');
+            
+            await activarQrFijo({
+                externalPosId: externalPosId,
+                amount: saldoRestante,
+                externalReference: invoice.id,
+                title: `Pedido ${invoice.clienteNombre}`,
+                items: [{ title: 'Productos Varios', unit_price: saldoRestante, quantity: 1, total_amount: saldoRestante }]
+            });
+
+            setMpStatus('¡Listo! Escaneá el Sticker ahora.');
+
+        } catch (error: any) {
+            console.error(error);
+            Alert.alert("Error QR", error.message || "Error desconocido");
+            setMpLoading(false);
+        }
+    };
+
     const handleConfirmTransaction = async () => {
-        if (totalPagado > totalVentaNuevo + 10) { // Tolerancia $10
+        if (totalPagado > totalVentaNuevo + 10) {
             Alert.alert("Montos Incorrectos", `El pago (${formatCurrency(totalPagado)}) supera el total (${formatCurrency(totalVentaNuevo)}).`);
             return;
         }
@@ -241,7 +343,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                 const routeDoc = await transaction.get(routeRef);
                 if (!routeDoc.exists) throw new Error("Ruta no encontrada");
 
-                // 1. STOCK (Devolución de lo NO entregado)
+                // Stock
                 for (const item of items) {
                     if (!item.id) continue;
                     const cargado = item.originalQuantity || 0;
@@ -254,7 +356,6 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                     }
                 }
 
-                // 2. SANITIZAR DATOS
                 const itemsToSave = items.map(item => ({
                     id: item.id,
                     productId: item.productId || item.id, 
@@ -264,20 +365,18 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                     originalQuantity: Number(item.originalQuantity)
                 }));
 
-                // 3. ACTUALIZAR VENTA
                 const saleDataUpdate = {
                     items: itemsToSave,
                     totalVenta: Number(totalVentaNuevo),
                     pagoEfectivo: parseFloat(pagoEfectivo.replace(',', '.')) || 0,
                     pagoTransferencia: parseFloat(pagoTransferencia.replace(',', '.')) || 0,
                     saldoPendiente: Number(saldoRestante),
-                    estado: nuevoEstado === 'Adeuda' || nuevoEstado === 'Pagada' ? nuevoEstado : 'Pendiente de Entrega', // Mapeo seguro
-                    estadoVisita: nuevoEstado, // Guardamos el estado interno de la visita
+                    estado: nuevoEstado === 'Adeuda' || nuevoEstado === 'Pagada' ? nuevoEstado : 'Pendiente de Entrega', 
+                    estadoVisita: nuevoEstado, 
                     fechaUltimoPago: firestore.FieldValue.serverTimestamp()
                 };
                 transaction.update(saleRef, saleDataUpdate);
 
-                // 4. ACTUALIZAR RUTA
                 const routeData = routeDoc.data();
                 // @ts-ignore
                 const currentInvoices = routeData?.facturas || [];
@@ -325,21 +424,18 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                         </TouchableOpacity>
                     </View>
 
-                    {/* Lista de Productos */}
-                    <View style={modalStyles.sectionHeader}>
-                        <Text style={modalStyles.sectionTitle}>PRODUCTOS</Text>
-                        <Text style={modalStyles.sectionInfo}>(Ajustar si hubo rechazo)</Text>
-                    </View>
+                    <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
+                        {/* Lista de Productos */}
+                        <View style={modalStyles.sectionHeader}>
+                            <Text style={modalStyles.sectionTitle}>PRODUCTOS</Text>
+                            <Text style={modalStyles.sectionInfo}>(Ajustar si hubo rechazo)</Text>
+                        </View>
 
-                    {isLoadingItems ? (
-                        <ActivityIndicator size="large" color={COLORS.primary} style={{margin: 20}} />
-                    ) : (
-                        <FlatList
-                            data={items}
-                            keyExtractor={(item, index) => (item.id || index).toString()}
-                            style={modalStyles.list}
-                            renderItem={({ item, index }) => (
-                                <View style={modalStyles.itemRow}>
+                        {isLoadingItems ? (
+                            <ActivityIndicator size="large" color={COLORS.primary} style={{margin: 20}} />
+                        ) : (
+                            items.map((item, index) => (
+                                <View key={(item.id || index).toString()} style={modalStyles.itemRow}>
                                     <View style={{ flex: 1 }}>
                                         <Text style={modalStyles.itemName}>{item.nombre}</Text>
                                         <Text style={modalStyles.itemPriceUnit}>{formatCurrency(item.precio)} c/u</Text>
@@ -359,74 +455,107 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess }: Delive
                                     </View>
                                     <Text style={modalStyles.itemSubtotal}>{formatCurrency(item.quantity * item.precio)}</Text>
                                 </View>
-                            )}
-                        />
-                    )}
+                            ))
+                        )}
 
-                    {/* Resumen Financiero */}
-                    <View style={modalStyles.summaryContainer}>
-                        <View style={modalStyles.summaryRow}>
-                            <Text style={modalStyles.summaryLabel}>Original:</Text>
-                            <Text style={[modalStyles.summaryValue, { textDecorationLine: 'line-through', color: '#999' }]}>{formatCurrency(invoice.totalVenta)}</Text>
-                        </View>
-                        <View style={modalStyles.summaryRow}>
-                            <Text style={[modalStyles.summaryLabel, { color: COLORS.textPrimary, fontWeight: 'bold' }]}>A COBRAR:</Text>
-                            <Text style={[modalStyles.summaryValue, { color: COLORS.primary, fontSize: 18 }]}>{formatCurrency(totalVentaNuevo)}</Text>
-                        </View>
-                    </View>
-
-                    {/* Sección Pago */}
-                    <View style={modalStyles.paymentSection}>
-                        <Text style={modalStyles.sectionTitle}>REGISTRAR PAGO</Text>
-                        <View style={modalStyles.inputRow}>
-                            <Feather name="dollar-sign" size={20} color={COLORS.success} style={{ marginRight: 10 }} />
-                            <TextInput 
-                                style={modalStyles.input} 
-                                placeholder="Efectivo" 
-                                keyboardType="numeric" 
-                                value={pagoEfectivo} 
-                                onChangeText={setPagoEfectivo} 
-                                placeholderTextColor={COLORS.textSecondary}
-                            />
-                        </View>
-                        <View style={modalStyles.inputRow}>
-                            <Feather name="credit-card" size={20} color={COLORS.secondary} style={{ marginRight: 10 }} />
-                            <TextInput 
-                                style={modalStyles.input} 
-                                placeholder="Transferencia" 
-                                keyboardType="numeric" 
-                                value={pagoTransferencia} 
-                                onChangeText={setPagoTransferencia} 
-                                placeholderTextColor={COLORS.textSecondary}
-                            />
-                        </View>
-                    </View>
-
-                    {/* Footer Actions */}
-                    <View style={modalStyles.footer}>
-                        <View style={modalStyles.statusPreview}>
-                            <Text style={modalStyles.statusLabel}>Estado final:</Text>
-                            <View style={[modalStyles.statusBadge, 
-                                nuevoEstado === 'Pagada' ? { backgroundColor: '#DCFCE7' } : 
-                                nuevoEstado === 'Adeuda' ? { backgroundColor: '#FEF3C7' } : 
-                                { backgroundColor: '#FEE2E2' }
-                            ]}>
-                                <Text style={[modalStyles.statusText, 
-                                    nuevoEstado === 'Pagada' ? { color: '#166534' } : 
-                                    nuevoEstado === 'Adeuda' ? { color: '#B45309' } : 
-                                    { color: '#991B1B' }
-                                ]}>{nuevoEstado.toUpperCase()}</Text>
+                        {/* Resumen Financiero */}
+                        <View style={modalStyles.summaryContainer}>
+                            <View style={modalStyles.summaryRow}>
+                                <Text style={modalStyles.summaryLabel}>Original:</Text>
+                                <Text style={[modalStyles.summaryValue, { textDecorationLine: 'line-through', color: '#999' }]}>{formatCurrency(invoice.totalVenta)}</Text>
+                            </View>
+                            <View style={modalStyles.summaryRow}>
+                                <Text style={[modalStyles.summaryLabel, { color: COLORS.textPrimary, fontWeight: 'bold' }]}>A COBRAR:</Text>
+                                <Text style={[modalStyles.summaryValue, { color: COLORS.primary, fontSize: 18 }]}>{formatCurrency(totalVentaNuevo)}</Text>
                             </View>
                         </View>
 
-                        <TouchableOpacity 
-                            style={[modalStyles.confirmBtn, isSaving && { opacity: 0.7 }]}
-                            onPress={handleConfirmTransaction}
-                            disabled={isSaving || isLoadingItems}
-                        >
-                            {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={modalStyles.confirmBtnText}>CONFIRMAR ENTREGA</Text>}
-                        </TouchableOpacity>
-                    </View>
+                        {/* --- SECCIÓN MERCADOPAGO --- */}
+                        <View style={modalStyles.paymentSection}>
+                            <Text style={modalStyles.sectionTitle}>MEDIOS DIGITALES</Text>
+                            
+                            {mpLoading ? (
+                                <View style={modalStyles.mpLoadingBox}>
+                                    <ActivityIndicator color="#009EE3" />
+                                    <Text style={modalStyles.mpStatusText}>{mpStatus}</Text>
+                                    <TouchableOpacity onPress={() => setMpLoading(false)}>
+                                        <Text style={{color: COLORS.danger, fontWeight:'bold', marginTop:5}}>Cancelar</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                <View style={modalStyles.mpGrid}>
+                                    <TouchableOpacity 
+                                        style={[modalStyles.mpBtn, { backgroundColor: '#E0F2FE', borderColor: '#0284C7' }]}
+                                        onPress={handlePointPayment}
+                                    >
+                                        <MaterialCommunityIcons name="credit-card-wireless" size={24} color="#0284C7" />
+                                        <Text style={[modalStyles.mpBtnText, { color: '#0284C7' }]}>Point</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity 
+                                        style={[modalStyles.mpBtn, { backgroundColor: '#DCFCE7', borderColor: '#16A34A' }]}
+                                        onPress={handleQrPayment}
+                                    >
+                                        <MaterialCommunityIcons name="qrcode-scan" size={24} color="#16A34A" />
+                                        <Text style={[modalStyles.mpBtnText, { color: '#16A34A' }]}>QR Sticker</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                        </View>
+
+                        {/* Sección Pago Manual */}
+                        <View style={modalStyles.paymentSection}>
+                            <Text style={modalStyles.sectionTitle}>PAGO MANUAL</Text>
+                            <View style={modalStyles.inputRow}>
+                                <Feather name="dollar-sign" size={20} color={COLORS.success} style={{ marginRight: 10 }} />
+                                <TextInput 
+                                    style={modalStyles.input} 
+                                    placeholder="Efectivo" 
+                                    keyboardType="numeric" 
+                                    value={pagoEfectivo} 
+                                    onChangeText={setPagoEfectivo} 
+                                    placeholderTextColor={COLORS.textSecondary}
+                                />
+                            </View>
+                            <View style={modalStyles.inputRow}>
+                                <Feather name="credit-card" size={20} color={COLORS.secondary} style={{ marginRight: 10 }} />
+                                <TextInput 
+                                    style={modalStyles.input} 
+                                    placeholder="Transferencia" 
+                                    keyboardType="numeric" 
+                                    value={pagoTransferencia} 
+                                    onChangeText={setPagoTransferencia} 
+                                    placeholderTextColor={COLORS.textSecondary}
+                                />
+                            </View>
+                        </View>
+
+                        {/* Footer Actions */}
+                        <View style={modalStyles.footer}>
+                            <View style={modalStyles.statusPreview}>
+                                <Text style={modalStyles.statusLabel}>Estado final:</Text>
+                                <View style={[modalStyles.statusBadge, 
+                                    nuevoEstado === 'Pagada' ? { backgroundColor: '#DCFCE7' } : 
+                                    nuevoEstado === 'Adeuda' ? { backgroundColor: '#FEF3C7' } : 
+                                    { backgroundColor: '#FEE2E2' }
+                                ]}>
+                                    <Text style={[modalStyles.statusText, 
+                                        nuevoEstado === 'Pagada' ? { color: '#166534' } : 
+                                        nuevoEstado === 'Adeuda' ? { color: '#B45309' } : 
+                                        { color: '#991B1B' }
+                                    ]}>{nuevoEstado.toUpperCase()}</Text>
+                                </View>
+                            </View>
+
+                            <TouchableOpacity 
+                                style={[modalStyles.confirmBtn, isSaving && { opacity: 0.7 }]}
+                                onPress={handleConfirmTransaction}
+                                disabled={isSaving || isLoadingItems}
+                            >
+                                {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={modalStyles.confirmBtnText}>CONFIRMAR ENTREGA</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </ScrollView>
                 </View>
             </KeyboardAvoidingView>
         </Modal>
@@ -441,6 +570,29 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const routeId = route.params?.routeId;
     const { routes, clients, sales, syncData } = useData();
     
+    // --- OBTENER CAJA DEL USUARIO (QR) ---
+    const [userCajaMP, setUserCajaMP] = useState<string | undefined>(undefined);
+
+    useEffect(() => {
+        const fetchUserConfig = async () => {
+            const user = auth.currentUser;
+            if (user) {
+                try {
+                    const userDoc = await firestore().collection('users').doc(user.uid).get();
+                    if (userDoc.exists()) { // TS Fix
+                        const userData = userDoc.data();
+                        if (userData && userData.cajaMP) {
+                            setUserCajaMP(userData.cajaMP);
+                        }
+                    }
+                } catch (e) {
+                    console.log("Error cargando config usuario:", e);
+                }
+            }
+        };
+        fetchUserConfig();
+    }, []);
+
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [deliveryModalVisible, setDeliveryModalVisible] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
@@ -456,14 +608,10 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
 
         const enrichedInvoices = (r.facturas || []).map((inv: any) => {
             let targetId = (inv.clienteId || inv.clientId || '').trim();
-            
             if (!targetId) {
                 const linkedSale = sales.find(s => s.id === inv.id);
-                if (linkedSale && linkedSale.clienteId) {
-                    targetId = linkedSale.clienteId;
-                }
+                if (linkedSale && linkedSale.clienteId) targetId = linkedSale.clienteId;
             }
-
             const client = clients.find(c => c.id === targetId);
 
             return {
@@ -476,7 +624,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
             } as Invoice;
         });
 
-        // Orden: Pendientes primero
         enrichedInvoices.sort((a: Invoice, b: Invoice) => {
             const scoreA = a.estadoVisita === 'Pendiente' ? 0 : 1;
             const scoreB = b.estadoVisita === 'Pendiente' ? 0 : 1;
@@ -522,7 +669,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     // --- LÓGICA DE INICIO DE RECORRIDO ---
     const handleStartRoute = () => {
         const pendientes = routeData?.facturas.filter(f => f.estadoVisita === 'Pendiente') || [];
-        
         if (pendientes.length === 0) {
             Alert.alert("Ruta Completada", "No hay paradas pendientes.");
             return;
@@ -538,7 +684,6 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     onPress: () => {
                         const optimized = optimizeInvoices(pendientes);
                         startNavigation(optimized);
-                        
                         if (optimized.length > 0) {
                             const first = optimized[0];
                             setTimeout(() => {
@@ -650,12 +795,12 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                                 </View>
                                 {(item.estadoVisita === 'Adeuda' || item.estadoVisita === 'Pagada') && (
                                     <View style={styles.rowBetween}>
-                                        <Text style={[styles.label, { color: item.estadoVisita === 'Adeuda' ? COLORS.warning : COLORS.success }]}>
-                                            {item.estadoVisita === 'Adeuda' ? 'Saldo Deudor:' : 'Pagado:'}
-                                        </Text>
-                                        <Text style={[styles.value, { color: item.estadoVisita === 'Adeuda' ? COLORS.warning : COLORS.success }]}>
-                                            {item.estadoVisita === 'Adeuda' ? formatCurrency(item.saldoPendiente) : 'Completo'}
-                                        </Text>
+                                            <Text style={[styles.label, { color: item.estadoVisita === 'Adeuda' ? COLORS.warning : COLORS.success }]}>
+                                                {item.estadoVisita === 'Adeuda' ? 'Saldo Deudor:' : 'Pagado:'}
+                                            </Text>
+                                            <Text style={[styles.value, { color: item.estadoVisita === 'Adeuda' ? COLORS.warning : COLORS.success }]}>
+                                                {item.estadoVisita === 'Adeuda' ? formatCurrency(item.saldoPendiente) : 'Completo'}
+                                            </Text>
                                     </View>
                                 )}
                             </View>
@@ -685,7 +830,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                 </View>
             )}
 
-            {/* NUEVO MODAL DE NAVEGACIÓN (COPILOTO) */}
+            {/* MODAL NAVEGACIÓN */}
             <Modal visible={isNavMode} transparent animationType="slide" onRequestClose={() => setIsNavMode(false)}>
                 <View style={navStyles.overlay}>
                     <View style={navStyles.card}>
@@ -758,6 +903,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     routeId={routeData.id}
                     onClose={() => setDeliveryModalVisible(false)}
                     onSuccess={handleSuccessUpdate}
+                    externalPosId={userCajaMP} 
                 />
             )}
 
@@ -766,7 +912,7 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
 };
 
 // =================================================================================
-// ESTILOS
+// ESTILOS (DEFINIDOS AL FINAL)
 // =================================================================================
 const navStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
@@ -814,7 +960,7 @@ const modalStyles = StyleSheet.create({
     summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
     summaryLabel: { fontSize: 14, color: COLORS.textSecondary },
     summaryValue: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary },
-    paymentSection: { paddingHorizontal: 20 },
+    paymentSection: { paddingHorizontal: 20, marginTop: 10 },
     inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 15, height: 50, marginBottom: 10, borderWidth: 1, borderColor: '#E5E5EA' },
     input: { flex: 1, fontSize: 16, color: COLORS.textPrimary, height: '100%' },
     footer: { padding: 20, backgroundColor: '#FFF', marginTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
@@ -823,7 +969,14 @@ const modalStyles = StyleSheet.create({
     statusBadge: {paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8},
     statusText: {fontWeight: 'bold', fontSize: 12},
     confirmBtn: { backgroundColor: COLORS.primary, height: 50, borderRadius: 14, justifyContent: 'center', alignItems: 'center', shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
-    confirmBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }
+    confirmBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 },
+    
+    // --- ESTILOS MP ---
+    mpGrid: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+    mpBtn: { flex: 1, height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, gap: 5 },
+    mpBtnText: { fontWeight: '700', fontSize: 13 },
+    mpLoadingBox: { alignItems: 'center', padding: 15, backgroundColor: '#F0F9FF', borderRadius: 12, borderWidth: 1, borderColor: '#009EE3', borderStyle: 'dashed', marginBottom: 10 },
+    mpStatusText: { marginTop: 10, color: '#0284C7', fontWeight: '600' }
 });
 
 const styles = StyleSheet.create({
