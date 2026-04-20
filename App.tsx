@@ -24,15 +24,16 @@ const linkingConfig = {
   // Prefijos que la app escucha (Tu esquema actual y soporte para desarrollo)
   prefixes: [
     Linking.createURL('/'), 
-    'movilappnueva://',     // Tu esquema actual (definido en app.config.js)
-    'distribuidora://'      // Agregado por compatibilidad futura
+    'movilappnueva://',     
+    'distribuidora://',
+    'https://noarerp.web.app' // ✅ Añadido para Universal Links
   ],
   config: {
     screens: {
-      // Mapeamos la ruta del link a la pantalla del Navigator
-      // Link: movilappnueva://select-client-for-sale?data=...
-      // Pantalla en AppNavigator: "SelectClientForSale"
-      SelectClientForSale: 'select-client-for-sale',
+      // Unificamos todas las rutas de importación de pedidos a esta pantalla
+      SelectClientForSale: {
+        path: 'pedido', // Maneja https://noarerp.web.app/pedido?...
+      },
     },
   },
 };

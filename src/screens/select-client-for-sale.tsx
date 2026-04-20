@@ -8,6 +8,7 @@ import {
     Alert,
     FlatList,
     Platform,
+    ScrollView,
     StatusBar,
     StyleSheet,
     Text,
@@ -17,22 +18,44 @@ import {
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 
-// --- Navegación ---
 import { SelectClientForSaleScreenProps } from '../navigation/AppNavigator';
 
-// --- Contexto y Estilos ---
-import { Client, useData } from '../../context/DataContext'; // ✅ Importamos Product
+import { Client, useData } from '../../context/DataContext';
+import { dbContainer } from '../../db/firebase-service';
 import { COLORS, SIZES } from '../../styles/theme';
 
-// --- Interfaces para el Link Mágico ---
 interface WhatsAppItem {
     id: string;
     quantity: number;
-    cantidad?: number; // Soporte para legacy o typos
+    cantidad?: number;
 }
 
+type VisitFilter = 'todos' | 'no_visitados' | 'visitados';
+
+// --- Componente de Pill de Filtro ---
+const FilterPill = memo(({ label, active, onPress, count }: {
+    label: string;
+    active: boolean;
+    onPress: () => void;
+    count?: number;
+}) => (
+    <TouchableOpacity
+        style={[pillStyles.pill, active && pillStyles.pillActive]}
+        onPress={onPress}
+        activeOpacity={0.7}
+    >
+        <Text style={[pillStyles.pillText, active && pillStyles.pillTextActive]}>
+            {label}{count !== undefined ? ` (${count})` : ''}
+        </Text>
+    </TouchableOpacity>
+));
+
 // --- Componente Memoizado para el Item de la Lista (CLIENTE) ---
-const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect: (client: Client) => void }) => {
+const ClientSelectItemCard = memo(({ item, onSelect, isVisitado }: {
+    item: Client;
+    onSelect: (client: Client) => void;
+    isVisitado: boolean;
+}) => {
     if (!item || !item.id) return null;
 
     const handlePress = useCallback(() => {
@@ -41,11 +64,21 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
 
     return (
         <TouchableOpacity
-            style={styles.card}
+            style={[styles.card, isVisitado && styles.cardVisitado]}
             onPress={handlePress}
             activeOpacity={0.8}
         >
-            <Feather name="user" size={SIZES.h3} color={COLORS.primary} style={styles.userIcon} />
+            {isVisitado && (
+                <View style={styles.visitadoBadge}>
+                    <Feather name="check" size={10} color={COLORS.white} />
+                </View>
+            )}
+            <Feather
+                name="user"
+                size={SIZES.h3}
+                color={isVisitado ? COLORS.success : COLORS.primary}
+                style={styles.userIcon}
+            />
             <View style={styles.cardInfo}>
                 <Text style={styles.cardTitle} numberOfLines={1}>
                     {item.nombre || item.nombreCompleto || 'Cliente Sin Nombre'}
@@ -54,152 +87,226 @@ const ClientSelectItemCard = memo(({ item, onSelect }: { item: Client, onSelect:
                     <Text style={styles.cardSubtitle} numberOfLines={1}>{item.direccion}</Text>
                 ) : null}
             </View>
-            <Feather name="chevron-right" size={SIZES.h3} color={COLORS.primary} />
+            {isVisitado ? (
+                <Text style={styles.visitadoLabel}>Visitado</Text>
+            ) : (
+                <Feather name="chevron-right" size={SIZES.h3} color={COLORS.primary} />
+            )}
         </TouchableOpacity>
     );
 });
 
 // --- PANTALLA PRINCIPAL ---
 const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScreenProps) => {
-    // ✅ TRAEMOS 'products' PARA LA HIDRATACIÓN
-    const { clients: allClients = [], products, isLoading } = useData();
+    const {
+        clients: allClients = [],
+        products,
+        sales = [],
+        identity,
+        companyId,
+        availableZones = [],
+        isLoading: isContextLoading,
+    } = useData();
+
     const [searchQuery, setSearchQuery] = useState('');
+    const [finalCartItems, setFinalCartItems] = useState<any[] | undefined>(undefined);
+    const [isHydrating, setIsHydrating] = useState(false);
     const [hasHydrationError, setHasHydrationError] = useState(false);
 
-    // ==============================================================================
-    // 🧠 LÓGICA DE "HIDRATACIÓN" (Data Hydration Layer)
-    // ==============================================================================
-    const hydratedCartItems = useMemo(() => {
-        // CASO A: Catálogo Interno (Ya vienen completos, pasamos directo)
-        if (route.params?.cartItems) {
-            return route.params.cartItems;
-        }
+    // --- Filtros ---
+    const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+    const [visitFilter, setVisitFilter] = useState<VisitFilter>('no_visitados');
 
-        // CASO B: Magic Link de WhatsApp (JSON sucio -> Objetos Product Completos)
-        if (route.params?.data && products.length > 0) {
-            try {
-                // 1. Parsing seguro
-                const rawData: WhatsAppItem[] = JSON.parse(route.params.data);
-                
-                if (!Array.isArray(rawData)) throw new Error("Formato inválido");
+    // --- Visitas del día (desde Firestore) ---
+    const [visitasFirestore, setVisitasFirestore] = useState<Set<string>>(new Set());
+    const [isLoadingVisitas, setIsLoadingVisitas] = useState(false);
 
-                // 2. Hidratación (Cruce con Catalogo Local)
-                const hydrated = rawData.map(rawItem => {
-                    const cleanId = rawItem.id.trim();
-                    const qty = rawItem.quantity || rawItem.cantidad || 1;
-
-                    // BUSCAMOS EN LA FUENTE DE LA VERDAD (Contexto)
-                    const fullProduct = products.find(p => p.id === cleanId);
-
-                    if (!fullProduct) {
-                        console.warn(`[Hydration] Producto ID ${cleanId} no encontrado en catálogo local.`);
-                        return null; 
-                    }
-
-                    // RETORNAMOS EL PRODUCTO COMPLETO + CANTIDAD
-                    // Esto permite que CreateSale calcule precios, comisiones y costos correctamente.
-                    return {
-                        ...fullProduct,
-                        quantity: qty,
-                        // Forzamos precioOriginal para que CreateSale detecte si hay cambio de lista
-                        precioOriginal: fullProduct.precio 
-                    };
-                }).filter(Boolean); // Eliminamos nulos (productos no encontrados)
-
-                // 3. Validación de Integridad
-                if (hydrated.length === 0 && rawData.length > 0) {
-                    setHasHydrationError(true);
-                    return undefined; // Falló todo
-                }
-
-                if (hydrated.length < rawData.length) {
-                    // UX: Avisar que algunos productos no se encontraron
-                     setTimeout(() => {
-                        Toast.show({
-                            type: 'info',
-                            text1: 'Atención',
-                            text2: 'Algunos productos del enlace no existen en tu catálogo.',
-                            visibilityTime: 5000
-                        });
-                     }, 1000);
-                }
-
-                return hydrated;
-
-            } catch (e) {
-                console.error("Error hidratando pedido de WhatsApp:", e);
-                setHasHydrationError(true);
-                return undefined;
-            }
-        }
-        return undefined;
-    }, [route.params, products]); // Dependencia clave: products
-
-    // Efecto de Feedback Inicial (UX)
+    // Carga las visitas del día desde Firestore al montar
     useEffect(() => {
-        if (hydratedCartItems && hydratedCartItems.length > 0) {
-             Toast.show({
+        const loadVisitasHoy = async () => {
+            if (!identity?.id || !companyId) return;
+            setIsLoadingVisitas(true);
+            const startOfDay = new Date();
+            startOfDay.setHours(0, 0, 0, 0);
+            const visited = new Set<string>();
+            try {
+                const db = dbContainer.instance;
+                if (!db) return;
+                const snap = await db
+                    .collection(`companies/${companyId}/visitas`)
+                    .where('vendedorId', '==', identity.id)
+                    .get();
+                snap.docs.forEach(doc => {
+                    const data = doc.data();
+                    const fecha = data.fecha?.toDate?.();
+                    if (fecha && fecha >= startOfDay && data.clienteId) {
+                        visited.add(data.clienteId);
+                    }
+                });
+            } catch (e) {
+                console.warn('Error cargando visitas del día:', e);
+            } finally {
+                setIsLoadingVisitas(false);
+            }
+            setVisitasFirestore(visited);
+        };
+        loadVisitasHoy();
+    }, [identity?.id, companyId]);
+
+    // Unión de visitas Firestore + ventas del día (reactivo a sales)
+    const visitadosHoy = useMemo(() => {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const combined = new Set(visitasFirestore);
+        if (!identity?.id) return combined;
+        sales.forEach(sale => {
+            if (sale.vendedorId !== identity.id) return;
+            if (sale.estado === 'Anulada') return;
+            let saleDate: Date | null = null;
+            if (sale.fecha instanceof Date) saleDate = sale.fecha;
+            else if ((sale.fecha as any)?.seconds) saleDate = new Date((sale.fecha as any).seconds * 1000);
+            if (saleDate && saleDate >= startOfDay) combined.add(sale.clienteId);
+        });
+        return combined;
+    }, [visitasFirestore, sales, identity?.id]);
+
+    // ==============================================================================
+    // 🧠 LÓGICA DE HIDRATACIÓN DUAL (Local vs Remote)
+    // ==============================================================================
+    useEffect(() => {
+        const hydrate = async () => {
+            if (route.params?.cartItems) {
+                setFinalCartItems(route.params.cartItems);
+                return;
+            }
+            if (route.params?.c && route.params?.p) {
+                setIsHydrating(true);
+                try {
+                    const db = dbContainer.instance;
+                    if (!db) throw new Error("DB no lista");
+                    const orderSnap = await db.collection(`companies/${route.params.c}/pedidos_temporales`).doc(route.params.p).get();
+                    if (!orderSnap.exists) throw new Error("El pedido ya no está disponible.");
+                    const orderData = orderSnap.data();
+                    processAndSetItems(orderData?.items || []);
+                } catch (err: any) {
+                    console.error("Error cargando pedido remoto:", err);
+                    setHasHydrationError(true);
+                } finally {
+                    setIsHydrating(false);
+                }
+                return;
+            }
+            if (route.params?.data && products.length > 0) {
+                try {
+                    const rawData: WhatsAppItem[] = JSON.parse(route.params.data);
+                    if (Array.isArray(rawData)) processAndSetItems(rawData);
+                } catch (e) {
+                    console.error("Error parsing local WhatsApp data:", e);
+                    setHasHydrationError(true);
+                }
+            }
+        };
+
+        const processAndSetItems = (rawData: WhatsAppItem[]) => {
+            if (products.length === 0) return;
+            const hydrated = rawData.map(rawItem => {
+                const cleanId = rawItem.id?.trim();
+                const qty = rawItem.quantity || rawItem.cantidad || 1;
+                const fullProduct = products.find(p => p.id === cleanId);
+                if (!fullProduct) return null;
+                return { ...fullProduct, quantity: qty, precioOriginal: fullProduct.precio };
+            }).filter(Boolean);
+            if (hydrated.length === 0 && rawData.length > 0) {
+                setHasHydrationError(true);
+            } else {
+                setFinalCartItems(hydrated);
+                if (hydrated.length < rawData.length) {
+                    Toast.show({ type: 'info', text1: 'Atención', text2: 'Varios productos del pedido no están en tu catálogo.', visibilityTime: 4000 });
+                }
+            }
+        };
+
+        hydrate();
+    }, [route.params, products]);
+
+    useEffect(() => {
+        if (finalCartItems && finalCartItems.length > 0) {
+            Toast.show({
                 type: 'success',
                 text1: 'Pedido Importado 🪄',
-                text2: `Se reconocieron ${hydratedCartItems.length} productos del enlace.`,
+                text2: `Se reconocieron ${finalCartItems.length} productos del enlace.`,
                 position: 'bottom',
                 visibilityTime: 3000
             });
-        } else if (hasHydrationError) {
-             Alert.alert(
-                "Error de Enlace", 
-                "No se pudieron cargar los productos del enlace. Verifique que su catálogo esté actualizado.",
-                [{ text: "Entendido" }]
+        }
+    }, [finalCartItems]);
+
+    // --- Clientes filtrados ---
+    const filteredClients = useMemo(() => {
+        let list = (Array.isArray(allClients) ? allClients : []).filter(c => c && c.id);
+
+        // Filtro por zona
+        if (selectedZoneId) {
+            list = list.filter(c => c.zonaId === selectedZoneId);
+        }
+
+        // Filtro por visita
+        if (visitFilter === 'visitados') {
+            list = list.filter(c => visitadosHoy.has(c.id));
+        } else if (visitFilter === 'no_visitados') {
+            list = list.filter(c => !visitadosHoy.has(c.id));
+        }
+
+        // Búsqueda por texto
+        if (searchQuery.trim()) {
+            const q = searchQuery.trim().toLowerCase();
+            list = list.filter(c =>
+                (c.nombre?.toLowerCase() || '').includes(q) ||
+                (c.nombreCompleto?.toLowerCase() || '').includes(q)
             );
         }
-    }, [hydratedCartItems, hasHydrationError]);
 
+        list.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+        return list;
+    }, [searchQuery, allClients, selectedZoneId, visitFilter, visitadosHoy]);
 
-    // Filtrado de clientes
-    const filteredClients = useMemo(() => {
-        let clientsToFilter = Array.isArray(allClients) ? allClients : [];
-        clientsToFilter = clientsToFilter.filter(c => c && c.id);
-        if (!searchQuery.trim()) {
-            clientsToFilter.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-            return clientsToFilter;
-        }
-        const lowerQuery = searchQuery.trim().toLowerCase();
-        clientsToFilter = clientsToFilter.filter(client =>
-            (client.nombre?.toLowerCase() || '').includes(lowerQuery) ||
-            (client.nombreCompleto?.toLowerCase() || '').includes(lowerQuery)
-        );
-        clientsToFilter.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-        return clientsToFilter;
-    }, [searchQuery, allClients]);
+    // Contadores para pills de visita
+    const visitCounts = useMemo(() => {
+        let base = (Array.isArray(allClients) ? allClients : []).filter(c => c && c.id);
+        if (selectedZoneId) base = base.filter(c => c.zonaId === selectedZoneId);
+        const visitados = base.filter(c => visitadosHoy.has(c.id)).length;
+        return { todos: base.length, visitados, noVisitados: base.length - visitados };
+    }, [allClients, selectedZoneId, visitadosHoy]);
 
-    // 2. NAVEGACIÓN A CREATE SALE CON DATOS HIDRATADOS
     const handleSelectClient = useCallback((client: Client) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        
-        // UX: Bloqueo si hay error en hidratación
-        if (route.params?.data && !hydratedCartItems) {
-            Alert.alert("Error", "El pedido es inválido. Intente abrir el enlace nuevamente.");
+        if ((route.params?.data || route.params?.p) && !finalCartItems) {
+            Alert.alert("Error", "El pedido no se ha terminado de cargar o es inválido.");
             return;
         }
-
-        // Pasamos 'hydratedCartItems' que ahora son objetos Product completos
-        navigation.navigate('CreateSale', { 
+        navigation.navigate('CreateSale', {
             clientId: client.id,
-            // @ts-ignore 
-            preselectedItems: hydratedCartItems 
-        }); 
-    }, [navigation, hydratedCartItems, route.params]);
+            // @ts-ignore
+            preselectedItems: finalCartItems
+        });
+    }, [navigation, finalCartItems, route.params]);
 
     const renderClientItem = useCallback(({ item }: { item: Client }) => (
-        <ClientSelectItemCard item={item} onSelect={handleSelectClient} />
-    ), [handleSelectClient]);
+        <ClientSelectItemCard
+            item={item}
+            onSelect={handleSelectClient}
+            isVisitado={visitadosHoy.has(item.id)}
+        />
+    ), [handleSelectClient, visitadosHoy]);
 
-    if (isLoading && (!allClients || allClients.length === 0)) {
+    if (isHydrating || (isContextLoading && (!allClients || allClients.length === 0))) {
         return (
             <View style={styles.loadingContainer}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
                 <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loadingText}>Cargando datos...</Text>
+                <Text style={styles.loadingText}>
+                    {isHydrating ? 'Descargando Pedido Remoto...' : 'Cargando datos...'}
+                </Text>
             </View>
         );
     }
@@ -215,17 +322,17 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
                     <Feather name="arrow-left" size={SIZES.large} color={COLORS.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.title}>
-                    {hydratedCartItems ? 'ASIGNAR PEDIDO A...' : 'SELECCIONAR CLIENTE'}
+                    {finalCartItems ? 'ASIGNAR PEDIDO A...' : 'SELECCIONAR CLIENTE'}
                 </Text>
-                 <View style={styles.headerButton} />
+                <View style={styles.headerButton} />
             </View>
 
-            {/* Aviso Visual Importante */}
-            {hydratedCartItems && hydratedCartItems.length > 0 && (
+            {/* Aviso de carrito */}
+            {finalCartItems && finalCartItems.length > 0 && (
                 <View style={styles.cartNotice}>
                     <Feather name="link" size={16} color={COLORS.white} />
                     <Text style={styles.cartNoticeText}>
-                        Pedido de WhatsApp: {hydratedCartItems.length} items listos
+                        Pedido Externo: {finalCartItems.length} items listos
                     </Text>
                 </View>
             )}
@@ -246,10 +353,59 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
                     />
                     {searchQuery.length > 0 && Platform.OS === 'android' && (
                         <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-                             <Feather name="x" size={SIZES.body} color={COLORS.textSecondary} />
+                            <Feather name="x" size={SIZES.body} color={COLORS.textSecondary} />
                         </TouchableOpacity>
                     )}
                 </View>
+            </View>
+
+            {/* Pills de Zona */}
+            {availableZones.length > 0 && (
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.pillsRow}
+                    contentContainerStyle={styles.pillsContent}
+                >
+                    <FilterPill
+                        label="Todas las zonas"
+                        active={selectedZoneId === null}
+                        onPress={() => setSelectedZoneId(null)}
+                    />
+                    {availableZones.map(z => (
+                        <FilterPill
+                            key={z.id}
+                            label={z.nombre || z.id}
+                            active={selectedZoneId === z.id}
+                            onPress={() => setSelectedZoneId(prev => prev === z.id ? null : z.id)}
+                        />
+                    ))}
+                </ScrollView>
+            )}
+
+            {/* Pills de Visita */}
+            <View style={styles.visitFilterRow}>
+                <FilterPill
+                    label="Sin visitar"
+                    active={visitFilter === 'no_visitados'}
+                    onPress={() => setVisitFilter('no_visitados')}
+                    count={visitCounts.noVisitados}
+                />
+                <FilterPill
+                    label="Todos"
+                    active={visitFilter === 'todos'}
+                    onPress={() => setVisitFilter('todos')}
+                    count={visitCounts.todos}
+                />
+                <FilterPill
+                    label="Visitados"
+                    active={visitFilter === 'visitados'}
+                    onPress={() => setVisitFilter('visitados')}
+                    count={visitCounts.visitados}
+                />
+                {isLoadingVisitas && (
+                    <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: SIZES.small }} />
+                )}
             </View>
 
             {/* Lista */}
@@ -259,11 +415,21 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.listContentContainer}
                 ListEmptyComponent={
-                    !isLoading ? (
+                    !isContextLoading ? (
                         <View style={styles.emptyContainer}>
-                            <Feather name="users" size={SIZES.h1} color={COLORS.disabled} />
+                            <Feather
+                                name={visitFilter === 'visitados' ? 'check-circle' : 'users'}
+                                size={SIZES.h1}
+                                color={COLORS.disabled}
+                            />
                             <Text style={styles.emptyText}>
-                                {searchQuery ? 'No se encontraron clientes.' : 'No hay clientes cargados.'}
+                                {visitFilter === 'visitados'
+                                    ? 'Aún no visitaste clientes hoy.'
+                                    : visitFilter === 'no_visitados'
+                                    ? '¡Todos los clientes fueron visitados hoy!'
+                                    : searchQuery
+                                    ? 'No se encontraron clientes.'
+                                    : 'No hay clientes cargados.'}
                             </Text>
                         </View>
                     ) : null
@@ -279,12 +445,35 @@ const SelectClientForSaleScreen = ({ navigation, route }: SelectClientForSaleScr
     );
 };
 
+const pillStyles = StyleSheet.create({
+    pill: {
+        paddingHorizontal: SIZES.medium,
+        paddingVertical: SIZES.xsmall + 2,
+        borderRadius: 20,
+        borderWidth: SIZES.borderWidth,
+        borderColor: COLORS.glassBorder,
+        backgroundColor: COLORS.backgroundEnd,
+    },
+    pillActive: {
+        backgroundColor: COLORS.primary,
+        borderColor: COLORS.primary,
+    },
+    pillText: {
+        fontSize: SIZES.caption,
+        fontWeight: '600',
+        color: COLORS.textSecondary,
+    },
+    pillTextActive: {
+        color: COLORS.white,
+    },
+});
+
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.backgroundStart },
     background: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backgroundStart },
     loadingText: { marginTop: SIZES.medium, color: COLORS.textSecondary, fontSize: SIZES.body },
-    
+
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -296,8 +485,8 @@ const styles = StyleSheet.create({
         borderBottomWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
     },
-    headerButton: { 
-        padding: SIZES.small, 
+    headerButton: {
+        padding: SIZES.small,
         width: SIZES.xl,
         alignItems: 'center',
     },
@@ -309,10 +498,9 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         flex: 1,
     },
-    
-    // Aviso de carrito mejorado
+
     cartNotice: {
-        backgroundColor: COLORS.primary, // Usamos el primario para denotar que es parte del flujo de la app
+        backgroundColor: COLORS.primary,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
@@ -328,23 +516,24 @@ const styles = StyleSheet.create({
         color: COLORS.white,
         fontWeight: '600',
         fontSize: 14,
-        letterSpacing: 0.5
+        letterSpacing: 0.5,
     },
 
-    controlsContainer: { 
-        paddingHorizontal: SIZES.large, 
-        paddingVertical: SIZES.medium,
+    controlsContainer: {
+        paddingHorizontal: SIZES.large,
+        paddingTop: SIZES.medium,
+        paddingBottom: SIZES.small,
         backgroundColor: COLORS.backgroundStart,
     },
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: COLORS.backgroundEnd,
-        borderRadius: SIZES.radius, 
+        borderRadius: SIZES.radius,
         borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
-        paddingHorizontal: SIZES.medium, 
-        height: 52, 
+        paddingHorizontal: SIZES.medium,
+        height: 52,
         shadowColor: COLORS.textPrimary,
         shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.05,
@@ -356,35 +545,55 @@ const styles = StyleSheet.create({
         flex: 1,
         color: COLORS.textPrimary,
         fontSize: SIZES.body,
-        height: '100%'
+        height: '100%',
     },
     clearButton: { padding: SIZES.xsmall },
-    
-    listContentContainer: { 
-        paddingHorizontal: SIZES.large,
-        paddingBottom: SIZES.large, 
-        flexGrow: 1 
+
+    pillsRow: {
+        flexGrow: 0,
+        paddingTop: SIZES.small,
     },
-    emptyContainer: { 
-        flex: 1, 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        padding: SIZES.xl, 
+    pillsContent: {
+        paddingHorizontal: SIZES.large,
+        gap: SIZES.small,
+        paddingBottom: SIZES.small,
+    },
+
+    visitFilterRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: SIZES.large,
+        paddingVertical: SIZES.small,
+        gap: SIZES.small,
+    },
+
+    listContentContainer: {
+        paddingHorizontal: SIZES.large,
+        paddingTop: SIZES.small,
+        paddingBottom: SIZES.large,
+        flexGrow: 1,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: SIZES.xl,
         paddingTop: SIZES.xl * 2,
         gap: SIZES.medium,
     },
-    emptyText: { 
-        fontSize: SIZES.body, 
-        color: COLORS.textSecondary, 
-        textAlign: 'center' 
+    emptyText: {
+        fontSize: SIZES.body,
+        color: COLORS.textSecondary,
+        textAlign: 'center',
     },
+
     card: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: COLORS.backgroundEnd,
-        paddingVertical: SIZES.medium + SIZES.xsmall, 
-        paddingHorizontal: SIZES.medium, 
-        borderRadius: SIZES.radius, 
+        paddingVertical: SIZES.medium + SIZES.xsmall,
+        paddingHorizontal: SIZES.medium,
+        borderRadius: SIZES.radius,
         marginBottom: SIZES.small,
         borderWidth: SIZES.borderWidth,
         borderColor: COLORS.glassBorder,
@@ -394,17 +603,37 @@ const styles = StyleSheet.create({
         shadowRadius: 3,
         elevation: 1,
     },
+    cardVisitado: {
+        borderColor: `${COLORS.success}40`,
+        backgroundColor: `${COLORS.success}08`,
+    },
+    visitadoBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: COLORS.success,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     userIcon: { marginRight: SIZES.medium },
     cardInfo: { flex: 1, marginRight: SIZES.medium },
-    cardTitle: { 
-        fontSize: SIZES.body, 
-        fontWeight: '700', 
-        color: COLORS.textPrimary, 
-        marginBottom: SIZES.xsmall / 2 
+    cardTitle: {
+        fontSize: SIZES.body,
+        fontWeight: '700',
+        color: COLORS.textPrimary,
+        marginBottom: SIZES.xsmall / 2,
     },
-    cardSubtitle: { 
-        fontSize: SIZES.caption, 
-        color: COLORS.textSecondary 
+    cardSubtitle: {
+        fontSize: SIZES.caption,
+        color: COLORS.textSecondary,
+    },
+    visitadoLabel: {
+        fontSize: SIZES.caption,
+        fontWeight: '600',
+        color: COLORS.success,
     },
 });
 

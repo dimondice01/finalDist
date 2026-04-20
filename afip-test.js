@@ -2,9 +2,9 @@ import { initializeApp } from "firebase/app";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyD3KA2Ud41g3AGvMI387xG6EIjaZ11KNls",
-  authDomain: "distribuidora-1de93",
-  projectId: "491149648147",
+  apiKey: "AIzaSyC0JqOWRdkmFjBoAQN7igM_a2qKysYW2Kk",
+  authDomain: "noarerp.firebaseapp.com",
+  projectId: "noarerp",
 };
 
 const app = initializeApp(firebaseConfig);

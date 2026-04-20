@@ -3,9 +3,9 @@ const { getFunctions, httpsCallable, connectFunctionsEmulator } = require("fireb
 
 // 1. CREDENCIALES REALES (Extraídas de tu proyecto)
 const firebaseConfig = {
-  apiKey: "AIzaSyD3KA2Ud41g3AGvMI387xG6EIjaZ11KNls", // Tu API Key real
-  authDomain: "distribuidora-1de93.firebaseapp.com",
-  projectId: "distribuidora-1de93", // Tu ID de Proyecto correcto
+  apiKey: "AIzaSyC0JqOWRdkmFjBoAQN7igM_a2qKysYW2Kk", // Tu API Key real
+  authDomain: "noarerp.firebaseapp.com",
+  projectId: "noarerp", // Tu ID de Proyecto correcto
 };
 
 // 2. Inicializar Cliente

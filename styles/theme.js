@@ -12,7 +12,9 @@ export const COLORS = {
   
   // --- COLOR PRINCIPAL (Teal Profundo para profesionalismo) ---
   primary: '#0F4C5C',         // Teal Profundo / Petróleo (Deep Teal) - Base de Marca y CTAs
+  primaryDark: '#0A323D',     // ✅ Agregado: Versión más oscura para estados premium
   secondary: "#136F63",       // Teal más vibrante para estados secundarios
+  glass: 'rgba(255, 255, 255, 0.7)', // ✅ Agregado: Para efectos de cristalería/translucidez
   
   // Acento/Highlighter: Un Coral Cálido para inyectar un punto focal vibrante.
   accent: '#E07A5F',          // Coral/Terracota - Máximo Contraste de Acción (Botones flotantes, notificaciones)

@@ -46,8 +46,8 @@ export type RootStackParamList = {
     SaleDetail: { saleId: string; clientName: string }; 
     AddClient: undefined;
     EditClient: { clientId: string}; 
-    // ✅ CORREGIDO: Agregamos 'data' para el link de WhatsApp
-    SelectClientForSale: { cartItems?: any[]; data?: string } | undefined;
+    // ✅ CORREGIDO: Agregamos 'data' para el link de WhatsApp y 'c', 'p' para el SaaS Multi-Tenney
+    SelectClientForSale: { cartItems?: any[]; data?: string; c?: string; p?: string } | undefined;
     CreateSale: {
         clientId: string;
         clientName?: string; 
@@ -106,7 +106,15 @@ function RootNavigator() {
     const [userRole, setUserRole] = useState<'Vendedor' | 'Reparto' | 'Admin' | null>(null);
     const [loadingMessage, setLoadingMessage] = useState('Verificando sesión...');
 
-    const { syncData, isLoading: isDataLoading, isInitialDataLoaded } = useData();
+    const { syncData, isLoading: isDataLoading, isInitialDataLoaded, userRole: resolvedRole } = useData();
+    
+    // ✅ ESCUCHAR CAMBIOS EN EL ROL RESUELTO
+    useEffect(() => {
+        if (resolvedRole) {
+            console.log(`AppNavigator: Actualizando Navigator con Rol Resuelto: ${resolvedRole}`);
+            setUserRole(resolvedRole);
+        }
+    }, [resolvedRole]);
 
     useEffect(() => {
         if (!isInitialDataLoaded) {
@@ -126,23 +134,37 @@ function RootNavigator() {
                         console.error("AppNavigator: ¡La DB no está inicializada!");
                         throw new Error("Error fatal de inicialización de DB.");
                     }
-                    await syncData();
-
-                    const userDocRef = db.collection('vendedores').doc(currentUser.uid);
+                    const userDocRef = db.collection('users').doc(currentUser.uid);
                     const userDocSnap = await userDocRef.get();
 
-                    // @ts-ignore
-                    if (userDocSnap.exists) { 
-                        setUserRole(userDocSnap.data()?.rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
-                    } else {
-                        console.warn("Datos de vendedor no encontrados por UID, usando fallback...");
-                        const vendorsQuery = await db.collection('vendedores').where('firebaseAuthUid', '==', currentUser.uid).get();
-                        if (!vendorsQuery.empty) {
-                            setUserRole(vendorsQuery.docs[0].data().rango as 'Vendedor' | 'Reparto' | 'Admin' || null);
-                        } else {
-                            throw new Error("Datos de vendedor no encontrados en DB.");
-                        }
+                    if (!userDocSnap.exists) {
+                        console.error("Identidad no encontrada en /users para UID:", currentUser.uid);
+                        throw new Error("No tienes un perfil de identidad configurado. Contacta a un administrador.");
                     }
+
+                    const userData = userDocSnap.data();
+                    const roleFromDoc = userData?.role || userData?.rango; // Soportar ambos por migración
+                    
+                    if (!roleFromDoc) {
+                        throw new Error("El perfil de usuario no tiene un rol asignado.");
+                    }
+
+                    // Normalizamos el rol para el Navigator
+                    const rawRole = (roleFromDoc || '').toLowerCase().trim();
+                    let normalizedRole: 'Vendedor' | 'Reparto' | 'Admin' = 'Vendedor';
+
+                    if (rawRole === 'admin' || rawRole === 'superadmin') {
+                        normalizedRole = 'Admin';
+                    } else if (rawRole === 'reparto' || rawRole === 'repartidor' || rawRole === 'chofer') {
+                        normalizedRole = 'Reparto';
+                    } else {
+                        normalizedRole = 'Vendedor';
+                    }
+
+                    setUserRole(normalizedRole);
+
+                    // Sincronizamos los datos (Internamente ya resuelve companyId)
+                    await syncData();
                 } catch (error) {
                     console.error("Error al sincronizar datos:", error);
                     auth.signOut(); 

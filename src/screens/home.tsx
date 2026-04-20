@@ -62,6 +62,7 @@ const getStatusStyles = (status: Sale['estado']) => {
         case 'Pagada': return { bg: '#ECFDF5', text: '#059669', icon: 'check-circle' as const }; 
         case 'Adeuda': return { bg: '#FFFBEB', text: '#D97706', icon: 'alert-circle' as const }; 
         case 'Pendiente de Entrega': return { bg: '#F0F9FF', text: '#0284C7', icon: 'truck' as const }; 
+        case 'Web: Pendiente': return { bg: '#FDF2F8', text: '#DB2777', icon: 'shopping-cart' as const }; 
         case 'Anulada': return { bg: '#FEF2F2', text: '#DC2626', icon: 'x-circle' as const }; 
         default: return { bg: '#F9FAFB', text: '#6B7280', icon: 'help-circle' as const }; 
     }

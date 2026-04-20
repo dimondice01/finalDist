@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "491149648147",
-    "project_id": "distribuidora-1de93",
-    "storage_bucket": "distribuidora-1de93.firebasestorage.app"
+    "project_number": "249887928589",
+    "project_id": "noarerp",
+    "storage_bucket": "noarerp.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:491149648147:android:b1274023f983af7c667ae6",
+        "mobilesdk_app_id": "1:249887928589:android:b1007a5bdd1fb6494d0044",
         "android_client_info": {
           "package_name": "com.dimondice.Distribuidora"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyD3KA2Ud41g3AGvMI387xG6EIjaZ11KNls"
+          "current_key": "AIzaSyB8wTljXYtLD_Fzfj9MUJh8s4u3oCG3QLc"
         }
       ],
       "services": {

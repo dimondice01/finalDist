@@ -22,6 +22,7 @@ import { ClientDashboardScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto, DB, Tipos, Estilos ---
 import { Client, Rubro, Sale, useData } from '../../context/DataContext';
+import { locationService } from '../../services/locationService';
 
 // ✅ CORRECCIÓN: Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
@@ -246,16 +247,20 @@ const SaleCard = memo(({ item, onEdit, onDelete, onNavigate, isOffline }: {
 const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps) => {
     const { clientId } = route.params; 
     
-    const { 
-        clients, 
-        sales, 
-        rubros, 
-        isLoading: isDataLoading, 
+    const {
+        clients,
+        sales,
+        rubros,
+        isLoading: isDataLoading,
         isOffline,
+        identity,
+        companyId,
         setSalesState,
-        deleteSaleAndRevertStock
+        deleteSaleAndRevertStock,
+        registrarVisita,
     } = useData();
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isMarkingVisit, setIsMarkingVisit] = useState(false);
     
     const client: Client | undefined = useMemo(() => {
         const allClientsArray = Array.isArray(clients) ? clients : [];
@@ -440,6 +445,43 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         }
     };
 
+    const handleMarcarVisitado = useCallback(async () => {
+        if (isMarkingVisit || !client || !identity) return;
+        setIsMarkingVisit(true);
+
+        let ubicacion: { lat: number; lng: number; accuracy: number } | null = null;
+        try {
+            const hasPermission = await locationService.checkPermissions();
+            const granted = hasPermission || (await locationService.requestPermissions());
+            if (!granted) {
+                Toast.show({ type: 'info', text1: 'Sin ubicación', text2: 'La visita se registrará sin coordenadas.', position: 'bottom' });
+            } else {
+                const loc = await locationService.getMandatoryLocation();
+                ubicacion = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+            }
+        } catch {
+            // GPS no disponible — continuamos sin ubicación
+        }
+
+        try {
+            await registrarVisita({
+                clienteId: client.id,
+                clientName: client.nombreCompleto || client.nombre,
+                vendedorId: identity.id,
+                vendedorName: identity.nombreCompleto || identity.nombre,
+                timestamp: new Date().toISOString(),
+                ubicacion,
+                resultado: 'sin_venta',
+            });
+            Toast.show({ type: 'success', text1: 'Visita Registrada', text2: `${client.nombreCompleto || client.nombre} marcado como visitado.`, position: 'bottom' });
+        } catch (err) {
+            console.error('Error registrando visita:', err);
+            Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo registrar la visita.', position: 'bottom' });
+        } finally {
+            setIsMarkingVisit(false);
+        }
+    }, [isMarkingVisit, client, identity, registrarVisita]);
+
     const renderSaleCard = useCallback(({ item }: { item: Sale }) => (
         <SaleCard
             item={item}
@@ -545,6 +587,20 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
                                     <Text style={styles.secondaryActionButtonText}>Ver Saldos</Text>
                                 </TouchableOpacity>
                             </View>
+
+                            <TouchableOpacity
+                                style={[styles.secondaryActionButton, { backgroundColor: COLORS.backgroundEnd, borderColor: COLORS.glassBorder, opacity: isMarkingVisit ? 0.6 : 1 }]}
+                                onPress={handleMarcarVisitado}
+                                disabled={isMarkingVisit}
+                            >
+                                {isMarkingVisit
+                                    ? <ActivityIndicator size="small" color={COLORS.textSecondary} />
+                                    : <Feather name="map-pin" size={SIZES.h3} color={COLORS.textSecondary} />
+                                }
+                                <Text style={[styles.secondaryActionButtonText, { color: COLORS.textSecondary }]}>
+                                    {isMarkingVisit ? 'Registrando...' : 'Marcar como Visitado'}
+                                </Text>
+                            </TouchableOpacity>
                         </View>
 
                         <Text style={styles.listHeader}>Historial de Ventas</Text>

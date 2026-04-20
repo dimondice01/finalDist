@@ -1,6 +1,4 @@
-// services/pdfGenerator.ts
-
-import { Sale as BaseSale, CartItem, Client } from '../context/DataContext';
+import { Sale as BaseSale, CartItem, Client, CompanyConfig } from '../context/DataContext';
 
 // --- Funciones auxiliares de formato ---
 const formatCurrency = (value: number = 0): string => {
@@ -38,6 +36,7 @@ export const generatePdf = async (
     sale: BaseSale,
     client: Client,
     vendorName: string,
+    companyConfig: CompanyConfig | null, // ✅ Nuevo Parámetro SaaS
 ): Promise<string | null> => {
 
     if (!sale || !client) {
@@ -51,10 +50,6 @@ export const generatePdf = async (
         return acc + (precioBase * item.quantity);
     }, 0);
 
-    // ✅ CORRECCIÓN AQUÍ: 
-    // Priorizamos el argumento 'vendorName', pero si falla (viene vacío o undefined),
-    // usamos 'sale.vendedorName' (que guardaste en BD) o 'sale.vendedorNombre'.
-    // Solo si todo falla, ponemos 'Vendedor'.
     const finalVendorName = vendorName || sale.vendedorName || sale.vendedorNombre || 'Vendedor';
 
     const invoiceData = {
@@ -64,7 +59,7 @@ export const generatePdf = async (
         clientAddress: client?.direccion || '-',
         clientZone: client?.barrio || client?.localidad || '-',
         
-        vendorName: finalVendorName, // <-- Usamos la variable corregida
+        vendorName: finalVendorName, 
         
         items: sale.items || [], 
         totalVenta: sale.totalVenta || 0,
@@ -77,6 +72,12 @@ export const generatePdf = async (
             sale.tipo === 'reposicion' ? 'NOTA DE REPOSICIÓN' :
             sale.tipo === 'devolucion' ? 'NOTA DE DEVOLUCIÓN' :
             'COMPROBANTE DE VENTA',
+        
+        // Identidad de Empresa
+        companyName: companyConfig?.nombreFantasia || companyConfig?.name || '',
+        companyAddress: companyConfig?.domicilioFiscal || '',
+        companyCuit: companyConfig?.cuit || '',
+        companyLogo: companyConfig?.logo || '', // Base64
     };
 
     const html = generateHtml(invoiceData);
@@ -97,6 +98,10 @@ const generateHtml = (invoiceData: {
     totalVentaBruto: number;
     totalDescuentoPromos: number; 
     tipoComprobante: string;
+    companyName: string;
+    companyAddress: string;
+    companyCuit: string;
+    companyLogo: string;
 }) => {
     
     // Generar filas de la tabla
@@ -178,6 +183,11 @@ const generateHtml = (invoiceData: {
                 .logo-box {
                     display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
                 }
+                .logo-img {
+                    max-width: 120px;
+                    max-height: 50px;
+                    object-fit: contain;
+                }
                 .logo-icon {
                     width: 35px; height: 35px;
                     background-color: ${primaryColor};
@@ -190,10 +200,7 @@ const generateHtml = (invoiceData: {
                     display: flex; flex-direction: column; line-height: 1;
                 }
                 .logo-title {
-                    font-size: 20px; font-weight: 900; color: ${primaryColor}; letter-spacing: -1px;
-                }
-                .logo-subtitle {
-                    font-size: 7px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: ${textSecondaryColor}; margin-top: 2px;
+                    font-size: 18px; font-weight: 900; color: ${primaryColor}; text-transform: uppercase;
                 }
 
                 .distributor-details { display: block; font-size: 10px; color: ${textSecondaryColor}; }
@@ -234,15 +241,17 @@ const generateHtml = (invoiceData: {
                 <div class="top-info-container">
                     <div class="distributor-info">
                         <div class="logo-box">
-                            <div class="logo-icon">N</div>
+                            ${invoiceData.companyLogo ? 
+                                `<img src="${invoiceData.companyLogo.startsWith('http') ? invoiceData.companyLogo : `data:image/png;base64,${invoiceData.companyLogo}`}" class="logo-img" />` :
+                                (invoiceData.companyName ? `<div class="logo-icon">${invoiceData.companyName.charAt(0)}</div>` : '')
+                            }
                             <div class="logo-text">
-                                <div class="logo-title">NOAR <span style="color: #D97706; font-weight: 300;">ERP</span></div>
-                                <div class="logo-subtitle">Sistema Integral</div>
+                                <div class="logo-title">${invoiceData.companyName}</div>
                             </div>
                         </div>
 
-                        <span class="distributor-details">Francisco 2, La Rioja</span>
-                        <span class="distributor-details">Tel: (3804) 798844</span>
+                        ${invoiceData.companyAddress ? `<span class="distributor-details">${invoiceData.companyAddress}</span>` : ''}
+                        ${invoiceData.companyCuit ? `<span class="distributor-details">CUIT: ${invoiceData.companyCuit}</span>` : ''}
                     </div>
 
                     <div class="details-block">
@@ -296,7 +305,7 @@ const generateHtml = (invoiceData: {
                 ` : ''}
 
                 <div class="footer">
-                    Documento generado por Noar ERP - Tecnología Logística.
+                    ${invoiceData.companyName ? `Documento generado por ${invoiceData.companyName} - Tecnología Logística.` : ''}
                 </div>
             </div>
         </body>

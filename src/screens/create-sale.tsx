@@ -6,11 +6,10 @@ import * as Sharing from 'expo-sharing';
 
 import { LinearGradient } from 'expo-linear-gradient';
 
-// --- SDK NATIVO (v9 Modular) ---
+// --- SDK NATIVO ---
 import {
-    doc,
-    serverTimestamp,
-    setDoc
+    FirebaseFirestoreTypes,
+    serverTimestamp
 } from '@react-native-firebase/firestore';
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -49,6 +48,7 @@ import {
 
 import { auth, dbContainer } from '../../db/firebase-service';
 import { generatePdf } from '../../services/pdfGenerator';
+import { locationService } from '../../services/locationService';
 import { COLORS, SIZES } from '../../styles/theme';
 
 
@@ -81,12 +81,13 @@ interface SaleDataToSave {
     numeroDocumento: string; 
     facturaAfip: boolean; 
     
-    afipEstado: "pendiente" | "enviado" | "aprobado" | "error"; 
+    afipEstado: "pendiente" | "enviado" | "aprobado" | "error";
     afipNumeroComprobante: number | null;
     afipCAE: string | null;
-    afipFechaVtoCAE: string | null; 
+    afipFechaVtoCAE: string | null;
     afipPuntoVenta: number | null;
     afipResultado: string | null;
+    ubicacion?: { lat: number; lng: number; accuracy: number } | null;
 }
 
 // --- Componente Modal Selector de Categoría ---
@@ -290,9 +291,13 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         isLoading: isDataLoading,
         isOffline,
         descontarStockLocalmente,
-        crearVentaConStock, 
-        setSalesState, 
-        reintegrarStockLocalmente, 
+        crearVentaConStock,
+        setSalesState,
+        reintegrarStockLocalmente,
+        companyId,
+        companyConfig,
+        identity,
+        registrarVisita,
     } = useData();
 
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -721,7 +726,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
         if (!clientData) { Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontraron datos del cliente.' }); return; }
         try {
-            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName);
+            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName, companyConfig);
             if (!htmlContent) { throw new Error("generatePdf devolvió null o vacío."); }
             const { uri } = await Print.printToFileAsync({ html: htmlContent });
             await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `Comprobante ${saleDataForPdf.id}` });
@@ -738,7 +743,19 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         if (cart.length === 0) { Alert.alert("Carrito Vacío", "Agregue productos."); return; }
 
         setIsSubmitting(true);
-        Haptics.notificationAsync('success' as any); 
+        Haptics.notificationAsync('success' as any);
+
+        // Captura GPS silenciosa — no bloquea el flujo si falla
+        let ubicacion: { lat: number; lng: number; accuracy: number } | null = null;
+        try {
+            const hasPermission = await locationService.checkPermissions();
+            if (hasPermission) {
+                const loc = await locationService.getMandatoryLocation();
+                ubicacion = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+            }
+        } catch {
+            // GPS no disponible — continuamos sin coordenadas
+        }
 
         // Limpiar IDs temporales
         const itemsToSave = itemsConDescuentosAplicados.map(item => {
@@ -765,7 +782,8 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             tipoDocumento: client.tipoDocumento || 'SC',
             numeroDocumento: client.numeroDocumento || '',
             facturaAfip: client.requiereFacturaAfip || false,
-            afipEstado: "pendiente", afipNumeroComprobante: null, afipCAE: null, afipFechaVtoCAE: null, afipPuntoVenta: null, afipResultado: null
+            afipEstado: "pendiente", afipNumeroComprobante: null, afipCAE: null, afipFechaVtoCAE: null, afipPuntoVenta: null, afipResultado: null,
+            ubicacion,
         };
 
         try {
@@ -775,14 +793,16 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
             let savedSaleId = originalSale ? originalSale.id : '';
 
             if (editMode && originalSale) {
+                if (!companyId) throw new Error("ID de empresa no disponible.");
+                
                 reintegrarStockLocalmente(originalSale.items);
                 descontarStockLocalmente(itemsToSave);
                 
                 const updatedSale: BaseSale = { ...originalSale, ...saleDataToSave as any, id: originalSale.id, items: itemsToSave, fecha: originalSale.fecha };
                 setSalesState(prev => prev.map(s => s.id === originalSale.id ? updatedSale : s));
                 
-                const saleRef = doc(dbInstance, 'ventas', originalSale.id); 
-                const promise = setDoc(saleRef, saleDataToSave as any, { merge: true });
+                const saleRef = dbInstance.doc(`companies/${companyId}/ventas/${originalSale.id}`); 
+                const promise = saleRef.set(saleDataToSave as any, { merge: true });
                 
                 if (isOffline) promise.catch(e => console.log("Offline save pending"));
                 else await promise;
@@ -793,6 +813,19 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
                 savedSaleId = await crearVentaConStock(finalSaleData);
                 descontarStockLocalmente(itemsToSave);
                 Toast.show({ type: 'success', text1: 'Venta Creada' });
+
+                // Registrar visita con venta para trazabilidad CRM
+                if (identity && client) {
+                    registrarVisita({
+                        clienteId: client.id,
+                        clientName: client.nombreCompleto || client.nombre,
+                        vendedorId: identity.id,
+                        vendedorName: identity.nombreCompleto || identity.nombre,
+                        timestamp: new Date().toISOString(),
+                        ubicacion,
+                        resultado: 'con_venta',
+                    }).catch(() => {}); // fire-and-forget, no bloquea
+                }
             }
 
             const completeData: BaseSale = {

@@ -1,204 +1,179 @@
-// Importa los módulos v2 (nueva sintaxis)
-const {onDocumentCreated, onDocumentDeleted, onDocumentUpdated} = require("firebase-functions/v2/firestore");
+// v2 sintaxis
+const { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onCall, onRequest } = require("firebase-functions/v2/https");
+const logger = require("firebase-functions/logger");
+const express = require("express");
+const cors = require("cors");
 const admin = require("firebase-admin");
 
-// Inicializa el admin (sin cambios)
-admin.initializeApp();
+// Inicializa el admin
+if (!admin.apps.length) {
+    admin.initializeApp();
+}
 const db = admin.firestore();
 
-// ----------------------------------------------------------------------
-// FUNCIÓN 1: DESCONTAR STOCK (al crear la venta)
-// ----------------------------------------------------------------------
-/**
- * Trigger v2 que se dispara CADA VEZ que se crea un nuevo documento
- * en la colección 'ventas'. Descuenta stock si es de tipo 'venta'.
- */
-exports.descontarStockPorVenta = onDocumentCreated("ventas/{ventaId}", async (event) => {
+// Módulos
+const afipModule = require("./afip");
+const mpModule = require("./mercadopago");
+
+// ==================================================================
+// 🛠️ HELPER CORE: OBTENER CONFIGURACIÓN MULTI-TENANT
+// ==================================================================
+async function getCompanyConfig(companyId, type) {
+    if (!companyId) throw new Error("Falta companyId para obtener configuración.");
+
+    // Buscamos por campo 'tipo' como pide el Plan Maestro
+    const snap = await db.collection(`companies/${companyId}/config`)
+        .where("tipo", "==", type)
+        .limit(1)
+        .get();
+
+    if (snap.empty) throw new Error(`El servicio ${type} no está configurado.`);
     
-    // En v2, los datos del snapshot están en 'event.data'
-    const snapshot = event.data;
-    if (!snapshot) {
-        console.log("No hay datos asociados con el evento.");
-        return;
+    const data = snap.docs[0].data();
+    if (!data.isActive) throw new Error(`El servicio ${type} está desactivado.`);
+    
+    return data;
+}
+
+// ==================================================================
+// 🔀 EXPRESS BRIDGE (REST API)
+// ==================================================================
+const app = express();
+app.use(cors({ origin: true }));
+app.use(express.json());
+
+// 📠 GENERADOR DE CLAVES AFIP (CSR)
+app.post("/generate-afip-csr", async (req, res) => {
+    try {
+        const forge = require("node-forge");
+        const keys = forge.pki.rsa.generateKeyPair(2048);
+        const privateKeyPem = forge.pki.privateKeyToPem(keys.privateKey);
+        
+        const csr = forge.pki.createCertificationRequest();
+        csr.publicKey = keys.publicKey;
+        csr.setSubject([
+            { name: 'commonName', value: 'SalvadorPOS' },
+            { name: 'countryName', value: 'AR' },
+            { name: 'organizationName', value: 'SalvadorPOS' }
+        ]);
+        csr.sign(keys.privateKey, forge.md.sha256.create());
+        const csrPem = forge.pki.certificationRequestToPem(csr);
+
+        res.status(200).json({ success: true, csr: csrPem, privateKey: privateKeyPem });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
+});
+
+exports.api = onRequest({ cors: true }, app);
+
+// ==================================================================
+// 📂 EXPORTS INDIVIDUALES (COMPATIBILIDAD WEB ADMIN)
+// ==================================================================
+
+// 1. AFIP (Móvil y Web)
+exports.emitirFacturasReparto = onCall({ cors: true, region: "southamerica-west1" }, async (request) => {
+    const { total, client, companyId, branchId } = request.data;
+    try {
+        const afipConfig = await getCompanyConfig(companyId, 'afip');
+        const result = await afipModule.emitirFactura(total, client, false, null, afipConfig);
+        return result;
+    } catch (error) {
+        throw new onCall.HttpsError('internal', error.message);
+    }
+});
+
+// 2. MercadoPago Terminales (Web Admin)
+exports.obtenerTerminales = mpModule.obtenerTerminales;
+exports.configurarPoint = mpModule.configurarPoint;
+
+// 3. MercadoPago Cobros (Móvil)
+exports.cobrarConPoint = mpModule.cobrarConPoint;
+exports.generarCobroQR = mpModule.generarCobroQR;
+exports.webhookMercadoPago = mpModule.webhookMercadoPago;
+
+// ==================================================================
+// 📦 TRIGGERS DE STOCK (LÓGICA ORIGINAL)
+// ==================================================================
+
+exports.descontarStockPorVenta = onDocumentCreated({ 
+    document: "companies/{companyId}/ventas/{ventaId}", 
+    region: "southamerica-west1" 
+}, async (event) => {
+    const { companyId } = event.params;
+    const snapshot = event.data;
+    if (!snapshot) return;
 
     const ventaData = snapshot.data();
-    const items = ventaData.items;
+    if (ventaData.tipo !== "venta" || !ventaData.items) return;
 
-    if (ventaData.tipo !== "venta") {
-        console.log(
-            `Venta ${snapshot.id} es de tipo '${ventaData.tipo}'. ` +
-            "No se descuenta stock.",
-        );
-        return;
-    }
-
-    if (!items || items.length === 0) {
-        console.log(`Venta ${snapshot.id} no tiene items.`);
-        return;
-    }
-
-    console.log(
-        `Procesando Venta ${snapshot.id} para descontar stock...`,
-    );
-
-    // Usamos una transacción
     try {
         await db.runTransaction(async (transaction) => {
-            for (const item of items) {
-                const productRef = db.collection("productos").doc(item.id);
-                
-                // Descontamos el stock
+            for (const item of ventaData.items) {
+                const productRef = db.collection("companies").doc(companyId).collection("productos").doc(item.id);
                 transaction.update(productRef, {
                     stock: admin.firestore.FieldValue.increment(-item.quantity),
                 });
             }
         });
-        console.log(
-            `Stock descontado exitosamente para Venta ${snapshot.id}.`,
-        );
     } catch (error) {
-        console.error(
-            `Error al descontar stock para Venta ${snapshot.id}:`,
-            error,
-        );
+        logger.error("Error descontando stock:", error);
     }
 });
 
-
-// ----------------------------------------------------------------------
-// FUNCIÓN 2: REVERTIR STOCK (al eliminar la venta) - Confirmada por despliegue
-// ----------------------------------------------------------------------
-
-/**
- * Trigger v2 que se dispara CADA VEZ que se ELIMINA un documento 
- * en la colección 'ventas'. Reintegra el stock de los productos.
- */
-exports.revertirStockPorVentaEliminada = onDocumentDeleted("ventas/{ventaId}", async (event) => {
-    
+exports.revertirStockPorVentaEliminada = onDocumentDeleted({ 
+    document: "companies/{companyId}/ventas/{ventaId}", 
+    region: "southamerica-west1" 
+}, async (event) => {
+    const { companyId } = event.params;
     const snapshot = event.data;
-    if (!snapshot) {
-        console.log("No hay datos asociados con el evento de eliminación.");
-        return;
-    }
+    if (!snapshot) return;
 
     const ventaEliminada = snapshot.data();
-    const items = ventaEliminada.items;
-    const ventaId = snapshot.id;
-
-    if (!items || items.length === 0) {
-        console.log(`Venta ${ventaId} eliminada no contenía items. Stock sin cambios.`);
-        return;
-    }
-    
-    console.log(`Iniciando reversión de stock para Venta ID: ${ventaId} con ${items.length} items.`);
+    if (!ventaEliminada.items) return;
 
     try {
         await db.runTransaction(async (transaction) => {
-            for (const item of items) {
-                const productRef = db.collection("productos").doc(item.id);
-
-                // Incrementamos el stock (SUMAMOS la cantidad vendida originalmente)
+            for (const item of ventaEliminada.items) {
+                const productRef = db.collection("companies").doc(companyId).collection("productos").doc(item.id);
                 transaction.update(productRef, {
                     stock: admin.firestore.FieldValue.increment(item.quantity),
                 });
             }
         });
-        console.log(`✅ ÉXITO: Stock revertido y venta ${ventaId} eliminada.`);
-
     } catch (error) {
-        console.error(`❌ FALLO: Transacción de reversión de stock falló para Venta ${ventaId}:`, error);
+        logger.error("Error revirtiendo stock:", error);
     }
-    return null;
 });
 
-// ==================================================================
-// MÓDULO MERCADOPAGO (Importado)
-// ==================================================================
-const mpModule = require('./mercadopago');
-
-exports.obtenerTerminales = mpModule.obtenerTerminales;
-exports.configurarPoint = mpModule.configurarPoint;
-exports.cobrarConPoint = mpModule.cobrarConPoint;
-exports.generarCobroQR = mpModule.generarCobroQR;
-exports.webhookMercadoPago = mpModule.webhookMercadoPago;
-// ----------------------------------------------------------------------
-// FUNCIÓN 3: AJUSTAR STOCK NETO (al editar la venta) - ¡NUEVA!
-// ----------------------------------------------------------------------
-
-/**
- * Trigger v2 que se dispara CADA VEZ que se actualiza un documento
- * en 'ventas'. Calcula la diferencia neta de stock y la aplica.
- */
-exports.ajustarStockPorEdicionVenta = onDocumentUpdated("ventas/{ventaId}", async (event) => {
-    
-    const snapshot = event.data;
-    if (!snapshot) {
-        console.log("No hay datos 'after' en el evento de edición.");
-        return;
-    }
-
+exports.ajustarStockPorEdicionVenta = onDocumentUpdated({ 
+    document: "companies/{companyId}/ventas/{ventaId}", 
+    region: "southamerica-west1" 
+}, async (event) => {
+    const { companyId } = event.params;
     const ventaAntes = event.data.before.data();
     const ventaDespues = event.data.after.data();
-    const ventaId = snapshot.id;
     
-    if (ventaDespues.tipo !== "venta") {
-        console.log(`Venta ${ventaId} es de tipo '${ventaDespues.tipo}'. No aplica ajuste de stock.`);
-        return;
-    }
+    if (ventaDespues.tipo !== "venta") return;
 
-    const itemsAntes = ventaAntes.items || [];
-    const itemsDespues = ventaDespues.items || [];
-    
-    // Mapear cantidades antes y después
-    const cantidadesAntes = new Map();
-    itemsAntes.forEach(item => cantidadesAntes.set(item.id, item.quantity));
-
-    const cantidadesDespues = new Map();
-    itemsDespues.forEach(item => cantidadesDespues.set(item.id, item.quantity));
-
-    // Consolidar IDs de todos los productos afectados
-    const productosAfectados = new Set([
-        ...cantidadesAntes.keys(),
-        ...cantidadesDespues.keys()
-    ]);
-
-    if (productosAfectados.size === 0) {
-        console.log(`Venta ${ventaId} editada sin cambio en items. No requiere ajuste.`);
-        return;
-    }
-
-    console.log(`Iniciando ajuste de stock neto para Venta ID: ${ventaId}.`);
+    const amountsBefore = new Map(ventaAntes.items?.map(i => [i.id, i.quantity]) || []);
+    const amountsAfter = new Map(ventaDespues.items?.map(i => [i.id, i.quantity]) || []);
+    const allProductIds = new Set([...amountsBefore.keys(), ...amountsAfter.keys()]);
 
     try {
         await db.runTransaction(async (transaction) => {
-            
-            for (const productoId of productosAfectados) {
-                const cantidadAntes = cantidadesAntes.get(productoId) || 0;
-                const cantidadDespues = cantidadesDespues.get(productoId) || 0;
-                
-                // netChange: Si es positivo, stock debe disminuir (más vendido). 
-                // Si es negativo, stock debe aumentar (menos vendido/devuelto).
-                const netChange = cantidadDespues - cantidadAntes;
-
-                if (netChange !== 0) {
-                    const productRef = db.collection("productos").doc(productoId);
-                    
-                    // Aplicar el cambio neto. Si netChange es 2, incrementamos en -2.
-                    // Si netChange es -5, incrementamos en +5 (revertimos).
-                    const stockAdjustment = -netChange; 
-
+            for (const id of allProductIds) {
+                const diff = (amountsAfter.get(id) || 0) - (amountsBefore.get(id) || 0);
+                if (diff !== 0) {
+                    const productRef = db.collection("companies").doc(companyId).collection("productos").doc(id);
                     transaction.update(productRef, {
-                        stock: admin.firestore.FieldValue.increment(stockAdjustment),
+                        stock: admin.firestore.FieldValue.increment(-diff),
                     });
-                    console.log(`Ajuste Producto ${productoId}: Cambio neto ${netChange}, Ajuste stock: ${stockAdjustment}`);
                 }
             }
         });
-        console.log(`✅ ÉXITO: Ajuste de stock neto completado para Venta ${ventaId}.`);
-
     } catch (error) {
-        console.error(`❌ FALLO: Transacción de ajuste de stock falló para Venta ${ventaId}:`, error);
+        logger.error("Error ajustando stock:", error);
     }
-    return null;
 });

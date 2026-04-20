@@ -225,16 +225,16 @@ const DriverScreen = ({ navigation }: DriverScreenProps) => {
 
             return {
                 id: r.id,
-                nombre: r.id || `Ruta ${r.id.substring(0, 6)}`,
+                nombre: r.nombre || (r.id ? `Ruta ${r.id.substring(0, 6)}` : 'Ruta'),
                 fecha: routeDate,
-                estado: r.estado || 'Creada',
+                estado: (r.estado as any) || 'Creada',
                 facturas: facturas
             };
         });
 
         const filtered = mappedRoutes.filter(route => {
             if (selectedTab === 'En Curso') {
-                return ['Creada', 'En Curso'].includes(route.estado);
+                return ['Creada', 'En Curso', 'Despachada', 'Activa'].includes(route.estado);
             } else {
                 return ['Completada', 'Archivada'].includes(route.estado);
             }

@@ -49,22 +49,32 @@ function cleanAndFormatKey(rawString, type) {
 }
 
 // --- GESTIÓN DE TOKEN ---
-async function getAfipContext() {
-    const configSnap = await db.doc("config/afip").get();
-    if (!configSnap.exists) throw new HttpsError('failed-precondition', "AFIP no configurado.");
+async function getAfipContext(uid) {
+    if (!uid) throw new HttpsError('unauthenticated', "El usuario debe estar autenticado.");
+
+    console.log(`🔐 Resolviendo empresa para AFIP (Usuario: ${uid})...`);
+    const userDoc = await db.collection('users').doc(uid).get();
+    
+    if (!userDoc.exists) throw new HttpsError('not-found', "Perfil de usuario no encontrado en /users.");
+    const companyId = userDoc.data().companyId;
+    
+    if (!companyId) throw new HttpsError('failed-precondition', "El usuario no tiene empresa asignada.");
+
+    const configSnap = await db.collection('companies').doc(companyId).collection('config').doc('afip').get();
+    if (!configSnap.exists) throw new HttpsError('failed-precondition', `AFIP no configurado para la empresa ${companyId}.`);
     
     const rawConfig = configSnap.data();
-    if (!rawConfig.active) throw new HttpsError('failed-precondition', "Módulo AFIP desactivado.");
+    if (!rawConfig.active) throw new HttpsError('failed-precondition', "Módulo AFIP desactivado por la empresa.");
     
-    // Soporte para nombres de campos 'cert'/'key' (frontend) o 'certificate'/'privateKey' (legacy)
     const rawCert = rawConfig.cert || rawConfig.certificate;
     const rawKey = rawConfig.key || rawConfig.privateKey;
 
-    if (!rawCert || !rawKey) throw new HttpsError('failed-precondition', "Faltan certificados.");
+    if (!rawCert || !rawKey) throw new HttpsError('failed-precondition', "Faltan certificados en la configuración.");
 
     const config = {
         ...rawConfig,
-        cuit: rawConfig.cuit.replace(/[^0-9]/g, ''),
+        companyId, // Incluimos el ID para operaciones posteriores
+        cuit: (rawConfig.cuit || "").replace(/[^0-9]/g, ''),
         certPem: cleanAndFormatKey(rawCert, 'CERT'),
         keyPem: cleanAndFormatKey(rawKey, 'KEY'),
         urls: rawConfig.isProduction ? URLS.PROD : URLS.HOMO
@@ -126,11 +136,11 @@ async function generateNewToken(config, tokenRef) {
 
 exports.probarConexionAfip = onCall({
     cors: true,
-    region: "us-central1",
+    region: "southamerica-west1",
     timeoutSeconds: 30
 }, async (request) => {
     try {
-        const ctx = await getAfipContext();
+        const ctx = await getAfipContext(request.auth?.uid);
         const client = await soap.createClientAsync(ctx.urls.WSFE, { request: afipAxios, wsdl_options: { httpsAgent: legacyAgent } });
         const [result] = await client.FEDummyAsync({});
         return { 
@@ -147,7 +157,7 @@ exports.probarConexionAfip = onCall({
 
 exports.emitirFacturasReparto = onCall({
     cors: true,
-    region: "us-central1",
+    region: "southamerica-west1",
     timeoutSeconds: 120,
     memory: "512MiB"
 }, async (request) => {
@@ -158,7 +168,7 @@ exports.emitirFacturasReparto = onCall({
     let ctx, clientWsfe;
 
     try {
-        ctx = await getAfipContext();
+        ctx = await getAfipContext(request.auth?.uid);
         clientWsfe = await soap.createClientAsync(ctx.urls.WSFE, { request: afipAxios, wsdl_options: { httpsAgent: legacyAgent } });
     } catch (e) {
         return ventas.map(v => ({ ventaId: v.id, status: "Error", detalle: "Fallo Auth: " + e.message }));
@@ -236,8 +246,8 @@ exports.emitirFacturasReparto = onCall({
 
             const detalle = rCAE.FeDetResp.FECAEDetResponse[0];
             
-            // --- ACTUALIZAR FIRESTORE ---
-            await db.collection("ventas").doc(venta.id).update({
+            // --- ACTUALIZAR FIRESTORE (Tenant-Specific) ---
+            await db.collection("companies").doc(ctx.companyId).collection("ventas").doc(venta.id).update({
                 afipCAE: detalle.CAE,
                 afipFechaVtoCAE: detalle.CAEFchVto,
                 afipNumeroComprobante: proximo,
@@ -249,7 +259,7 @@ exports.emitirFacturasReparto = onCall({
 
         } catch (error) {
             console.error(`Error venta ${venta.id}:`, error);
-            await db.collection("ventas").doc(venta.id).update({ afipEstado: "error", afipErrorDetalle: error.message }).catch(e=>{});
+            await db.collection("companies").doc(ctx.companyId).collection("ventas").doc(venta.id).update({ afipEstado: "error", afipErrorDetalle: error.message }).catch(e=>{});
             resultados.push({ ventaId: venta.id, status: "Error", detalle: error.message });
         }
     }

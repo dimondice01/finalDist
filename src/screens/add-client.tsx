@@ -4,10 +4,9 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 
-// --- SDK NATIVO (v9 Modular) ---
+// --- SDK NATIVO ---
 import {
-    addDoc,
-    collection,
+    FirebaseFirestoreTypes,
     serverTimestamp
 } from '@react-native-firebase/firestore';
 
@@ -55,6 +54,35 @@ const CONDICIONES_IVA = [
     { id: 'RI', nombre: 'Responsable Inscripto' },
     { id: 'EX', nombre: 'Exento' },
 ];
+
+/**
+ * ✅ LÓGICA DE VALIDACIÓN CUIT/CUIL (Módulo 11)
+ */
+const validateCuit = (cuit: string): boolean => {
+    const cleaned = (cuit || '').replace(/[^0-9]/g, '');
+    if (cleaned.length !== 11) return false;
+
+    const weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+    let sum = 0;
+    for (let i = 0; i < 10; i++) {
+        sum += parseInt(cleaned[i]) * weights[i];
+    }
+
+    let checkDigit = 11 - (sum % 11);
+    if (checkDigit === 11) checkDigit = 0;
+    if (checkDigit === 10) checkDigit = 9;
+
+    return checkDigit === parseInt(cleaned[10]);
+};
+
+/**
+ * ✅ LÓGICA DE VALIDACIÓN DNI
+ */
+const validateDni = (dni: string): boolean => {
+    const cleaned = (dni || '').replace(/[^0-9]/g, '');
+    return cleaned.length >= 7 && cleaned.length <= 8;
+};
+
 
 // --- MODALES ---
 
@@ -227,8 +255,9 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     const [location, setLocation] = useState<LocationCoords | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     
-    const { availableZones, vendors, refreshAllData, rubros, priceLists, isOffline } = useData();
+    const { clients, availableZones, vendors, refreshAllData, rubros, priceLists, isOffline, companyId } = useData(); // ✅ Agregado: clients
     const currentUser = auth.currentUser;
+
     
     const [mapModalVisible, setMapModalVisible] = useState(false);
     const [tempRegion, setTempRegion] = useState({ latitude: -29.4134, longitude: -66.8569, latitudeDelta: 0.0922, longitudeDelta: 0.0421 });
@@ -248,10 +277,12 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
     }, [currentUser, vendors]);
 
     const zonasDelVendedor = useMemo(() => {
-        if (!currentVendedor || !currentVendedor.zonasAsignadas || !availableZones) return [];
-        const zonaIds = currentVendedor.zonasAsignadas;
-        return availableZones.filter(z => z && z.id && zonaIds.includes(z.id)).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    }, [currentVendedor, availableZones]);
+        // ✅ CORRECCIÓN ROBUSTA: El DataContext ya entrega las zonas filtradas 
+        // según el documento raíz /users/{uid}. No necesitamos filtrar de nuevo
+        // contra el perfil local que podría estar desincronizado.
+        const zones = Array.isArray(availableZones) ? availableZones : [];
+        return [...zones].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    }, [availableZones]);
 
     const rubrosOrdenados = useMemo(() => {
         const safeRubros = Array.isArray(rubros) ? rubros : [];
@@ -284,6 +315,27 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
         return cond ? cond.nombre : 'Consumidor Final';
     }, [condicionIva]);
 
+    // ✅ VALIDACIÓN EN TIEMPO REAL
+    const validation = useMemo(() => {
+        const cleaned = (numeroDocumento || '').trim().replace(/[^0-9]/g, '');
+        
+        if (!cleaned) return { isValid: false, message: 'Número requerido *' };
+
+        // 1. Verificar Duplicados
+        const duplicate = (clients || []).find(c => (c.numeroDocumento || '').replace(/[^0-9]/g, '') === cleaned);
+        if (duplicate) return { isValid: false, message: `⚠️ Duplicado: ya pertenece a ${duplicate.nombre}` };
+
+        // 2. Verificar Sintaxis según tipo
+        if (tipoDocumento === 'CUIT' || tipoDocumento === 'CUIL') {
+            if (!validateCuit(cleaned)) return { isValid: false, message: '❌ CUIT/CUIL Inválido (Checksum)' };
+        } else if (tipoDocumento === 'DNI' || tipoDocumento === 'SC') {
+            if (!validateDni(cleaned)) return { isValid: false, message: '❌ DNI Inválido (7-8 dígitos)' };
+        }
+
+        return { isValid: true, message: '✅ Documento Válido' };
+    }, [numeroDocumento, tipoDocumento, clients]);
+
+
 
     // --- Callbacks ---
     const handleLocation = useCallback(async () => {
@@ -312,22 +364,39 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
 
     // --- SAVE ---
     const handleSubmit = useCallback(async () => {
-        if (!nombre.trim() || !zonaId) { Alert.alert('Datos Incompletos', 'Nombre y Zona son obligatorios.'); return; }
-        if (isArca && (tipoDocumento === 'SC' || !numeroDocumento.trim())) { Alert.alert('Datos AFIP', 'Complete Tipo y Número de Documento.'); return; }
+        if (!nombre.trim() || !zonaId || !telefono.trim()) { 
+            Alert.alert('Datos Incompletos', 'Nombre, Zona y Teléfono son obligatorios.'); 
+            return; 
+        }
+        
+        // ✅ VALIDACIÓN ESTRICTA
+        if (!validation.isValid) { 
+            Alert.alert('Identificación Inválida', validation.message); 
+            return; 
+        }
+
+        if (isArca && tipoDocumento === 'SC') { 
+            Alert.alert('Datos AFIP', 'Para Factura ARCA elija un tipo que no sea Consumidor Final.'); 
+            return; 
+        }
+
         if (isSubmitting) return;
 
         setIsSubmitting(true);
         Haptics.notificationAsync('success' as any); 
 
         const db = dbContainer.instance;
+
         if (!db) { Alert.alert('Error', 'DB no inicializada.'); setIsSubmitting(false); return; }
 
-        const finalTipoDocumento = isArca ? tipoDocumento : 'SC';
-        const finalNumeroDocumento = isArca ? numeroDocumento.trim() : '';
-        // ✅ DEFINIMOS LA CONDICIÓN IVA FINAL
+        const finalTipoDocumento = tipoDocumento;
+        const finalNumeroDocumento = numeroDocumento.trim().replace(/[^0-9]/g, '');
         const finalCondicionIva = isArca ? condicionIva : 'CF';
 
+
         try {
+            if (!companyId) throw new Error("ID de empresa no disponible.");
+
             const newClientData = {
                 nombre: nombre.trim(),
                 nombreCompleto: nombre.trim(),
@@ -353,12 +422,13 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 fechaCreacion: serverTimestamp(),
             };
 
-            const clientesCollectionRef = collection(db, 'clientes');
+            const clientsCollection = db.collection(`companies/${companyId}/clientes`);
 
             if (isOffline) {
-                addDoc(clientesCollectionRef, newClientData).catch(err => console.error("Error offline:", err));
+                // En namespaced, .add() en offline simplemente se pone en cola
+                clientsCollection.add(newClientData).catch(err => console.error("Error offline:", err));
             } else {
-                await addDoc(clientesCollectionRef, newClientData);
+                await clientsCollection.add(newClientData);
                 await refreshAllData();
             }
             
@@ -408,7 +478,7 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="phone" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
-                    <TextInput style={styles.input} placeholder="Teléfono" placeholderTextColor={COLORS.textSecondary} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" />
+                    <TextInput style={styles.input} placeholder="Teléfono * (Obligatorio)" placeholderTextColor={COLORS.textSecondary} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" />
                 </View>
                 <View style={styles.inputGroup}>
                     <Feather name="mail" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
@@ -444,10 +514,37 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                     </TouchableOpacity>
                 </View>
                 
+                {/* ✅ SECCIÓN IDENTIFICACIÓN (SIEMPRE VISIBLE) */}
+                <View style={styles.pickerContainer}>
+                    <Feather name="file-text" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
+                    <TouchableOpacity style={styles.pickerButton} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsDocumentTypeModalVisible(true); }}>
+                        <Text style={[styles.pickerButtonText, { color: COLORS.textPrimary, fontWeight: 'bold' }]}>{selectedDocumentTypeName}</Text>
+                        <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={[styles.inputGroup, !validation.isValid && numeroDocumento ? { borderColor: COLORS.error || '#FF5252' } : {}]}>
+                    <Feather name="hash" size={SIZES.h3} color={validation.isValid ? COLORS.success || '#4CAF50' : COLORS.textSecondary} style={styles.inputIcon} />
+                    <TextInput 
+                        style={styles.input} 
+                        placeholder={tipoDocumento === 'DNI' || tipoDocumento === 'SC' ? "Número de DNI *" : "Número de CUIT/CUIL *"} 
+                        placeholderTextColor={COLORS.textSecondary} 
+                        value={numeroDocumento} 
+                        onChangeText={setNumeroDocumento} 
+                        keyboardType="number-pad" 
+                    />
+                </View>
+                
+                {numeroDocumento.length > 0 && (
+                    <Text style={[styles.validationText, { color: validation.isValid ? COLORS.success || '#4CAF50' : COLORS.error || '#FF5252' }]}>
+                        {validation.message}
+                    </Text>
+                )}
+                
                 {/* ARCA Switch */}
                 <View style={[styles.inputGroup, styles.arcaSwitchContainer]}>
                     <Feather name="book-open" size={SIZES.h3} color={COLORS.primary} style={styles.inputIcon} />
-                    <Text style={styles.arcaLabel}>Cliente requiere Factura ARCA</Text>
+                    <Text style={styles.arcaLabel}>Habilitar Facturación AFIP (ARCA)</Text>
                     <Switch trackColor={{ false: COLORS.textSecondary, true: COLORS.primary }} thumbColor={isArca ? COLORS.backgroundEnd : COLORS.glassBorder} onValueChange={setIsArca} value={isArca} />
                 </View>
 
@@ -461,29 +558,23 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                                 <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
                             </TouchableOpacity>
                         </View>
-
-                        <View style={styles.pickerContainer}>
-                            <Feather name="file-text" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
-                            <TouchableOpacity style={styles.pickerButton} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsDocumentTypeModalVisible(true); }}>
-                                <Text style={[styles.pickerButtonText, { color: tipoDocumento !== 'SC' ? COLORS.textPrimary : COLORS.textSecondary }]}>{selectedDocumentTypeName}</Text>
-                                <Feather name="chevron-down" size={SIZES.h3} color={COLORS.primary} />
-                            </TouchableOpacity>
-                        </View>
-                        <View style={styles.inputGroup}>
-                            <Feather name="hash" size={SIZES.h3} color={COLORS.textSecondary} style={styles.inputIcon} />
-                            <TextInput style={styles.input} placeholder="Número Documento/CUIT *" placeholderTextColor={COLORS.textSecondary} value={numeroDocumento} onChangeText={setNumeroDocumento} keyboardType={tipoDocumento === 'CUIT' || tipoDocumento === 'CUIL' ? 'number-pad' : 'default'} />
-                        </View>
                     </>
                 )}
+
                 
                 <TouchableOpacity style={styles.locationButton} onPress={handleLocation} disabled={locationLoading}>
                     {locationLoading ? (<ActivityIndicator color={COLORS.backgroundEnd} />) : (<Feather name={location ? "check-circle" : "crosshair"} size={SIZES.h3} color={COLORS.backgroundEnd} />)}
                     <Text style={styles.locationButtonText}>{location ? 'Ubicación Guardada' : 'Capturar Ubicación GPS'}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId || (isArca && (tipoDocumento === 'SC' || !numeroDocumento.trim()))) && styles.buttonDisabled]} onPress={handleSubmit} disabled={isSubmitting || !nombre.trim() || !zonaId || (isArca && (tipoDocumento === 'SC' || !numeroDocumento.trim()))}>
+                <TouchableOpacity 
+                    style={[styles.button, (isSubmitting || !nombre.trim() || !zonaId || !telefono.trim() || !validation.isValid) && styles.buttonDisabled]} 
+                    onPress={handleSubmit} 
+                    disabled={isSubmitting || !nombre.trim() || !zonaId || !telefono.trim() || !validation.isValid}
+                >
                     {isSubmitting ? (<ActivityIndicator color={COLORS.white} />) : (<Text style={styles.buttonText}>{isOffline ? 'GUARDAR (OFFLINE)' : 'GUARDAR CLIENTE'}</Text>)}
                 </TouchableOpacity>
+
             </ScrollView>
 
             <Modal visible={mapModalVisible} animationType="slide" onRequestClose={() => setMapModalVisible(false)}>
@@ -545,7 +636,9 @@ const styles = StyleSheet.create({
     button: { backgroundColor: COLORS.primary, padding: SIZES.medium, borderRadius: SIZES.radius, alignItems: 'center', height: 56, justifyContent: 'center', shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 6, elevation: 8 },
     buttonDisabled: { backgroundColor: COLORS.disabled, shadowOpacity: 0.1, elevation: 2 },
     buttonText: { color: COLORS.white, fontSize: SIZES.h3, fontWeight: 'bold', textTransform: 'uppercase' },
+    validationText: { fontSize: SIZES.caption, marginTop: -SIZES.small, marginBottom: SIZES.medium, marginLeft: SIZES.medium, fontWeight: '600' },
     mapContainer: { flex: 1, backgroundColor: COLORS.backgroundEnd },
+
     map: { ...StyleSheet.absoluteFillObject },
     mapControls: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLORS.backgroundEnd, padding: SIZES.large, paddingBottom: Platform.OS === 'ios' ? SIZES.xl : SIZES.large, borderTopLeftRadius: SIZES.radius, borderTopRightRadius: SIZES.radius, gap: SIZES.medium },
     mapInstructions: { color: COLORS.textSecondary, textAlign: 'center', fontSize: SIZES.caption, marginBottom: SIZES.small },

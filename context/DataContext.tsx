@@ -78,6 +78,7 @@ export interface Client {
     requiereFacturaAfip?: boolean; // Nuevo campo unificado para Facturación
     tipoDocumento?: string; // DNI, CUIT, CUIL, PAS, SC
     numeroDocumento?: string;
+    condicionIva?: string; // MT, RI, CF, EX
     // ✅ FIN CAMBIOS AFIP
     
     location?: { latitude: number; longitude: number; } | null;
@@ -111,6 +112,9 @@ export interface Vendor {
     zonasAsignadas?: string[];
     comisionGeneral?: number;
     firebaseAuthUid?: string;
+    // ✅ MercadoPago IDs (SaaS Master Plan)
+    mpCajaId?: string; 
+    mpDeviceId?: string;
 }
 
 // --- INTERFAZ SALE ACTUALIZADA PARA COBRANZAS ---
@@ -127,7 +131,7 @@ export interface Sale {
     totalCosto: number;
     totalComision: number;
     observaciones: string;
-    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada';
+    estado: 'Pagada' | 'Adeuda' | 'Pendiente de Entrega' | 'Repartiendo' | 'Anulada' | 'Web: Pendiente';
     
     // ✅ TIPO ACTUALIZADO: Incluye 'cobranza' y 'rendicion_cobranza'
     tipo: 'venta' | 'reposicion' | "devolucion" | "cobranza" | "rendicion_cobranza";
@@ -147,12 +151,14 @@ export interface Sale {
     afipResultado?: string | null;
     // ✅ FIN CAMBIOS AFIP
     
-    saldoPendiente: number;
+    saldoPendiente?: number;
     paymentMethod?: 'contado' | 'cuenta_corriente';
     numeroFactura?: string;
     totalDescuentoPromociones?: number;
     pagoEfectivo?: number;
     pagoTransferencia?: number;
+    pagoQR?: number;    // ✅ SaaS Master Plan
+    pagoPoint?: number; // ✅ SaaS Master Plan
     itemDiscounts?: { [itemId: string]: number }; 
 
     // ✅ NUEVOS CAMPOS PARA COBRANZA (Agregados para soportar la funcionalidad)
@@ -160,13 +166,40 @@ export interface Sale {
     rendido?: boolean;            // Si el dinero ya fue entregado a caja
     fechaRendicion?: any;         // Cuándo se rindió
     ventaOriginalId?: string;     // ID de la venta que generó la deuda (si aplica)
+    ubicacion?: { lat: number; lng: number; accuracy: number } | null;
 }
 export interface Route {
-    id: string;
-    repartidorId: string;
-    fecha: { seconds: number } | Date;
-    estado?: 'Creada' | 'En Curso' | 'Completada'; 
+    id: string; // ✅ Agregado
+    nombre?: string; // ✅ Agregado
+    fecha?: any;  // ✅ Agregado
+    estado?: 'Creada' | 'En Curso' | 'Completada' | 'Archivada' | string; // ✅ Agregado
     facturas?: any[];
+    repartidorId?: string; // ✅ Agregado
+}
+
+export interface VisitaUbicacion {
+    lat: number;
+    lng: number;
+    accuracy: number;
+}
+
+export interface VisitaData {
+    clienteId: string;
+    clientName: string;
+    vendedorId: string;
+    vendedorName: string;
+    timestamp: string;
+    ubicacion: VisitaUbicacion | null;
+    resultado: 'sin_venta' | 'con_venta';
+}
+
+// ✅ NUEVO: Interfaz para Identidad de Empresa (White-Label)
+export interface CompanyConfig {
+    logo?: string;           // Base64 para cabecera PDF
+    name?: string;           // Nombre Legal/SaaS
+    nombreFantasia?: string; // Nombre Comercial (Prioridad en Remito)
+    domicilioFiscal?: string;
+    cuit?: string;
 }
 
 
@@ -181,7 +214,11 @@ export interface IDataContext {
     sales: Sale[];
     routes: Route[];
     rubros: Rubro[];
-    priceLists: PriceList[]; // ✅ NUEVO: Listas de precios disponibles
+    priceLists: PriceList[]; 
+    identity: Vendor | null;
+    companyId: string | null; 
+    companyConfig: CompanyConfig | null; // ✅ Nuevo SaaS Field
+    userRole: 'Vendedor' | 'Reparto' | 'Admin' | null; 
     syncData: () => Promise<void>;
     refreshAllData: () => Promise<void>;
     isLoading: boolean;
@@ -193,8 +230,9 @@ export interface IDataContext {
     anularVentaConStock: (saleId: string, items: CartItem[]) => Promise<void>;
     deleteSaleAndRevertStock: (saleId: string, items: CartItem[]) => Promise<void>; 
     descontarStockLocalmente: (items: CartItem[]) => void;
-    reintegrarStockLocalmente: (items: CartItem[]) => void; 
-    setSalesState: React.Dispatch<React.SetStateAction<Sale[]>>; 
+    reintegrarStockLocalmente: (items: CartItem[]) => void;
+    setSalesState: React.Dispatch<React.SetStateAction<Sale[]>>;
+    registrarVisita: (visitaData: Omit<VisitaData, never>) => Promise<string>;
 }
 
 
@@ -209,7 +247,11 @@ const defaultContextValue: IDataContext = {
     sales: [],
     routes: [],
     rubros: [],
-    priceLists: [], // ✅ Default vacío
+    priceLists: [], 
+    identity: null,
+    companyId: null, // Default
+    companyConfig: null, // Default
+    userRole: null, // Default
     zones: [],
     updateClient: async () => {},
     syncData: async () => { console.warn("Llamada a syncData por defecto"); },
@@ -223,6 +265,7 @@ const defaultContextValue: IDataContext = {
     descontarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a descontarStockLocalmente por defecto"); },
     reintegrarStockLocalmente: (items: CartItem[]) => { console.warn("Llamada a reintegrarStockLocalmente por defecto"); },
     setSalesState: () => { console.warn("Llamada a setSalesState por defecto"); },
+    registrarVisita: async () => { console.warn("Llamada a registrarVisita por defecto"); return "error"; },
 };
 
 const DataContext = createContext<IDataContext>(defaultContextValue);
@@ -238,7 +281,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [sales, setSales] = useState<Sale[]>([]);
     const [routes, setRoutes] = useState<Route[]>([]);
     const [rubros, setRubros] = useState<Rubro[]>([]);
-    const [priceLists, setPriceLists] = useState<PriceList[]>([]); // ✅ NUEVO ESTADO
+    const [priceLists, setPriceLists] = useState<PriceList[]>([]); 
+    const [identity, setIdentity] = useState<Vendor | null>(null);
+    const [companyId, setCompanyId] = useState<string | null>(null); 
+    const [companyConfig, setCompanyConfig] = useState<CompanyConfig | null>(null); // ✅ Nuevo: Branding/Fiscal
+    const [resolvedUserRole, setResolvedUserRole] = useState<'Vendedor' | 'Reparto' | 'Admin' | null>(null); 
     
     // --- BANDERAS DE CARGA (Sin cambios) ---
     const [isLoading, setIsLoading] = useState(true);
@@ -280,8 +327,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             // ...
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
-                // ✅ AGREGADO: 'priceLists' a las claves de AsyncStorage
-                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros', 'priceLists'];
+                // ✅ AGREGADO: 'priceLists' y 'companyConfig' a las claves de AsyncStorage
+                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros', 'priceLists', 'companyConfig'];
                 const storedData = await AsyncStorage.multiGet(keys);
                 const dataMap = new Map(storedData);
 
@@ -300,6 +347,19 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                                     }))
                                 }));
                                 setter(salesData);
+                            } else if (key === 'routes') {
+                                const routesData = (parsed as any[]).map(r => {
+                                    const routeDate = r.fecha instanceof Date ? r.fecha : (r.fecha?.seconds ? new Date(r.fecha.seconds * 1000) : new Date());
+                                    const facturas = Array.isArray(r.facturas) ? r.facturas : [];
+                                    return {
+                                        id: r.id,
+                                        nombre: r.nombre || (r.id ? `Ruta ${r.id.substring(0, 6)}` : 'Ruta'),
+                                        fecha: routeDate,
+                                        estado: r.estado || 'Creada',
+                                        facturas: facturas
+                                    };
+                                });
+                                setter(routesData);
                             } else {
                                 setter(parsed);
                             }
@@ -321,7 +381,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setDataState('sales', setSales, true);
                 setDataState('routes', setRoutes, true);
                 setDataState('rubros', setRubros);
-                setDataState('priceLists', setPriceLists); // ✅ Carga local de listas
+                const dataToParse = dataMap.get('priceLists');
+                if (dataToParse) setPriceLists(parseWithDates(dataToParse));
+                if (dataMap.get('companyConfig')) setCompanyConfig(JSON.parse(dataMap.get('companyConfig')!)); // Parsing simple
 
                 console.log("Datos locales cargados.");
             } catch (e) {
@@ -386,41 +448,109 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             const currentUser = auth.currentUser;
             if (!currentUser) throw new Error("No hay usuario autenticado para obtener datos.");
 
-            const vendorsQuery = query(collection(dbInstance, 'vendedores'), where('firebaseAuthUid', '==', currentUser.uid));
-            const vendorsQuerySnap = await getDocs(vendorsQuery);
-            let vendorDoc: FirebaseFirestoreTypes.DocumentSnapshot;
+            // 🟢 PASO 1: RESOLUCIÓN DE IDENTIDAD (SaaS Industrial)
+            console.log("Resolviendo identidad en /users...");
+            // Usamos formato compatible: db.doc('coleccion/documento')
+            const userDocSnap = await dbInstance.doc(`users/${currentUser.uid}`).get();
+            
+            if (!userDocSnap.exists) {
+                throw new Error("Usuario no encontrado en la colección raíz /users. Contacte a soporte.");
+            }
+
+            const userData = userDocSnap.data();
+            const resolvedCompanyId = userData?.companyId;
+
+            if (!resolvedCompanyId) {
+                throw new Error("El usuario no tiene asignada una empresa (companyId) en /users.");
+            }
+
+            setCompanyId(resolvedCompanyId);
+            console.log(`Empresa identificada: ${resolvedCompanyId}`);
+
+            // 🟢 PASO 2: OBTENER PERFIL DE VENDEDOR DENTRO DE LA COMPAÑÍA
+            const vendorsCollection = dbInstance.collection(`companies/${resolvedCompanyId}/vendedores`);
+            const vendorsQuerySnap = await vendorsCollection.where('firebaseAuthUid', '==', currentUser.uid).get();
+            
+            let vendorDoc: FirebaseFirestoreTypes.DocumentSnapshot | null = null;
             let currentVendorData: Vendor | null = null; 
 
-            if (vendorsQuerySnap.empty) {
-                console.warn("No se encontró vendedor por 'firebaseAuthUid', intentando por Doc ID (método antiguo)...");
-                const vendorRef = doc(dbInstance, 'vendedores', currentUser.uid);
-                const vendorSnap = await vendorRef.get();
-                
-                // @ts-ignore
-                if (!vendorSnap.exists) {
-                    throw new Error("Datos del vendedor actual no encontrados en Firestore. Se cerrará la sesión.");
+            try {
+                if (vendorsQuerySnap.empty) {
+                    console.warn("Vendedor no encontrado en subcolección, reintentando por ID directo...");
+                    const vendorSnap = await dbInstance.doc(`companies/${resolvedCompanyId}/vendedores/${currentUser.uid}`).get();
+                    if (vendorSnap && (vendorSnap as any).exists === true) vendorDoc = vendorSnap; 
+                } else {
+                    vendorDoc = vendorsQuerySnap.docs[0]; 
                 }
 
-                console.log("Vendedor encontrado por Doc ID. Actualizando documento con 'firebaseAuthUid'...");
-                await updateDoc(vendorRef, { firebaseAuthUid: currentUser.uid });
-                vendorDoc = vendorSnap; 
-            } else {
-                vendorDoc = vendorsQuerySnap.docs[0]; 
+                if (vendorDoc && (vendorDoc as any).exists === true) {
+                    currentVendorData = { id: vendorDoc.id, ...vendorDoc.data() } as Vendor;
+                }
+            } catch (e) {
+                console.warn("Error accediendo a colección de vendedores:", e);
+                // Si es un error de permisos, permitimos continuar si tenemos datos de /users
             }
             
-            currentVendorData = { id: vendorDoc.id, ...vendorDoc.data() } as Vendor;
-            const userRole = currentVendorData.rango;
+            // ✅ IDENTIDAD ROBUSTA: Combinamos el perfil operativo con los datos de identidad raíz
+            if (!currentVendorData) {
+                console.log("Usando perfil de identidad raíz como fallback...");
+                currentVendorData = { 
+                    id: currentUser.uid, 
+                    nombreCompleto: userData?.nombreCompleto || userData?.nombre || 'Personal de Empresa',
+                    rango: userData?.role || userData?.rango || 'Reparto',
+                    firebaseAuthUid: currentUser.uid,
+                    zonasAsignadas: userData?.zonasAsignadas || [],
+                    mpCajaId: userData?.mpCajaId || '',   // 👈 IDs de MercadoPago
+                    mpDeviceId: userData?.mpDeviceId || '', // 👈 IDs de MercadoPago
+                } as any;
+            } else {
+                // Si existe el perfil en la compañía, nos aseguramos de que tenga las zonas del root
+                // por si el panel web solo las actualiza en /users
+                if (userData?.zonasAsignadas && Array.isArray(userData.zonasAsignadas)) {
+                    currentVendorData.zonasAsignadas = userData.zonasAsignadas;
+                }
+            }
+            
+            setIdentity(currentVendorData);
 
-            console.log(`Usuario identificado con rol: ${userRole} (ID: ${currentVendorData.id})`);
+            // ✅ NORMALIZAR ROL (Case Insensitive)
+            const resolvedRole = (currentVendorData!.rango || userData?.role || '').toLowerCase();
+            const isReparto = resolvedRole === 'reparto' || resolvedRole === 'chofer' || resolvedRole === 'distribuidor' || resolvedRole === 'repartidor';
 
-            const productsPromise = getDocs(collection(dbInstance, 'productos'));
-            const categoriesPromise = getDocs(collection(dbInstance, 'categorias'));
-            const promosQuery = query(collection(dbInstance, 'promociones'), where('estado', '==', 'activa'));
-            const promosPromise = getDocs(promosQuery);
-            const allVendorsPromise = getDocs(collection(dbInstance, 'vendedores'));
-            const rubrosPromise = getDocs(collection(dbInstance, 'rubros'));
-            // ✅ NUEVO: Promesa para descargar listas de precios
-            const priceListsPromise = getDocs(collection(dbInstance, 'listas_precios'));
+            console.log(`Usuario identificado con rol: ${resolvedRole} (ID: ${currentVendorData!.id})`);
+
+            // 🟢 PASO 2.5: OBTENER IDENTIDAD DE MARCA (White-Label)
+            console.log("Cargando branding e identidad de empresa...");
+            const companyRootSnap = await dbInstance.doc(`companies/${resolvedCompanyId}`).get();
+            const configAfipSnap = await dbInstance.collection(`companies/${resolvedCompanyId}/config`)
+                                                  .where("tipo", "==", "afip")
+                                                  .limit(1)
+                                                  .get();
+            
+            const rootData = (companyRootSnap as any).exists === true ? companyRootSnap.data() : {};
+            const configData = !configAfipSnap.empty ? configAfipSnap.docs[0].data() : {};
+
+            const combinedConfig: CompanyConfig = {
+                logo: rootData?.logo || '', // Base64
+                name: rootData?.name || '',
+                nombreFantasia: configData?.nombreFantasia || rootData?.name || '',
+                domicilioFiscal: configData?.domicilioFiscal || '',
+                cuit: configData?.cuit || ''
+            };
+            setCompanyConfig(combinedConfig);
+
+            // 🟢 PASO 3: DESCARGAR DATOS OPERATIVOS DE LA COMPAÑÍA
+            const productsPromise = dbInstance.collection(`companies/${resolvedCompanyId}/productos`).get();
+            const categoriesPromise = dbInstance.collection(`companies/${resolvedCompanyId}/categorias`).get();
+            const promosPromise = dbInstance.collection(`companies/${resolvedCompanyId}/promociones`).where('estado', '==', 'activa').get();
+            
+            // ✅ CONDICIONAL: Solo cargamos todos los vendedores si NO es reparto (o si es admin)
+            const allVendorsPromise = !isReparto 
+                ? dbInstance.collection(`companies/${resolvedCompanyId}/vendedores`).get().catch(e => { console.warn("Fallo carga de personal:", e); return { docs: [] }; })
+                : Promise.resolve({ docs: [] }); 
+
+            const rubrosPromise = dbInstance.collection(`companies/${resolvedCompanyId}/rubros`).get();
+            const priceListsPromise = dbInstance.collection(`companies/${resolvedCompanyId}/listas_precios`).get();
 
             let finalData: IDataContext = { ...defaultContextValue, isLoading: true };
 
@@ -476,6 +606,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     totalDescuentoPromociones: rawData.totalDescuentoPromociones ?? 0, 
                     pagoEfectivo: rawData.pagoEfectivo ?? 0,
                     pagoTransferencia: rawData.pagoTransferencia ?? 0,
+                    pagoQR: rawData.pagoQR ?? 0,
+                    pagoPoint: rawData.pagoPoint ?? 0,
                     itemDiscounts: rawData.itemDiscounts || {}, 
 
                     // ✅ NUEVOS CAMPOS PARA COBRANZA (Mapeo)
@@ -503,16 +635,25 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             })) as Promotion[];
 
             finalData.vendors = vendorsSnap.docs.map(processFirebaseDoc) as Vendor[];
+            
+            // ✅ ASEGURAR PERFIL PROPIO: Si la lista de vendedores no incluye al usuario actual, lo agregamos.
+            // Esto es crítico para usuarios de Reparto que no descargan todos los vendedores.
+            if (currentVendorData && !finalData.vendors.some(v => v.id === currentVendorData!.id)) {
+                finalData.vendors.push(currentVendorData);
+            }
+
             finalData.rubros = rubrosSnap.docs.map(processFirebaseDoc) as Rubro[];
             
             // ✅ PROCESAR LISTAS
             finalData.priceLists = priceListsSnap.docs.map(processFirebaseDoc) as PriceList[];
 
             // Queries condicionales
-            if (userRole === 'Reparto') {
-                console.log("Cargando rutas para repartidor...");
-                const routesQuery = query(collection(dbInstance, 'rutas'), where('repartidorId', '==', currentVendorData.id));
-                const routesSnap = await getDocs(routesQuery);
+            if (isReparto) {
+                // 1. Procesar Rutas
+                console.log(`Cargando rutas para UID: ${currentUser.uid} (Empresa: ${resolvedCompanyId})...`);
+                const routesSnap = await dbInstance.collection('companies').doc(resolvedCompanyId).collection('rutas')
+                    .where('repartidorId', '==', currentUser.uid)
+                    .get();
                 
                 // 1. Procesar Rutas
                 finalData.routes = routesSnap.docs.map((r: any) => ({ 
@@ -541,9 +682,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     }
 
                     const salePromises = saleChunks.map(chunk => {
-                        // Usamos '__name__' para buscar por ID de documento de forma segura
-                        const q = query(collection(dbInstance, 'ventas'), where('__name__', 'in', chunk));
-                        return getDocs(q);
+                        return dbInstance.collection(`companies/${resolvedCompanyId}/ventas`)
+                            .where('__name__', 'in', chunk)
+                            .get();
                     });
 
                     const saleSnaps = await Promise.all(salePromises);
@@ -571,8 +712,9 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     }
 
                     const clientPromises = clientChunks.map(chunk => {
-                         const q = query(collection(dbInstance, 'clientes'), where('__name__', 'in', chunk));
-                         return getDocs(q);
+                        return dbInstance.collection(`companies/${resolvedCompanyId}/clientes`)
+                            .where('__name__', 'in', chunk)
+                            .get();
                     });
 
                     const clientSnaps = await Promise.all(clientPromises);
@@ -586,27 +728,48 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     finalData.clients = [];
                 }
             } else { // Vendedor o Admin
-                const clientsQuery = query(collection(dbInstance, 'clientes'), where('vendedorAsignadoId', '==', currentVendorData.id));
-                const clientsPromise = getDocs(clientsQuery);
-                const salesQuery = query(collection(dbInstance, 'ventas'), where('vendedorId', '==', currentVendorData.id));
-                const salesPromise = getDocs(salesQuery);
+                const clientsPromise = dbInstance.collection(`companies/${resolvedCompanyId}/clientes`)
+                    .where('vendedorAsignadoId', '==', currentVendorData!.id)
+                    .get();
+                const salesPromise = dbInstance.collection(`companies/${resolvedCompanyId}/ventas`)
+                    .where('vendedorId', '==', currentVendorData!.id)
+                    .get();
+                
                 const [clientsSnap, salesSnap] = await Promise.all([clientsPromise, salesPromise]);
 
                 finalData.clients = clientsSnap.docs.map(processFirebaseDoc) as Client[];
                 finalData.sales = salesSnap.docs.map(processFirebaseSale); 
-
-                const zoneIds = currentVendorData.zonasAsignadas || [];
-                    if (zoneIds.length > 0) {
-                        const zoneIdsChunk = (zoneIds.length > 30) ? zoneIds.slice(0, 30) : zoneIds;
-                        if(zoneIds.length > 30) console.warn("Demasiadas zonas asignadas (>30). Cargando solo las primeras 30.");
-                        
-                        // --- CORRECCIÓN: firestore.FieldPath.documentId() ---
-                        // Usamos el 'firestore' importado por defecto
-                        const zonesQueryRef = query(collection(dbInstance, 'zonas'), where(firestore.FieldPath.documentId(), 'in', zoneIdsChunk));
-                        const zonesQuerySnap = await getDocs(zonesQueryRef);
-                        finalData.availableZones = zonesQuerySnap.docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
-                    } else { finalData.availableZones = []; }
             }
+
+            // 🟢 PASO 4: CARGAR ZONAS ASIGNADAS (Universal para todos los roles)
+            // Estrategia Robusta: Descargamos todas las de la empresa y filtramos localmente 
+            // para evitar errores de sintaxis en FieldPath o límites de Firebase 'in'.
+            try {
+                const zonesQuerySnap = await dbInstance.collection(`companies/${resolvedCompanyId}/zonas`).get();
+                const allCompanyZones = zonesQuerySnap.docs.map(processFirebaseDoc).filter(Boolean) as Zone[];
+                
+                const assignedZoneIds = userData?.zonasAsignadas || currentVendorData?.zonasAsignadas || [];
+                
+                if (assignedZoneIds.length > 0) {
+                    finalData.availableZones = allCompanyZones.filter(z => assignedZoneIds.includes(z.id));
+                    console.log(`Zonas asignadas cargadas localmente: ${finalData.availableZones.length}`);
+                } else {
+                    // Si no tiene asignadas, disponibleZones queda vacío pero guardamos 'zones' general
+                    finalData.availableZones = [];
+                    console.warn("Usuario sin zonas específicas asignadas en /users.");
+                }
+                
+                // Guardamos todas las de la empresa en 'zones' por compatibilidad
+                finalData.zones = allCompanyZones;
+            } catch (zoneError) {
+                console.error("Error cargando zonas:", zoneError);
+                finalData.availableZones = [];
+                finalData.zones = [];
+            }
+
+            // ✅ NORMALIZAR ROL PARA EL CONTEXTO GLOBAL
+            const contextRole = isReparto ? 'Reparto' : (resolvedRole === 'admin' ? 'Admin' : 'Vendedor');
+            setResolvedUserRole(contextRole);
 
             // Guardar en AsyncStorage (Sin cambios)
             await Promise.all([
@@ -620,7 +783,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 AsyncStorage.setItem('routes', JSON.stringify(finalData.routes)),
                 AsyncStorage.setItem('rubros', JSON.stringify(finalData.rubros)),
                 // ✅ NUEVO: Guardar listas
-                AsyncStorage.setItem('priceLists', JSON.stringify(finalData.priceLists)),
+                AsyncStorage.multiSet([
+                    ['priceLists', JSON.stringify(finalData.priceLists)],
+                    ['companyConfig', JSON.stringify(combinedConfig)]
+                ])
             ]);
 
             // Actualizar estado de React (Sin cambios)
@@ -672,48 +838,45 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         const dbInstance = dbContainer.instance;
         if (!dbInstance) { return; }
         
-        if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded) {
-            console.log('Estableciendo suscripciones a Firestore...');
+        if (currentVendor && userRole === 'Vendedor' && isInitialDataLoaded && companyId) {
+            console.log(`Estableciendo suscripciones a Firestore para empresa ${companyId}...`);
             
-            const productsQueryRef = collection(dbInstance, 'productos');
-            productListener = onSnapshot(productsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+            productListener = dbInstance.collection(`companies/${companyId}/productos`).onSnapshot((snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedProducts = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Product[];
                 setProducts(updatedProducts.filter(p => p.id));
-            });
+            }, (error: any) => console.error("Error en listener de productos:", error));
 
-            const categoryQueryRef = collection(dbInstance, 'categorias');
-            categoryListener = onSnapshot(categoryQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+            categoryListener = dbInstance.collection(`companies/${companyId}/categorias`).onSnapshot((snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedCategories = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Category[];
                 setCategories(updatedCategories.filter(c => c.id));
-            });
+            }, (error: any) => console.error("Error en listener de categorías:", error));
 
-            const promotionsQueryRef = query(collection(dbInstance, 'promociones'), where('estado', '==', 'activa'));
-            promotionListener = onSnapshot(promotionsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
-                const updatedPromotions = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => {
-                    const data = doc.data();
-                    return ({ 
-                        id: doc.id, 
-                        ...data, 
-                        nombre: data.nombrePromocion || data.nombre, 
-                        productoIds: data.productoIds || (data.productoId ? [data.productoId] : []),
-                        clienteIds: data.clienteIds || [],
-                    });
-                }) as Promotion[];
-                setPromotions(updatedPromotions.filter(p => p.id));
-            });
+            promotionListener = dbInstance.collection(`companies/${companyId}/promociones`)
+                .where('estado', '==', 'activa')
+                .onSnapshot((snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+                    const updatedPromotions = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => {
+                        const data = doc.data();
+                        return ({ 
+                            id: doc.id, 
+                            ...data, 
+                            nombre: data.nombrePromocion || data.nombre, 
+                            productoIds: data.productoIds || (data.productoId ? [data.productoId] : []),
+                            clienteIds: data.clienteIds || [],
+                        });
+                    }) as Promotion[];
+                    setPromotions(updatedPromotions.filter(p => p.id));
+                }, (error: any) => console.error("Error en listener de promociones:", error));
 
-            const rubrosQueryRef = collection(dbInstance, 'rubros');
-            rubroListener = onSnapshot(rubrosQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+            rubroListener = dbInstance.collection(`companies/${companyId}/rubros`).onSnapshot((snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedRubros = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as Rubro[];
                 setRubros(updatedRubros.filter(r => r.id));
-            });
+            }, (error: any) => console.error("Error en listener de rubros:", error));
 
             // ✅ NUEVO LISTENER: Listas de precios
-            const priceListsQueryRef = collection(dbInstance, 'listas_precios');
-            priceListListener = onSnapshot(priceListsQueryRef, (snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
+            priceListListener = dbInstance.collection(`companies/${companyId}/listas_precios`).onSnapshot((snapshot: FirebaseFirestoreTypes.QuerySnapshot) => {
                 const updatedLists = snapshot.docs.map((doc: FirebaseFirestoreTypes.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() })) as PriceList[];
                 setPriceLists(updatedLists);
-            });
+            }, (error: any) => console.error("Error en listener de listas:", error));
 
             timeoutId = setTimeout(() => {
                 console.log('Timeout alcanzado. Forzando una verificación de datos.');
@@ -732,7 +895,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             }
             console.log('Suscripciones de DataContext limpiadas.');
         };
-    }, [currentVendor, userRole, isInitialDataLoaded]); 
+    }, [currentVendor, userRole, isInitialDataLoaded, companyId]); 
 
 
     // ======================================================
@@ -807,8 +970,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         if (isCurrentlyOffline) {
             console.log("DataContext: Modo Offline detectado. Preparando write queue.");
             
-            const ventasCollectionRef = collection(dbInstance, "ventas");
-            const saleRef = doc(ventasCollectionRef); // Generamos un ID local
+            if (!companyId) throw new Error("ID de empresa no disponible para operación offline.");
+            const saleRef = dbInstance.collection(`companies/${companyId}/ventas`).doc(); 
             const tempId = saleRef.id;
 
             const finalSaleData = {
@@ -822,7 +985,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             // El descuento de stock LOCAL (optimista) se hace en CreateSaleScreen.tsx
             
             // 2. Queue the write operation (Fire and forget)
-            setDoc(saleRef, finalSaleData).catch(error => {
+            saleRef.set(finalSaleData).catch(error => {
                 console.error("Error al poner en cola la venta offline:", error);
                 // Rollback si falla la cola (generalmente por error de seguridad)
                 setSales(prevSales => prevSales.filter(sale => sale.id !== tempId));
@@ -835,8 +998,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             // La Cloud Function se encargará de descontar el stock en el backend.
             
             console.log("DataContext: Modo Online detectado. Escritura directa.");
-            const ventasCollectionRef = collection(dbInstance, "ventas");
-            const saleRef = doc(ventasCollectionRef); 
+            if (!companyId) throw new Error("ID de empresa no disponible para operación online.");
+            const saleRef = dbInstance.collection(`companies/${companyId}/ventas`).doc(); 
             const finalSaleData = { ...saleData, fecha: serverTimestamp() };
             const saleId = saleRef.id;
             
@@ -846,12 +1009,11 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             
             // 2. Escritura remota. NO usamos transacción para permitir que la Cloud Function haga el descuento.
             // ✅ IMPORTANTE: Se elimina 'await' para evitar bloqueos en conexiones inestables
-            setDoc(saleRef, finalSaleData); 
+            saleRef.set(finalSaleData); 
 
-            // Dado que la escritura fue exitosa (no hubo throw), retornamos el ID.
             return saleId;
         }
-    }, [netInfo.isConnected]); 
+    }, [netInfo.isConnected, companyId]); 
 
 
     // ======================================================
@@ -882,16 +1044,17 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
         // 2. Definición de la Transacción (para reversión de stock y cambio de estado)
         const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
         if (!dbInstance) { throw new Error("DB no inicializada."); }
-        const saleRef = doc(dbInstance, "ventas", saleId);
+        if (!companyId) { throw new Error("ID de empresa no disponible."); }
+        const saleRef = dbInstance.doc(`companies/${companyId}/ventas/${saleId}`);
         
         const performTransaction = async () => {
-            await runTransaction(dbInstance, async (transaction) => {
+            await dbInstance.runTransaction(async (transaction) => {
                 if (!items || items.length === 0) { throw new Error("No hay items para revertir."); }
                 
                 // Lógica de reversión de stock (solo si el estado original no era Anulada)
                 if (originalStatus !== 'Anulada') {
                     for (const item of items) {
-                        const productRef = doc(dbInstance, "productos", item.id);
+                        const productRef = dbInstance.doc(`companies/${companyId}/productos/${item.id}`);
                         const productSnap = await transaction.get(productRef);
                         
                         // @ts-ignore
@@ -944,7 +1107,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             reintegrarStockLocalmente(items.map(item => ({...item, quantity: -item.quantity} as CartItem))); // Revertir stock local
             throw error; 
         }
-    }, [setSales, isOffline, sales, reintegrarStockLocalmente]);
+    }, [setSales, isOffline, sales, reintegrarStockLocalmente, companyId]);
     
     
     // ======================================================
@@ -957,7 +1120,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
         const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
         if (!dbInstance) { throw new Error("DB no inicializada."); }
-        const saleRef = doc(dbInstance, "ventas", saleId);
+        if (!companyId) { throw new Error("ID de empresa no disponible."); }
+        const saleRef = dbInstance.doc(`companies/${companyId}/ventas/${saleId}`);
         
         // --- GUARDAMOS COPIA PARA ROLLBACK (Por si falla Internet o algo raro) ---
         const saleToDelete = sales.find(s => s.id === saleId);
@@ -972,7 +1136,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
         // 2. OPERACIÓN REMOTA (FIREBASE)
         try {
-            const deletePromise = deleteDoc(saleRef); 
+            const deletePromise = saleRef.delete(); 
 
             if (isOffline) {
                 // MODO OFFLINE: Disparar sin await (se pone en cola).
@@ -1005,7 +1169,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             
             throw error; 
         }
-    }, [isOffline, reintegrarStockLocalmente, sales]);
+    }, [isOffline, reintegrarStockLocalmente, sales, setSales, companyId]);
 
 
     // ======================================================
@@ -1027,12 +1191,12 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
         console.log(`Cliente ${clientId} actualización optimista aplicada.`);
 
-        // 2. Definición de la operación de escritura
         const dbInstance = dbContainer.instance; // ✅ USO CORREGIDO
         if (!dbInstance) { throw new Error("DB no inicializada."); }
+        if (!companyId) { throw new Error("ID de empresa no disponible."); }
 
-        const clientRef = doc(dbInstance, 'clientes', clientId);
-        const writePromise = updateDoc(clientRef, updatedData); // <-- CORREGIDO
+        const clientRef = dbInstance.doc(`companies/${companyId}/clientes/${clientId}`);
+        const writePromise = clientRef.update(updatedData); 
 
         // 3. APLICAR LÓGICA ASÍNCRONA
         try {
@@ -1067,36 +1231,61 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             ));
             throw error; 
         }
-    }, [setClients, isOffline, fetchDataAndStore, clients]);
+    }, [setClients, isOffline, fetchDataAndStore, clients, companyId]);
 
-    // Valor que se provee a los componentes hijos
-    const value: IDataContext = {
-        products,
-        clients,
-        categories,
-        promotions,
-        availableZones,
-        vendors,
-        sales,
-        routes,
-        rubros, 
-        zones: availableZones,
-        priceLists, // ✅ EXPORTADO
-        updateClient: updateClient, 
-        syncData,
-        refreshAllData,
-        isLoading,
-        isInitialDataLoaded,
-        isOffline,
-        crearVentaConStock,
-        anularVentaConStock,
-        deleteSaleAndRevertStock, 
-        descontarStockLocalmente,
-        reintegrarStockLocalmente, 
-        setSalesState: setSales,
-    };
+    // ======================================================
+    // --- FUNCIÓN 5: registrarVisita ---
+    // ======================================================
+    const registrarVisita = useCallback(async (visitaData: VisitaData): Promise<string> => {
+        const dbInstance = dbContainer.instance;
+        if (!dbInstance) throw new Error("DB no inicializada.");
+        if (!companyId) throw new Error("ID de empresa no disponible.");
 
-    return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+        const docRef = dbInstance.collection(`companies/${companyId}/visitas`).doc();
+        const finalData = {
+            ...visitaData,
+            companyId,
+            fecha: serverTimestamp(),
+        };
+        docRef.set(finalData).catch(err => console.error("Error guardando visita en Firestore:", err));
+        return docRef.id;
+    }, [companyId]);
+
+    return (
+        <DataContext.Provider value={{
+            products,
+            clients,
+            categories,
+            promotions,
+            availableZones,
+            vendors,
+            sales,
+            routes,
+            rubros,
+            priceLists,
+            identity,
+            companyId,
+            companyConfig, // ✅ Agregado para White-Label
+            userRole: resolvedUserRole,
+            zones: availableZones,
+            syncData,
+            refreshAllData,
+            isLoading,
+            isInitialDataLoaded,
+            isOffline,
+            updateClient,
+            crearVentaConStock,
+            anularVentaConStock,
+            deleteSaleAndRevertStock,
+            descontarStockLocalmente,
+            reintegrarStockLocalmente,
+            setSalesState: setSales,
+            registrarVisita,
+        }}>
+            {children}
+            <Toast />
+        </DataContext.Provider>
+    );
 };
 
 // Hook personalizado para usar el contexto

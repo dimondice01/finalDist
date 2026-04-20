@@ -33,6 +33,10 @@ import { useData } from '../../context/DataContext';
 import { COLORS, SIZES } from '../../styles/theme';
 import type { RouteDetailScreenProps } from '../navigation/AppNavigator';
 
+// --- GPS & TRAZABILIDAD ---
+import { locationService, LocationData } from '../../services/locationService';
+import LocationPermissionModal from '../../components/LocationPermissionModal';
+
 const formatCurrency = (value?: number) =>
     typeof value === 'number'
         ? `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -138,6 +142,11 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
     const [mpLoading, setMpLoading] = useState(false);
     const [mpStatus, setMpStatus] = useState('');
 
+    // --- ESTADOS GPS ---
+    const [showLocationExplainer, setShowLocationExplainer] = useState(false);
+    
+    const { companyId } = useData(); 
+
     useEffect(() => {
         if (visible && invoice) {
             setPagoEfectivo(invoice.pagoEfectivo ? invoice.pagoEfectivo.toString() : '');
@@ -157,9 +166,9 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
 
     // Listener Realtime (Detectar Pago Webhook)
     useEffect(() => {
-        if (!visible || !invoice?.id) return;
+        if (!visible || !invoice?.id || !companyId) return;
 
-        const unsubscribe = firestore().collection('ventas').doc(invoice.id).onSnapshot(
+        const unsubscribe = firestore().collection(`companies/${companyId}/ventas`).doc(invoice.id).onSnapshot(
             (docSnap) => {
                 const data = docSnap.data();
                 if (data && (data.estado === 'Pagada' || (data.saldoPendiente || 0) <= 10)) {
@@ -180,9 +189,10 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
     }, [visible, invoice?.id, isSaving]);
 
     const fetchFullSale = async (saleId: string) => {
+        if (!companyId) return;
         setIsLoadingItems(true);
         try {
-            const saleDoc = await firestore().collection('ventas').doc(saleId).get();
+            const saleDoc = await firestore().collection(`companies/${companyId}/ventas`).doc(saleId).get();
             if (saleDoc.exists()) { // TS: .exists es propiedad en nativo
                 const saleData = saleDoc.data();
                 const saleItems = saleData?.items || [];
@@ -332,13 +342,46 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
             return;
         }
 
+        // 1. Verificar permisos de ubicación antes de nada
+        const hasPermission = await locationService.checkPermissions();
+        if (!hasPermission) {
+            setShowLocationExplainer(true);
+            return;
+        }
+
+        performFinalSave();
+    };
+
+    const performFinalSave = async () => {
         setIsSaving(true);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setMpLoading(true);
+        setMpStatus('Obteniendo ubicación precisa...');
 
         try {
+            if (!companyId) throw new Error("ID de empresa no disponible.");
+
+            // 2. Captura forzada de GPS (Grado Industrial)
+            let capturedLocation: LocationData | null = null;
+            try {
+                capturedLocation = await locationService.getMandatoryLocation();
+            } catch (err: any) {
+                if (err.message === 'GPS_DISABLED') {
+                    Alert.alert("GPS Apagado", "Por favor, activa el GPS de tu dispositivo para poder registrar la entrega.");
+                } else if (err.message === 'PERMISSION_DENIED') {
+                    Alert.alert("Permiso Denegado", "No podemos registrar la entrega sin acceso a la ubicación.");
+                } else {
+                    Alert.alert("Error de Ubicación", "No se pudo obtener una coordenada válida. Intenta de nuevo en un espacio abierto.");
+                }
+                setIsSaving(false);
+                setMpLoading(false);
+                return;
+            }
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
             await firestore().runTransaction(async (transaction) => {
-                const routeRef = firestore().collection('rutas').doc(routeId);
-                const saleRef = firestore().collection('ventas').doc(invoice.id);
+                const routeRef = firestore().collection(`companies/${companyId}/rutas`).doc(routeId);
+                const saleRef = firestore().collection(`companies/${companyId}/ventas`).doc(invoice.id);
 
                 const routeDoc = await transaction.get(routeRef);
                 if (!routeDoc.exists) throw new Error("Ruta no encontrada");
@@ -351,7 +394,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
                     const devolucion = cargado - entregado;
 
                     if (devolucion > 0) {
-                        const prodRef = firestore().collection('productos').doc(item.id);
+                        const prodRef = firestore().collection(`companies/${companyId}/productos`).doc(item.id);
                         transaction.update(prodRef, { stock: firestore.FieldValue.increment(devolucion) });
                     }
                 }
@@ -373,7 +416,8 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
                     saldoPendiente: Number(saldoRestante),
                     estado: nuevoEstado === 'Adeuda' || nuevoEstado === 'Pagada' ? nuevoEstado : 'Pendiente de Entrega', 
                     estadoVisita: nuevoEstado, 
-                    fechaUltimoPago: firestore.FieldValue.serverTimestamp()
+                    fechaUltimoPago: firestore.FieldValue.serverTimestamp(),
+                    location: capturedLocation // <--- TRAZABILIDAD GPS
                 };
                 transaction.update(saleRef, saleDataUpdate);
 
@@ -390,6 +434,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
                             pagoTransferencia: saleDataUpdate.pagoTransferencia,
                             saldoPendiente: saleDataUpdate.saldoPendiente,
                             estadoVisita: nuevoEstado,
+                            location: capturedLocation // <--- TRAZABILIDAD GPS
                         };
                     }
                     return f;
@@ -405,6 +450,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
             Alert.alert("Error", "No se pudo guardar: " + error.message);
         } finally {
             setIsSaving(false);
+            setMpLoading(false);
         }
     };
 
@@ -556,6 +602,15 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
                             </TouchableOpacity>
                         </View>
                     </ScrollView>
+
+                    <LocationPermissionModal 
+                        visible={showLocationExplainer}
+                        onConfirm={() => {
+                            setShowLocationExplainer(false);
+                            performFinalSave();
+                        }}
+                        onCancel={() => setShowLocationExplainer(false)}
+                    />
                 </View>
             </KeyboardAvoidingView>
         </Modal>
@@ -568,7 +623,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
 
 const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const routeId = route.params?.routeId;
-    const { routes, clients, sales, syncData } = useData();
+    const { routes, clients, sales, syncData, companyId } = useData();
     
     // --- OBTENER CAJA DEL USUARIO (QR) ---
     const [userCajaMP, setUserCajaMP] = useState<string | undefined>(undefined);
@@ -720,9 +775,10 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
         Alert.alert("Finalizar Ruta", "¿Confirmas que terminaste el recorrido?", [
             { text: "Cancelar", style: "cancel" },
             { text: "Sí, Finalizar", onPress: async () => {
+                if (!companyId) return;
                 setIsUpdating(true);
                 try {
-                    await firestore().collection('rutas').doc(routeId).update({
+                    await firestore().collection(`companies/${companyId}/rutas`).doc(routeId).update({
                         estado: 'Completada',
                         fechaFin: firestore.FieldValue.serverTimestamp()
                     });

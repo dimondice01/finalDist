@@ -7,6 +7,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 // --- FIN DE CAMBIOS: Imports ---
 // --- CORRECCIÓN: Imports añadidos/corregidos ---
 import * as Haptics from 'expo-haptics';
+import * as Sharing from 'expo-sharing'; // ✅ Agregado
+import * as Print from 'expo-print';     // ✅ Agregado
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message'; // <-- AÑADIDO
@@ -27,6 +29,7 @@ import { Sale as BaseSale, Client, CartItem as DataContextCartItem, useData, Ven
 import { auth } from '../../db/firebase-service'; // Ajusta la ruta
 // --- CORRECCIÓN: Importar generatePdf ---
 import { generatePdf } from '../../services/pdfGenerator'; // Ajusta la ruta
+import { locationService } from '../../services/locationService';
 import { COLORS } from '../../styles/theme'; // Ajusta la ruta
 
 // --- Interfaces ---
@@ -86,7 +89,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
     // Ya no necesitamos parsear 'cartJsonString'
     // --- FIN DE CAMBIOS: Obtener Parámetros ---
 
-    const { vendors, refreshAllData, crearVentaConStock } = useData(); // Obtenemos la función de DataContext
+    const { vendors, refreshAllData, crearVentaConStock, companyConfig } = useData(); // ✅ Agregado companyConfig
     const [isSubmitting, setIsSubmitting] = useState(false);
     const currentUser = auth.currentUser;
 
@@ -116,17 +119,42 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
         };
     }, [cart, totalDescuento]);
 
-    // --- handleShare (sin cambios lógicos, usa 'cliente') ---
+    // --- handleShare (Restaurado e Industrializado) ---
     const handleShare = useCallback(async (saleDataForPdf: BaseSale, clientData: Client, vendorName: string) => {
-        // ... (lógica existente sin cambios)
+        setIsSubmitting(true);
         try {
-            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName);
-            // ... (resto de la lógica de share)
+            // 1. Generar HTML con branding dinámico
+            const htmlContent = await generatePdf(saleDataForPdf, clientData, vendorName, companyConfig);
+            
+            if (!htmlContent) throw new Error("No se pudo generar el contenido HTML");
+
+            // 2. Convertir HTML a PDF
+            const { uri } = await Print.printToFileAsync({
+                html: htmlContent,
+                base64: false
+            });
+
+            // 3. Compartir
+            if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(uri, {
+                    mimeType: 'application/pdf',
+                    dialogTitle: `Remito ${saleDataForPdf.id}`,
+                    UTI: 'com.adobe.pdf'
+                });
+            } else {
+                Alert.alert("Error", "El compartido no está disponible en este dispositivo.");
+            }
         } catch (shareError: any) {
-           console.error("handleShare Error:", shareError);
-           // ... (manejo de errores)
+            console.error("handleShare Error:", shareError);
+            Toast.show({
+                type: 'error',
+                text1: 'Error al generar remito',
+                text2: shareError.message || 'Intente nuevamente'
+            });
+        } finally {
+            setIsSubmitting(false);
         }
-    }, []); // Dependencias omitidas para brevedad
+    }, [companyConfig]); // ✅ Dependencia crítica
 
     // --- handleConfirm (MODIFICADO para usar crearVentaConStock) ---
     const handleConfirm = useCallback(async () => {
@@ -134,6 +162,17 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
 
         setIsSubmitting(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+        let capturedLocation: { lat: number; lng: number; accuracy: number } | null = null;
+        try {
+            const hasPermission = await locationService.checkPermissions();
+            if (hasPermission) {
+                const loc = await locationService.getMandatoryLocation();
+                capturedLocation = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+            }
+        } catch {
+            // GPS no disponible — la venta continúa sin ubicación
+        }
 
         // Preparamos los datos para la función del DataContext
         const saleDataToSave = {
@@ -150,6 +189,7 @@ const ReviewSaleScreen = ({ route, navigation }: ReviewSaleScreenProps) => { // 
             totalDescuentoPromociones: totalDescuentoCalculado,
             observaciones: '', // Puedes añadir un campo si lo necesitas
             tipo: isReposicion ? (isReposicion || isDevolucion) : 'venta', // Establecemos el tipo
+            ubicacion: capturedLocation,
             // 'fecha' será añadida por crearVentaConStock
         };
 

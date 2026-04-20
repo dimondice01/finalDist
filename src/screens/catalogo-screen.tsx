@@ -7,6 +7,7 @@ import {
   Animated,
   FlatList,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   SafeAreaView,
@@ -17,15 +18,16 @@ import {
   TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
-  View
+  View,
+  Alert
 } from 'react-native';
 
-import { PriceList, Product, useData } from '../../context/DataContext';
+import { Client, PriceList, Product, useData } from '../../context/DataContext';
 import { auth } from '../../db/firebase-service';
 import { COLORS } from '../../styles/theme';
 
 // ⚠️ REEMPLAZA ESTO CON TU DOMINIO REAL DE FIREBASE HOSTING
-const WEB_APP_URL = "https://distribuidora-1de93.web.app"; 
+const WEB_APP_URL = "https://noarerp.web.app"; 
 
 // --- COLORES DE MARCA ---
 const BRAND = {
@@ -199,9 +201,68 @@ const PriceListSelectorModal = ({ visible, onClose, lists, selectedId, onSelect 
     );
 };
 
+// --- MODAL SELECTOR DE CLIENTE PARA COMPARTIR ---
+const ClientSelectorModal = ({ visible, onClose, clients, onSelect }: {
+    visible: boolean;
+    onClose: () => void;
+    clients: Client[];
+    onSelect: (client: Client) => void;
+}) => {
+    const [searchTerm, setSearchTerm] = useState('');
+    
+    const filteredClients = useMemo(() => {
+        return clients.filter(c => 
+            c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (c.telefono || '').includes(searchTerm)
+        ).sort((a,b) => a.nombre.localeCompare(b.nombre));
+    }, [clients, searchTerm]);
+
+    return (
+        <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
+            <View style={styles.modalOverlay}>
+                <View style={[styles.modalContent, { height: '80%', maxHeight: '80%' }]}>
+                    <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>Enviar Catálogo a Cliente</Text>
+                        <TouchableOpacity onPress={onClose} style={{ position: 'absolute', right: 20 }}>
+                            <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={[styles.searchBar, { marginHorizontal: 16, marginTop: 10 }]}>
+                        <Ionicons name="search" size={20} color={COLORS.textSecondary} style={{ marginRight: 8 }} />
+                        <TextInput 
+                            placeholder="Buscar cliente por nombre o tel..." 
+                            placeholderTextColor={COLORS.textSecondary}
+                            style={styles.searchInput}
+                            value={searchTerm}
+                            onChangeText={setSearchTerm}
+                        />
+                    </View>
+
+                    <FlatList 
+                        data={filteredClients}
+                        keyExtractor={(item) => item.id}
+                        renderItem={({ item }) => (
+                            <TouchableOpacity style={styles.modalItem} onPress={() => onSelect(item)}>
+                                <View>
+                                    <Text style={[styles.modalItemText, { fontWeight: 'bold' }]}>{item.nombre}</Text>
+                                    <Text style={{ fontSize: 12, color: COLORS.textSecondary }}>{item.telefono || 'Sin teléfono'}</Text>
+                                </View>
+                                <Ionicons name="logo-whatsapp" size={24} color="#25D366" />
+                            </TouchableOpacity>
+                        )}
+                        ItemSeparatorComponent={() => <View style={styles.separatorModal} />}
+                        ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 20, color: COLORS.textSecondary }}>No se encontraron clientes</Text>}
+                    />
+                </View>
+            </View>
+        </Modal>
+    );
+};
+
 export default function CatalogoScreen() {
   const navigation = useNavigation();
-  const { products, categories, isLoading, priceLists } = useData(); 
+  const { products, categories, isLoading, priceLists, companyId, clients } = useData(); 
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -214,6 +275,7 @@ export default function CatalogoScreen() {
   const [qtyModalVisible, setQtyModalVisible] = useState(false);
   const [tempQty, setTempQty] = useState('');
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [clientModalVisible, setClientModalVisible] = useState(false);
 
   const bottomBarAnim = useRef(new Animated.Value(150)).current; 
 
@@ -300,17 +362,68 @@ export default function CatalogoScreen() {
 
   const handleShareCatalog = async () => {
     const currentUser = auth.currentUser;
-    if (!currentUser) return;
+    if (!currentUser || !companyId) return;
 
     const listPath = selectedPriceList ? `/${encodeURIComponent(selectedPriceList)}` : '';
-    const link = `${WEB_APP_URL}/catalogo${listPath}?v=${currentUser.uid}`;
+    const link = `${WEB_APP_URL}/catalogo${listPath}?c=${companyId}&v=${currentUser.uid}`;
+    const message = `Hola! 👋 Te comparto mi catálogo digital${selectedPriceList ? ` (${selectedPriceList})` : ''}. Miralo y haceme tu pedido por acá: \n\n${link}`;
+
+    Alert.alert(
+      "Compartir Catálogo",
+      "¿Cómo deseas enviar el catálogo?",
+      [
+        {
+          text: "WhatsApp a Cliente",
+          onPress: () => setClientModalVisible(true)
+        },
+        {
+          text: "Otro (Externo)",
+          onPress: async () => {
+            try {
+              await Share.share({ message });
+            } catch (error) {
+              console.log("Error sharing:", error);
+            }
+          }
+        },
+        { text: "Cancelar", style: "cancel" }
+      ]
+    );
+  };
+
+  const handleSendToClient = async (client: Client) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !companyId || !client.telefono) {
+      if (!client.telefono) alert("El cliente no tiene un teléfono registrado.");
+      return;
+    }
+
+    const listPath = selectedPriceList ? `/${encodeURIComponent(selectedPriceList)}` : '';
+    const link = `${WEB_APP_URL}/catalogo${listPath}?c=${companyId}&v=${currentUser.uid}`;
+    
+    // Personalizamos con el nombre si existe
+    const message = `Hola ${client.nombre}! 👋 Te comparto mi catálogo digital${selectedPriceList ? ` (${selectedPriceList})` : ''}. Miralo y haceme tu pedido por acá: \n\n${link}`;
+    
+    // Limpiamos el número (solo dígitos)
+    let phone = client.telefono.replace(/[^0-9]/g, '');
+    if (!phone.startsWith('54')) phone = '54' + phone;
+
+    const whatsappUrl = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`;
 
     try {
-      await Share.share({
-        message: `Hola! 👋 Te comparto mi catálogo digital${selectedPriceList ? ` (${selectedPriceList})` : ''}. Miralo y haceme tu pedido por acá: \n\n${link}`,
-      });
+      const supported = await Linking.canOpenURL(whatsappUrl);
+      if (supported) {
+        await Linking.openURL(whatsappUrl);
+        setClientModalVisible(false);
+      } else {
+        // Fallback a wa.me web si el intent falla
+        const webUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+        await Linking.openURL(webUrl);
+        setClientModalVisible(false);
+      }
     } catch (error) {
-      console.log("Error sharing:", error);
+      console.log("Error opening WhatsApp:", error);
+      alert("No se pudo abrir WhatsApp.");
     }
   };
 
@@ -471,13 +584,19 @@ export default function CatalogoScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- MODAL SELECTOR DE LISTA --- */}
       <PriceListSelectorModal 
         visible={priceModalVisible} 
         onClose={() => setPriceModalVisible(false)} 
         lists={priceLists} 
         selectedId={selectedPriceList} 
         onSelect={setSelectedPriceList} 
+      />
+
+      <ClientSelectorModal 
+        visible={clientModalVisible} 
+        onClose={() => setClientModalVisible(false)} 
+        clients={clients} 
+        onSelect={handleSendToClient} 
       />
 
     </SafeAreaView>

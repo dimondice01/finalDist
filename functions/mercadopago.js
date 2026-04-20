@@ -1,47 +1,42 @@
 /**
- * functions/mercadopago.js - Noar ERP
- * Módulo de Cobros: QR Dinámico + Point Smart
- * Versión: Native Fetch (Sin Axios) + Debug Logs
+ * functions/mercadopago.js - Noar SaaS Master Code
+ * Módulo de Cobros: QR Dinámico (In-store) + Point Smart
  */
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onRequest } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 
-// Inicialización diferida
 const db = admin.firestore();
 
 // ==================================================================
-// 🔐 HELPER: Contexto MP (Single-Tenant)
+// 🔍 HELPER LOCAL: CONFIGURACIÓN DINÁMICA
 // ==================================================================
-async function getMpContext() {
-    console.log("🔐 Leyendo credenciales de MP...");
-    const doc = await db.doc('config/mercadopago').get();
-    
-    if (!doc.exists) throw new HttpsError('failed-precondition', 'MercadoPago no configurado en Firestore (config/mercadopago).');
-    const data = doc.data();
-    
-    if (!data.active) throw new HttpsError('failed-precondition', 'Módulo MercadoPago desactivado por el usuario.');
-    if (!data.accessToken) throw new HttpsError('failed-precondition', 'Falta Access Token en la configuración.');
+async function getMpConfig(companyId) {
+    if (!companyId) throw new Error("Falta companyId para configurar MercadoPago.");
 
-    // Ocultamos parte del token en el log por seguridad
-    console.log(`🔑 Token obtenido: ${data.accessToken.substring(0, 10)}...`);
-    return data; 
+    const snap = await db.collection(`companies/${companyId}/config`)
+        .where("tipo", "==", "mercadopago")
+        .limit(1)
+        .get();
+
+    if (snap.empty) throw new Error(`MercadoPago no está configurado para la empresa ${companyId}.`);
+    const data = snap.docs[0].data();
+    
+    if (!data.isActive || !data.accessToken) {
+        throw new Error("La configuración de MercadoPago está incompleta o desactivada.");
+    }
+    return data;
 }
 
-// functions/mercadopago.js
-
-// ... (Mismo inicio e imports) ...
-
 // ==================================================================
-// 1. OBTENER TERMINALES (FIX JSON KEYS)
+// 1. OBTENER TERMINALES (Móvil & Web)
 // ==================================================================
-exports.obtenerTerminales = onCall({ cors: true }, async (request) => {
+exports.obtenerTerminales = onCall({ cors: true, region: "southamerica-west1" }, async (request) => {
+    const { companyId } = request.data;
     try {
-        const config = await getMpContext();
+        const config = await getMpConfig(companyId);
         
-        console.log(`🔍 DEBUG: Consultando API Devices...`);
-
         const response = await fetch('https://api.mercadopago.com/point/integration-api/devices', {
             method: 'GET',
             headers: { 
@@ -50,75 +45,30 @@ exports.obtenerTerminales = onCall({ cors: true }, async (request) => {
             }
         });
 
-        const rawText = await response.text();
-        console.log(`📡 RESPUESTA CRUDA DE MP:`, rawText);
+        if (!response.ok) throw new Error(`Error MP API: ${response.status}`);
 
-        if (!response.ok) {
-            throw new HttpsError('internal', `MP Error ${response.status}: ${rawText}`);
-        }
+        const data = await response.json();
+        const devices = (data.devices || []).map(d => ({
+            id: d.id,
+            name: d.name || `Point ${d.model || 'Smart'}`,
+            model: d.model,
+            mode: d.operating_mode
+        }));
 
-        const data = JSON.parse(rawText);
-        const rawDevices = data.devices || [];
-
-        // --- LÓGICA DE SANITIZACIÓN CORREGIDA ---
-        const validDevices = rawDevices.map(d => {
-            // 🔥 FIX: Agregamos 'd.id' primero, que es lo que viene en tu log
-            const rawId = d.id || d.device_id || d.serial_number;
-            
-            if (!rawId) {
-                console.warn("⚠️ Dispositivo ignorado por falta de ID:", JSON.stringify(d));
-                return null;
-            }
-
-            let finalId = String(rawId);
-
-            // Si el ID YA TIENE el formato correcto (como en tu log: NEWLAND_N950__...), no tocamos nada.
-            // Si viene crudo (solo serial), le agregamos el prefijo.
-            if (!finalId.includes('__')) {
-                const model = (d.model || "").toUpperCase();
-                let prefix = "NEWLAND_N950"; 
-                if (model.includes("A910")) prefix = "PAX_A910";
-                
-                const suffix = d.serial_number || finalId;
-                finalId = `${prefix}__${suffix}`;
-            }
-
-            return {
-                id: finalId, 
-                name: d.name || `Point ${d.model || 'Smart'}`,
-                model: d.model || 'Smart',
-                mode: d.operating_mode 
-            };
-        }).filter(item => item !== null);
-
-        console.log(`✅ Dispositivos procesados: ${validDevices.length}`);
-        return { devices: validDevices };
-
+        return { devices };
     } catch (error) {
-        console.error("🔥 Crash en obtenerTerminales:", error);
-        throw new HttpsError('internal', error.message || "Error interno.");
+        throw new HttpsError('internal', error.message);
     }
 });
 
-// ... (Resto de funciones: configurarPoint, cobrarConPoint, etc. siguen igual) ...
 // ==================================================================
-// 2. CONFIGURAR POINT (FIX: API STRICT MODE)
+// 2. CONFIGURAR POINT (Web Admin)
 // ==================================================================
-exports.configurarPoint = onCall({ cors: true }, async (request) => {
-    const { deviceId, mode } = request.data; 
-    
+exports.configurarPoint = onCall({ cors: true, region: "southamerica-west1" }, async (request) => {
+    const { companyId, deviceId, mode } = request.data;
     try {
-        const config = await getMpContext();
+        const config = await getMpConfig(companyId);
         
-        let cleanId = deviceId.trim();
-        if (!cleanId.includes('__')) cleanId = `NEWLAND_N950__${cleanId}`; 
-
-        // 🔥 CORRECCIÓN AQUÍ: La API es estricta.
-        // Si queremos integrar, enviamos 'PDV'. Si queremos soltar, 'STANDALONE'.
-        const targetMode = mode === 'PDV' ? "PDV" : "STANDALONE";
-        
-        console.log(`⚙️ Configurando ${cleanId} a ${targetMode}`);
-
         const response = await fetch('https://api.mercadopago.com/terminals/v1/setup', {
             method: 'PATCH',
             headers: { 
@@ -126,51 +76,30 @@ exports.configurarPoint = onCall({ cors: true }, async (request) => {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                terminals: [{ id: cleanId, operating_mode: targetMode }]
+                terminals: [{ id: deviceId, operating_mode: mode }] // mode: 'PDV' o 'STANDALONE'
             })
         });
 
-        const data = await response.json();
-        
-        if (!response.ok) {
-            console.error("Error Config:", data);
-            // Mostramos el mensaje detallado de MP para saber qué pasó
-            const detalle = data.errors?.[0]?.message || JSON.stringify(data);
-            throw new HttpsError('internal', `MP Rechazó Configuración: ${detalle}`);
-        }
-
-        return { status: "OK", mode: targetMode, mp_response: data };
-
+        if (!response.ok) throw new Error("Error en la configuración del terminal.");
+        return { success: true };
     } catch (error) {
-        console.error("Error Config Point:", error);
         throw new HttpsError('internal', error.message);
     }
 });
 
 // ==================================================================
-// 3. COBRAR CON POINT (FIX: ENVIAR CENTAVOS)
+// 3. COBRAR CON POINT (Móvil - Zero Config)
 // ==================================================================
-exports.cobrarConPoint = onCall({ cors: true }, async (request) => {
-    const { deviceId, amount, externalReference } = request.data;
+exports.cobrarConPoint = onCall({ cors: true, region: "southamerica-west1" }, async (request) => {
+    const { companyId, deviceId, amount, external_reference } = request.data;
     
+    if (!deviceId) throw new HttpsError('failed-precondition', "No tienes un terminal Point asignado.");
+
     try {
-        const config = await getMpContext();
+        const config = await getMpConfig(companyId);
         
-        console.log(`📟 Point -> Solicitud original: $${amount}`);
-
-        // 🔥 CORRECCIÓN AQUÍ: Multiplicamos por 100 y redondeamos para enviar centavos enteros
-        // Ejemplo: Si amount es 60800 -> enviamos 6080000
-        const amountInCents = Math.round(Number(amount) * 100);
-
-        console.log(`💰 Enviando al dispositivo: ${amountInCents} (centavos)`);
-
-        const payload = {
-            amount: amountInCents,  // <--- Usamos la variable convertida
-            additional_info: {
-                external_reference: externalReference,
-                print_on_terminal: true
-            }
-        };
+        // MP requiere montos en centavos (entero)
+        const amountInCents = Math.round(parseFloat(amount) * 100);
 
         const response = await fetch(`https://api.mercadopago.com/point/integration-api/devices/${deviceId}/payment-intents`, {
             method: 'POST',
@@ -178,61 +107,87 @@ exports.cobrarConPoint = onCall({ cors: true }, async (request) => {
                 'Authorization': `Bearer ${config.accessToken}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                amount: amountInCents,
+                additional_info: {
+                    external_reference: external_reference,
+                    print_on_terminal: true
+                }
+            })
         });
 
         const data = await response.json();
-
         if (!response.ok) {
-            // Manejo de error específico: Si hay otra orden abierta
-            if (response.status === 409) {
-                throw new HttpsError('aborted', "El Point ya tiene una orden en proceso. Cancélala en el dispositivo.");
-            }
-            throw new HttpsError('internal', `Error MP: ${data.message}`);
+            if (response.status === 409) throw new Error("El Point ya tiene una orden en proceso.");
+            throw new Error(data.message || "Error al enviar la orden al Point.");
         }
 
         return { success: true, intentId: data.id };
-
     } catch (error) {
-        console.error("Error Cobro Point:", error);
-        if (error.code) throw error;
         throw new HttpsError('internal', error.message);
     }
 });
 
 // ==================================================================
-// 4. GENERAR QR DINÁMICO
+// 4. GENERAR QR DINÁMICO (Móvil - External ID Ready)
 // ==================================================================
-exports.generarCobroQR = onCall({ cors: true }, async (request) => {
-    const { amount, externalReference, items } = request.data;
+exports.generarCobroQR = onCall({ cors: true, region: "southamerica-west1" }, async (request) => {
+    const { companyId, userId, external_id, amount, external_reference, title } = request.data;
     
-    try {
-        const config = await getMpContext();
-        const { MercadoPagoConfig, Preference } = require('mercadopago'); // Requiere npm install mercadopago
-        const client = new MercadoPagoConfig({ accessToken: config.accessToken });
-        
-        const preference = new Preference(client);
+    if (!external_id) throw new HttpsError('failed-precondition', "No tienes un ID de Caja (QR) asignado.");
 
-        const result = await preference.create({
-            body: {
-                items: items, 
-                external_reference: externalReference,
-                notification_url: "https://us-central1-distribuidora-1de93.cloudfunctions.net/webhookMercadoPago" 
-            }
+    try {
+        const config = await getMpConfig(companyId);
+        
+        // URL de In-store Orders (QR Dinámico)
+        // Estructura: /instore/orders/qr/seller/collectors/{user_id}/pos/{external_id}/currenct
+        
+        // Primero obtenemos el ID de usuario del dueño del token (collector)
+        const meRes = await fetch('https://api.mercadopago.com/users/me', {
+            headers: { 'Authorization': `Bearer ${config.accessToken}` }
+        });
+        const meData = await meRes.json();
+        const collectorId = meData.id;
+
+        const response = await fetch(`https://api.mercadopago.com/instore/orders/qr/seller/collectors/${collectorId}/pos/${external_id}/currenct`, {
+            method: 'PUT',
+            headers: { 
+                'Authorization': `Bearer ${config.accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                external_reference: external_reference,
+                title: title || "Venta SalvadorPOS",
+                description: `Vendedor: ${userId}`,
+                total_amount: parseFloat(amount),
+                items: [
+                    {
+                        title: title || "Venta General",
+                        unit_price: parseFloat(amount),
+                        quantity: 1,
+                        unit_measure: "unit",
+                        total_amount: parseFloat(amount)
+                    }
+                ]
+            })
         });
 
-        return { qr_string: result.init_point, id: result.id };
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.message || "Error generando el QR.");
+        }
 
+        const data = await response.json();
+        return { success: true, qr_data: data.qr_data }; // Contiene el string para generar el QR
     } catch (error) {
-        console.error("Error QR:", error);
-        throw new HttpsError('internal', "Error generando QR.");
+        throw new HttpsError('internal', error.message);
     }
 });
 
 // ==================================================================
-// 5. WEBHOOK
+// 5. WEBHOOK & STATUS CHECK
 // ==================================================================
-exports.webhookMercadoPago = onRequest(async (req, res) => {
-    console.log("🔔 Webhook recibido", req.body);
+exports.webhookMercadoPago = onRequest({ region: "southamerica-west1" }, async (req, res) => {
+    // Aquí podrías actualizar el estado del pago en Firestore si recibes el topic 'payment'
     res.status(200).send("OK");
 });

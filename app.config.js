@@ -26,6 +26,7 @@ module.exports = ({ config }) => {
             "ios": {
                 "supportsTablet": true,
                 "bundleIdentifier": "com.dimondice.Distribuidora", 
+                "associatedDomains": ["applinks:noarerp.web.app"],
                 "config": {
                     "googleMaps": {
                         "apiKey": GOOGLE_MAPS_API_KEY
@@ -37,6 +38,16 @@ module.exports = ({ config }) => {
                 "predictiveBackGestureEnabled": false,
                 "package": "com.dimondice.Distribuidora",
                 "googleServicesFile": "./google-services.json",
+                "intentFilters": [
+                    {
+                        "action": "VIEW",
+                        "autoVerify": true,
+                        "data": [
+                            { "scheme": "https", "host": "noarerp.web.app", "pathPrefix": "/pedido" },
+                            { "scheme": "https", "host": "noarerp.web.app", "pathPrefix": "/redirect" }
+                        ]
+                    }
+                ],
                 "permissions": [
                     "android.permission.ACCESS_COARSE_LOCATION",
                     "android.permission.ACCESS_FINE_LOCATION"
