@@ -72,18 +72,6 @@ exports.api = onRequest({ cors: true }, app);
 // 📂 EXPORTS INDIVIDUALES (COMPATIBILIDAD WEB ADMIN)
 // ==================================================================
 
-// 1. AFIP (Móvil y Web)
-exports.emitirFacturasReparto = onCall({ cors: true, region: "southamerica-west1" }, async (request) => {
-    const { total, client, companyId, branchId } = request.data;
-    try {
-        const afipConfig = await getCompanyConfig(companyId, 'afip');
-        const result = await afipModule.emitirFactura(total, client, false, null, afipConfig);
-        return result;
-    } catch (error) {
-        throw new onCall.HttpsError('internal', error.message);
-    }
-});
-
 // 2. MercadoPago Terminales (Web Admin)
 exports.obtenerTerminales = mpModule.obtenerTerminales;
 exports.configurarPoint = mpModule.configurarPoint;

@@ -229,7 +229,7 @@ exports.emitirFacturasReparto = onCall({
                             CbteDesde: proximo, CbteHasta: proximo, CbteFch: fchServ,
                             ImpTotal: total.toFixed(2), ImpTotConc: 0, ImpNeto: impNeto, 
                             ImpOpEx: 0, ImpTrib: 0, ImpIVA: (CBTE_TIPO === 11 ? 0 : impIVA),
-                            MonId: 'PES', MonCotiz: 1, CondicionIVAReceptorId: 5,
+                            MonId: 'PES', MonCotiz: 1, CondicionIVAReceptorId: CBTE_TIPO === 1 ? (clienteCondicion === 'EX' ? 4 : 1) : CBTE_TIPO === 11 ? (clienteCondicion === 'EX' ? 4 : clienteCondicion === 'MT' ? 6 : 5) : (clienteCondicion === 'EX' ? 4 : 5),
                             ...(CBTE_TIPO !== 11 && { Iva: arrayAlicuotas })
                         }
                     }
@@ -255,7 +255,8 @@ exports.emitirFacturasReparto = onCall({
                 afipEstado: "emitido"
             });
 
-            resultados.push({ ventaId: venta.id, status: "OK", detalle: { cae: detalle.CAE, numero: proximo } });
+            const tipoLetra = CBTE_TIPO === 1 ? 'A' : (CBTE_TIPO === 6 ? 'B' : 'C');
+            resultados.push({ ventaId: venta.id, status: "OK", detalle: { cae: detalle.CAE, vtoCAE: detalle.CAEFchVto, numero: proximo, tipoLetra } });
 
         } catch (error) {
             console.error(`Error venta ${venta.id}:`, error);
@@ -264,4 +265,128 @@ exports.emitirFacturasReparto = onCall({
         }
     }
     return resultados;
+});
+
+exports.emitirNotaCredito = onCall({
+    cors: true,
+    region: "southamerica-west1",
+    timeoutSeconds: 60,
+    memory: "256MiB"
+}, async (request) => {
+    const { ventaId } = request.data;
+    if (!ventaId) throw new HttpsError('invalid-argument', 'Falta ventaId');
+
+    let ctx;
+    try {
+        ctx = await getAfipContext(request.auth?.uid);
+    } catch (e) {
+        throw new HttpsError('internal', "Fallo Auth: " + e.message);
+    }
+
+    // Leer la venta original desde Firestore
+    const ventaRef = db.collection('companies').doc(ctx.companyId).collection('ventas').doc(ventaId);
+    const ventaSnap = await ventaRef.get();
+    if (!ventaSnap.exists) throw new HttpsError('not-found', 'Venta no encontrada');
+
+    const venta = ventaSnap.data();
+    if (!venta.afipCAE) throw new HttpsError('failed-precondition', 'La venta no tiene CAE. Solo se pueden anular facturas autorizadas por AFIP.');
+    if (venta.tieneNC) throw new HttpsError('already-exists', 'Esta factura ya tiene una Nota de Crédito emitida.');
+
+    // Tipo de NC según la letra de la factura original (A→3, B→8, C→13)
+    const NC_TIPO_MAP = { 'A': 3, 'B': 8, 'C': 13 };
+    const FACTURA_TIPO_MAP = { 'A': 1, 'B': 6, 'C': 11 };
+    const letraOriginal = venta.afipLetra || 'B';
+    const NC_CBTE_TIPO = NC_TIPO_MAP[letraOriginal] || 8;
+    const FACTURA_CBTE_TIPO = FACTURA_TIPO_MAP[letraOriginal] || 6;
+
+    // Datos del receptor — fallback a afipLetra si clienteCondicionIVA no fue guardado
+    const clienteCondicion = venta.clienteCondicionIVA
+        || (letraOriginal === 'A' ? 'RI' : letraOriginal === 'C' ? 'MT' : 'CF');
+
+    // CondicionIVAReceptorId debe ser válido para el TIPO de NC, no solo para el cliente:
+    // NC-A (3)  → solo RI(1) o EX(4)
+    // NC-B (8)  → solo CF(5) o EX(4), nunca RI ni MT aunque el cliente sea MT
+    // NC-C (13) → solo MT(6)
+    let condicionIVAReceptorId;
+    if (NC_CBTE_TIPO === 3) {
+        condicionIVAReceptorId = clienteCondicion === 'EX' ? 4 : 1;
+    } else if (NC_CBTE_TIPO === 13) {
+        condicionIVAReceptorId = 6;
+    } else {
+        condicionIVAReceptorId = clienteCondicion === 'EX' ? 4 : 5;
+    }
+
+    let docTipo = 99, docNro = "0";
+    if (venta.clienteCuit && String(venta.clienteCuit).length > 5) {
+        const limpio = String(venta.clienteCuit).replace(/\D/g, '');
+        docTipo = limpio.length === 11 ? 80 : 96;
+        docNro = limpio;
+    }
+
+    console.log(`[NC] ventaId=${ventaId} letraOriginal=${letraOriginal} NC_CBTE_TIPO=${NC_CBTE_TIPO} clienteCondicion=${clienteCondicion} condicionIVAReceptorId=${condicionIVAReceptorId} docTipo=${docTipo} docNro=${docNro}`);
+
+    // Importes (misma lógica que la factura original)
+    const total = parseFloat(venta.totalVenta);
+    let impNeto = total, impIVA = 0, arrayAlicuotas = null;
+
+    if (NC_CBTE_TIPO !== 13) {
+        impNeto = parseFloat((total / 1.21).toFixed(2));
+        impIVA = parseFloat((total - impNeto).toFixed(2));
+        arrayAlicuotas = { AlicIva: [{ Id: 5, BaseImp: impNeto.toFixed(2), Importe: impIVA.toFixed(2) }] };
+    }
+
+    const clientWsfe = await soap.createClientAsync(ctx.urls.WSFE, { request: afipAxios, wsdl_options: { httpsAgent: legacyAgent } });
+
+    const [resUlt] = await clientWsfe.FECompUltimoAutorizadoAsync({
+        Auth: { Token: ctx.token, Sign: ctx.sign, Cuit: ctx.cuit },
+        PtoVta: ctx.ptoVta, CbteTipo: NC_CBTE_TIPO
+    });
+    const proximo = (resUlt.FECompUltimoAutorizadoResult.CbteNro || 0) + 1;
+
+    const fchServ = new Date(Date.now() - 10800000).toISOString().substring(0, 10).replace(/-/g, '');
+
+    const payload = {
+        Auth: { Token: ctx.token, Sign: ctx.sign, Cuit: ctx.cuit },
+        FeCAEReq: {
+            FeCabReq: { CantReg: 1, PtoVta: ctx.ptoVta, CbteTipo: NC_CBTE_TIPO },
+            FeDetReq: {
+                FECAEDetRequest: {
+                    Concepto: 1, DocTipo: docTipo, DocNro: docNro,
+                    CbteDesde: proximo, CbteHasta: proximo, CbteFch: fchServ,
+                    ImpTotal: total.toFixed(2), ImpTotConc: 0, ImpNeto: impNeto.toFixed(2),
+                    ImpOpEx: 0, ImpTrib: 0, ImpIVA: NC_CBTE_TIPO === 13 ? 0 : impIVA.toFixed(2),
+                    MonId: 'PES', MonCotiz: 1,
+                    CondicionIVAReceptorId: condicionIVAReceptorId,
+                    CbtesAsoc: { CbteAsoc: { Tipo: FACTURA_CBTE_TIPO, PtoVta: ctx.ptoVta, Nro: venta.afipNumeroComprobante } },
+                    ...(NC_CBTE_TIPO !== 13 && { Iva: arrayAlicuotas })
+                }
+            }
+        }
+    };
+
+    const [resCAE] = await clientWsfe.FECAESolicitarAsync(payload);
+    const rCAE = resCAE.FECAESolicitarResult;
+
+    if (rCAE.FeCabResp.Resultado === "R") {
+        const obs = rCAE.FeDetResp.FECAEDetResponse[0]?.Observaciones?.Obs[0];
+        throw new HttpsError('internal', obs ? `Error ARCA: ${obs.Msg}` : 'Rechazo AFIP desconocido');
+    }
+
+    const detalle = rCAE.FeDetResp.FECAEDetResponse[0];
+    const tipoLetraNC = NC_CBTE_TIPO === 3 ? 'A' : (NC_CBTE_TIPO === 8 ? 'B' : 'C');
+
+    // Marcar la venta original como anulada con NC
+    await ventaRef.update({
+        tieneNC: true,
+        ncCAE: detalle.CAE,
+        ncNumero: proximo,
+        ncLetra: tipoLetraNC,
+        ncFecha: fchServ,
+        estado: 'Anulada'
+    });
+
+    return {
+        status: "OK",
+        detalle: { cae: detalle.CAE, vtoCAE: detalle.CAEFchVto, numero: proximo, tipoLetra: tipoLetraNC }
+    };
 });

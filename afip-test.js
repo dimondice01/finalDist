@@ -10,8 +10,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 // 🔹 Indicamos el codebase correcto
-const functions = getFunctions(app, { codebase: "afip-service" });
-const afipTestConnection = httpsCallable(functions, "afipTestConnection");
+const functions = getFunctions(app, "southamerica-west1");
+const afipTestConnection = httpsCallable(functions, "probarConexionAfip");
 
 afipTestConnection()
   .then((res) => console.log("✅ Respuesta de AFIP:", res.data))

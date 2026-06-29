@@ -75,6 +75,7 @@ interface CollectDebtModalProps {
     venta: Sale | null;
     onPaymentSuccess: () => void;
     isOffline: boolean;
+    companyId: string | null;
 }
 
 interface SaleDetailRouteParams {
@@ -96,7 +97,7 @@ const getStatusStyles = (status: Sale['estado']) => {
 };
 
 // --- Componente CollectDebtModal ---
-const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline }: CollectDebtModalProps) => {
+const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline, companyId }: CollectDebtModalProps) => {
     const [montoCobrado, setMontoCobrado] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState('');
@@ -127,12 +128,17 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
             setIsSaving(false);
             return;
         }
+        if (!companyId) {
+            Alert.alert("Error", "ID de empresa no disponible.");
+            setIsSaving(false);
+            return;
+        }
 
         const performTransaction = async () => {
             await runTransaction(db, async (transaction) => {
-                const ventaRef = doc(db, 'ventas', venta.id); 
-                
-                await addDoc(collection(db, 'ventas'), {
+                const ventaRef = doc(db, `companies/${companyId}/ventas`, venta.id);
+
+                await addDoc(collection(db, `companies/${companyId}/ventas`), {
                     tipo: 'cobranza',
                     clientName: `Cobro Saldo - ${venta.clienteNombre || venta.clientName || 'Cliente'}`, 
                     clienteId: venta.clienteId,
@@ -222,14 +228,15 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
     
-    const { clients, syncData, isOffline, deleteSaleAndRevertStock } = useData(); 
+    const { clients, syncData, isOffline, deleteSaleAndRevertStock, companyId } = useData();
 
     useEffect(() => {
         if (!saleId) { setIsLoading(false); return; }
+        if (!companyId) return;
         const db = dbContainer.instance;
         if (!db) { setIsLoading(false); return; }
 
-        const unsubscribe = onSnapshot(doc(db, 'ventas', saleId), (docSnapshot) => {
+        const unsubscribe = onSnapshot(doc(db, `companies/${companyId}/ventas`, saleId), (docSnapshot) => {
             if (docSnapshot.exists()) {
                 const data = docSnapshot.data();
                 if (data) {
@@ -247,7 +254,7 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
             setIsLoading(false);
         });
         return () => unsubscribe();
-    }, [saleId]);
+    }, [saleId, companyId]);
 
     const clientName = useMemo(() => {
         if (!sale) return 'Cliente no especificado';
@@ -457,12 +464,13 @@ const SaleDetailScreen = ({ navigation }: SaleDetailScreenProps) => {
                 </TouchableOpacity>
             )}
 
-            <CollectDebtModal 
+            <CollectDebtModal
                 visible={isDebtModalOpen}
                 onClose={() => setIsDebtModalOpen(false)}
                 venta={sale}
-                onPaymentSuccess={handlePaymentSuccess} 
-                isOffline={isOffline} 
+                onPaymentSuccess={handlePaymentSuccess}
+                isOffline={isOffline}
+                companyId={companyId}
             />
         </View>
     );
