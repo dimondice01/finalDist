@@ -3,16 +3,10 @@ import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 // --- INICIO DE CAMBIOS: SDK NATIVO (v9 Modular) ---
-import {
-    collection,
-    doc,
-    runTransaction,
-    serverTimestamp,
-    Timestamp
-} from '@react-native-firebase/firestore';
+import { collection, getDocs, query, Timestamp, where } from '@react-native-firebase/firestore';
 // --- FIN DE CAMBIOS: SDK NATIVO (v9 Modular) ---
 
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
@@ -23,6 +17,7 @@ import { ClientDebtsScreenProps } from '../navigation/AppNavigator';
 import { Sale as BaseSale, useData } from '../../context/DataContext';
 
 import { dbContainer } from '../../db/firebase-service';
+import { registrarCobro } from '../../services/paymentService';
 // ✅ Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
 
@@ -33,10 +28,19 @@ type Sale = BaseSale;
 interface RegisterPaymentModalProps {
     visible: boolean;
     onClose: () => void;
-    debt: Sale | null; 
-    clientName?: string | string[]; 
+    debt: Sale | null;
+    clientName?: string | string[];
     onPaymentSuccess: () => void;
-    isOffline: boolean; 
+    isOffline: boolean;
+    companyId: string | null | undefined;
+    // Quien está físicamente cobrando (vendedor o repartidor logueado). El cobro se
+    // acredita siempre a quien lo recibe, no al vendedor original de la venta vieja,
+    // para que aparezca en SU rendición cuando cierre caja/ruta.
+    collectorId?: string;
+    collectorNombre?: string;
+    // Si se cobró durante una ruta de reparto, para que la Rendición de esa ruta
+    // pueda mostrar este cobro separado de lo recaudado por las entregas del día.
+    routeId?: string;
 }
 
 // --- Función auxiliar para fechas ---
@@ -56,7 +60,7 @@ const getDateTimestamp = (fecha: Sale['fecha']): number => {
 };
 
 // --- COMPONENTE MODAL ---
-const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess, isOffline }: RegisterPaymentModalProps) => {
+const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuccess, isOffline, companyId, collectorId, collectorNombre, routeId }: RegisterPaymentModalProps) => {
     const [amount, setAmount] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
@@ -93,68 +97,27 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
             return;
         }
 
+        if (!companyId) {
+            Alert.alert('Error', 'ID de empresa no disponible. Intente reiniciar la app.');
+            return;
+        }
+
         setIsSaving(true);
-        
+
         const executeTransaction = async () => {
-            await runTransaction(db, async (transaction) => {
-                // 1. Crear el documento de "Cobranza"
-                // IMPORTANTE: Estructura compatible con ReporteVendedor y lógica de Caja
-                const cobroRef = doc(collection(db, 'ventas')); // Generamos ID nuevo
-                transaction.set(cobroRef, {
-                    tipo: 'cobranza', // 👈 CRÍTICO para diferenciar de ventas
-                    clientName: clientName || debt.clienteNombre || 'Cliente',
-                    clienteId: debt.clienteId,
-                    estado: "Pagada", // Una cobranza nace pagada
-                    fecha: serverTimestamp(),
-                    numeroFactura: `COBRO-${debt.numeroFactura || debt.id.substring(0, 6)}`,
-                    
-                    // Datos económicos
-                    pagoEfectivo: paymentAmount, // Lo que entra a la caja del vendedor
-                    pagoTransferencia: 0,
-                    saldoPendiente: 0, // El cobro en sí no genera deuda
-                    totalVenta: 0, // 👈 0 para no duplicar ventas en reportes
-                    montoCobrado: paymentAmount, // Campo auxiliar útil para reportes rápidos
-                    items: [], // 👈 Array vacío para que no rompa iteraciones de productos
-
-                    // Datos de rastreo
-                    vendedorId: debt.vendedorId,
-                    vendedorNombre: debt.vendedorNombre || debt.vendedorName || 'Desconocido',
-                    ventaOriginalId: debt.id, // Referencia a qué deuda pagó
-                    ventaOriginalFecha: debt.fecha
-                });
-
-                // 2. Actualizar la factura original (reducir deuda)
-                const saleRef = doc(db, 'ventas', debt.id);
-                const saleDoc = await transaction.get(saleRef);
-                
-                // @ts-ignore
-                if (!saleDoc.exists) throw new Error("La factura original no fue encontrada.");
-
-                const data = saleDoc.data();
-                if (!data) throw new Error("No se pudieron leer los datos de la venta.");
-
-                const currentSaldo = data.saldoPendiente || 0;
-                const newBalance = currentSaldo - paymentAmount;
-                
-                // Si el saldo es menor a 1 peso, lo consideramos pagado para evitar problemas de redondeo
-                const newStatus = newBalance <= 1 ? "Pagada" : "Adeuda";
-                
-                // Recálculo de comisión: Si se paga totalmente, aseguramos la comisión total
-                // NOTA: Aquí podrías ajustar si pagas comisiones parciales.
-                // Por ahora mantenemos tu lógica: si se paga, se libera la comisión base.
-                let updates: any = {
-                    saldoPendiente: newBalance < 0 ? 0 : newBalance,
-                    estado: newStatus
-                };
-
-                if (newStatus === 'Pagada') {
-                   updates.fechaPagoCompleto = serverTimestamp();
-                }
-
-                transaction.update(saleRef, updates);
+            await registrarCobro({
+                db,
+                companyId,
+                ventaId: debt.id,
+                clienteId: debt.clienteId,
+                clienteNombre: (Array.isArray(clientName) ? clientName[0] : clientName) || debt.clienteNombre,
+                vendedorId: collectorId || debt.vendedorId,
+                vendedorNombre: collectorNombre || debt.vendedorNombre || debt.vendedorName,
+                rutaId: routeId,
+                montos: { Efectivo: paymentAmount },
             });
         };
-        
+
         if (isOffline) {
             executeTransaction().catch(err => {
                 console.error("Error en la escritura de cobro en segundo plano:", err);
@@ -182,7 +145,7 @@ const RegisterPaymentModal = ({ visible, onClose, debt, clientName, onPaymentSuc
             setIsSaving(false);
             setAmount('');
         }
-    }, [amount, debt, clientName, onPaymentSuccess, onClose, isOffline]);
+    }, [amount, debt, clientName, onPaymentSuccess, onClose, isOffline, companyId, collectorId, collectorNombre, routeId]);
 
     // 2. CONDICIONAL AL FINAL: Ahora es seguro retornar null si no hay deuda
     if (!debt) return null;
@@ -256,22 +219,59 @@ const DebtCard = memo(({ item, onPress }: { item: Sale, onPress: (item: Sale) =>
 
 // --- Pantalla Principal ---
 const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
-    const { clientId, clientName } = route.params;
-    const { sales, isLoading, syncData, isOffline } = useData();
+    const { clientId, clientName, routeId } = route.params;
+    const { sales, isLoading, syncData, isOffline, companyId, identity } = useData();
 
     const [modalVisible, setModalVisible] = useState(false);
-    const [selectedDebt, setSelectedDebt] = useState<Sale | null>(null); 
+    const [selectedDebt, setSelectedDebt] = useState<Sale | null>(null);
+
+    // El caché local de 'sales' está recortado según el rol (un vendedor solo trae sus
+    // propias ventas; un repartidor, solo las de sus rutas asignadas). Una deuda vieja de
+    // este cliente, generada fuera de ese recorte, no aparecería ahí. Por eso, si hay
+    // conexión, se trae el saldo real directo de Firestore filtrando solo por el cliente.
+    const [remoteDebts, setRemoteDebts] = useState<Sale[] | null>(null);
+    const [isLoadingRemoteDebts, setIsLoadingRemoteDebts] = useState(false);
+    const [refreshTick, setRefreshTick] = useState(0);
+
+    useEffect(() => {
+        if (isOffline || !companyId || !clientId) { setRemoteDebts(null); return; }
+
+        let cancelled = false;
+        setIsLoadingRemoteDebts(true);
+
+        const db = dbContainer.instance;
+        if (!db) { setIsLoadingRemoteDebts(false); return; }
+
+        const q = query(
+            collection(db, `companies/${companyId}/ventas`),
+            where('clienteId', '==', clientId),
+            where('estado', '==', 'Adeuda')
+        );
+        getDocs(q)
+            .then(snap => {
+                if (cancelled) return;
+                setRemoteDebts(snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as Sale)));
+            })
+            .catch(err => {
+                console.error('Error consultando saldos pendientes del cliente:', err);
+                if (!cancelled) setRemoteDebts(null); // Ante error, caemos al caché local
+            })
+            .finally(() => { if (!cancelled) setIsLoadingRemoteDebts(false); });
+
+        return () => { cancelled = true; };
+    }, [isOffline, companyId, clientId, refreshTick]);
+
+    const handlePaymentSuccess = useCallback(() => {
+        syncData(); // Refresca el caché global (offline-first)
+        setRefreshTick(t => t + 1); // Re-consulta el saldo real de este cliente
+    }, [syncData]);
 
     const debts: Sale[] = useMemo(() => {
-        return (sales || [])
-            .filter((sale: Sale) => 
-                sale &&
-                sale.clienteId === clientId &&
-                sale.estado === 'Adeuda' &&
-                (sale.saldoPendiente || 0) > 1 // Filtramos saldos mayores a $1
-            )
+        const source = remoteDebts ?? (sales || []).filter((sale: Sale) => sale && sale.clienteId === clientId && sale.estado === 'Adeuda');
+        return source
+            .filter((sale: Sale) => (sale.saldoPendiente || 0) > 1) // Filtramos saldos mayores a $1
             .sort((a, b) => getDateTimestamp(a.fecha) - getDateTimestamp(b.fecha)); // Más antiguas primero
-    }, [sales, clientId]);
+    }, [remoteDebts, sales, clientId]);
 
     const handleOpenModal = useCallback((debt: Sale) => { 
         setSelectedDebt(debt);
@@ -287,7 +287,7 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
         <DebtCard item={item} onPress={handleOpenModal} />
     ), [handleOpenModal]);
     
-    if (isLoading && sales.length === 0) {
+    if ((isLoading && sales.length === 0) || isLoadingRemoteDebts) {
         return (
             <View style={styles.loadingContainer}>
                 <LinearGradient colors={[COLORS.backgroundStart, COLORS.backgroundStart]} style={StyleSheet.absoluteFill} />
@@ -328,9 +328,13 @@ const ClientDebtsScreen = ({ navigation, route }: ClientDebtsScreenProps) => {
                 visible={modalVisible}
                 onClose={handleCloseModal}
                 debt={selectedDebt}
-                clientName={clientName} 
-                onPaymentSuccess={syncData}
+                clientName={clientName}
+                onPaymentSuccess={handlePaymentSuccess}
                 isOffline={isOffline}
+                companyId={companyId}
+                collectorId={identity?.id}
+                collectorNombre={identity?.nombreCompleto}
+                routeId={routeId}
             />
         </View>
     );

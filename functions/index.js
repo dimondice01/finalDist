@@ -74,11 +74,14 @@ exports.api = onRequest({ cors: true }, app);
 
 // 2. MercadoPago Terminales (Web Admin)
 exports.obtenerTerminales = mpModule.obtenerTerminales;
+exports.obtenerCajasQR = mpModule.obtenerCajasQR;
 exports.configurarPoint = mpModule.configurarPoint;
 
 // 3. MercadoPago Cobros (Móvil)
 exports.cobrarConPoint = mpModule.cobrarConPoint;
 exports.generarCobroQR = mpModule.generarCobroQR;
+exports.verificarPagoMP = mpModule.verificarPagoMP;
+exports.obtenerImagenQR = mpModule.obtenerImagenQR;
 exports.webhookMercadoPago = mpModule.webhookMercadoPago;
 
 // ==================================================================

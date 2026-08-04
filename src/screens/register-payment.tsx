@@ -1,14 +1,8 @@
 // src/screens/register-payment.tsx
 import { Feather } from '@expo/vector-icons';
 
-// --- SDK NATIVO ---
-import {
-    FirebaseFirestoreTypes,
-    Timestamp
-} from '@react-native-firebase/firestore';
-
-import React, { useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
 
 // --- Navegación ---
@@ -17,7 +11,8 @@ import { RegisterPaymentScreenProps } from '../navigation/AppNavigator';
 
 // --- Contexto ---
 import { useData } from '../../context/DataContext';
-import { auth, dbContainer, functions } from '../../db/firebase-service'; 
+import { auth, dbContainer, functions } from '../../db/firebase-service';
+import { registrarCobro } from '../../services/paymentService';
 import { COLORS } from '../../styles/theme';
 
 // --- GPS & TRAZABILIDAD ---
@@ -52,6 +47,62 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
     const [isChargingQR, setIsChargingQR] = useState(false);
     const [isChargingPoint, setIsChargingPoint] = useState(false);
 
+    // QR fijo de la Caja del vendedor (siempre la misma imagen, se busca una sola vez).
+    // No es un QR distinto por cobro: es el mismo QR de siempre, y lo que cambia por
+    // cobro es el monto activo en MercadoPago (ver generarCobroQR).
+    const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+    const [qrModalVisible, setQrModalVisible] = useState(false);
+    const [qrModalAmount, setQrModalAmount] = useState(0);
+
+    useEffect(() => {
+        const cargarImagenQR = async () => {
+            if (!companyId || !identity?.mpCajaId) return;
+            try {
+                const obtenerImagenQR = functions.httpsCallable('obtenerImagenQR');
+                const result = await obtenerImagenQR({ companyId, external_id: identity.mpCajaId });
+                if ((result.data as any)?.qrImage) setQrImageUrl((result.data as any).qrImage);
+            } catch (error) {
+                console.error('Error cargando imagen de QR:', error);
+            }
+        };
+        cargarImagenQR();
+    }, [companyId, identity?.mpCajaId]);
+
+    // ==================================================================
+    // 🔄 POLLING DE ESTADO (misma lógica probada de noar-pos-resilense):
+    // en vez de esperar un webhook, la app pregunta activamente cada 3s si
+    // el cobro ya se acreditó, y precarga el monto cuando se confirma.
+    // ==================================================================
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    useEffect(() => {
+        return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    }, []);
+
+    const iniciarPollingPago = (reference: string, provider: 'point' | 'mercadopago', monto: number) => {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+
+        pollingRef.current = setInterval(async () => {
+            try {
+                const result = await functions.httpsCallable('verificarPagoMP')({ companyId, reference, provider });
+                const status = (result.data as any)?.status;
+
+                if (status === 'approved') {
+                    if (pollingRef.current) clearInterval(pollingRef.current);
+                    if (provider === 'point') setPagoPoint(String(monto));
+                    else setPagoQR(String(monto));
+                    setQrModalVisible(false);
+                    Toast.show({ type: 'success', text1: 'Pago Acreditado', text2: 'Se cargó el monto automáticamente.' });
+                } else if (status === 'rejected' || status === 'canceled') {
+                    if (pollingRef.current) clearInterval(pollingRef.current);
+                    Alert.alert("Pago no acreditado", "El cobro fue rechazado o cancelado.");
+                }
+            } catch (error) {
+                console.error('Error de polling MP:', error);
+            }
+        }, 3000);
+    };
+
     // ==================================================================
     // 📠 COBRO CON POINT (ZERO CONFIG)
     // ==================================================================
@@ -75,9 +126,12 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
                 amount: amount,
                 external_reference: `V-${saleId || 'NEW'}`
             });
-            
-            if ((result.data as any).success) {
+
+            const data = result.data as any;
+            if (data.success) {
                 Alert.alert("Orden Enviada", "Sigue las instrucciones en el datáfono Point.");
+                // Point se verifica por el ID del payment-intent (no por external_reference).
+                iniciarPollingPago(data.intentId, 'point', amount);
             }
         } catch (error: any) {
             Alert.alert("Error Point", error.message);
@@ -103,17 +157,23 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
 
         setIsChargingQR(true);
         try {
+            const external_reference = `QR-${saleId || 'NEW'}`;
             const result = await functions.httpsCallable('generarCobroQR')({
                 companyId,
-                userId: identity.id,
                 external_id: identity.mpCajaId,
                 amount: amount,
-                external_reference: `QR-${saleId || 'NEW'}`,
+                external_reference,
                 title: `Cobro ${clientName || 'Cliente'}`
             });
 
             if ((result.data as any).success) {
-                Alert.alert("QR Listo", "El cliente ya puede escanear el QR desde su App de MercadoPago.");
+                if (qrImageUrl) {
+                    setQrModalAmount(amount);
+                    setQrModalVisible(true);
+                } else {
+                    Alert.alert("QR Listo", "El monto ya está activo en tu Caja de MercadoPago, pero no se pudo cargar la imagen del QR. Pedile al cliente que abra tu Caja desde la App de MercadoPago.");
+                }
+                iniciarPollingPago(external_reference, 'mercadopago', amount);
             }
         } catch (error: any) {
             Alert.alert("Error QR", error.message);
@@ -178,45 +238,21 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
         try {
             if (!companyId) throw new Error("ID de empresa no disponible.");
 
-            await db.runTransaction(async (transaction) => {
-                const saleRef = db.doc(`companies/${companyId}/ventas/${saleId}`);
-                const saleDoc = await transaction.get(saleRef);
-
-                if (!saleDoc.exists) throw "La venta original no existe.";
-                const saleData = saleDoc.data();
-
-                const nuevoSaldo = Math.max(0, (saleData?.saldoPendiente || 0) - totalPagadoAhora);
-                let nuevoEstado = saleData?.estado;
-                
-                if (nuevoSaldo <= 10) {
-                    nuevoEstado = 'Pagada';
-                } else {
-                    nuevoEstado = 'Adeuda';
-                }
-
-                transaction.update(saleRef, {
-                    saldoPendiente: nuevoSaldo,
-                    estado: nuevoEstado,
-                    fechaUltimoPago: Timestamp.now() 
-                });
-
-                const cobroRef = db.collection(`companies/${companyId}/ventas`).doc(); 
-                transaction.set(cobroRef, {
-                    tipo: 'cobro', 
-                    createdAt: Timestamp.now(),
-                    totalVenta: totalPagadoAhora,
-                    pagoEfectivo: efectivo,
-                    pagoTransferencia: transferencia,
-                    pagoQR: qr,        // ✅ SaaS Field
-                    pagoPoint: point,  // ✅ SaaS Field
-                    ventaOriginalId: saleId,
-                    vendedorId: currentUser?.uid || '',
-                    vendedorNombre: currentUser?.displayName || 'Vendedor',
-                    clienteId: clientId || '',
-                    clienteNombre: clientName || 'Cliente',
-                    saleInfo: saleInfo || '',
-                    location: capturedLocation
-                });
+            await registrarCobro({
+                db,
+                companyId,
+                ventaId: saleId,
+                clienteId: clientId,
+                clienteNombre: clientName,
+                vendedorId: currentUser?.uid,
+                vendedorNombre: currentUser?.displayName || 'Vendedor',
+                montos: {
+                    Efectivo: efectivo,
+                    Transferencia: transferencia,
+                    QR: qr,
+                    Point: point,
+                },
+                location: capturedLocation,
             });
 
             if (!isOffline) {
@@ -330,7 +366,7 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
                 </View>
             </KeyboardAvoidingView>
 
-            <LocationPermissionModal 
+            <LocationPermissionModal
                 visible={showLocationExplainer}
                 onConfirm={() => {
                     setShowLocationExplainer(false);
@@ -338,6 +374,21 @@ const RegisterPaymentScreen = ({ navigation }: RegisterPaymentScreenProps) => {
                 }}
                 onCancel={() => setShowLocationExplainer(false)}
             />
+
+            <Modal visible={qrModalVisible} transparent animationType="fade" onRequestClose={() => setQrModalVisible(false)}>
+                <View style={styles.qrOverlay}>
+                    <View style={styles.qrCard}>
+                        <Text style={styles.qrAmount}>${qrModalAmount.toLocaleString('es-AR')}</Text>
+                        <Text style={styles.qrHint}>Mostrale esta pantalla al cliente para que la escanee</Text>
+                        {qrImageUrl && (
+                            <Image source={{ uri: qrImageUrl }} style={styles.qrImage} resizeMode="contain" />
+                        )}
+                        <TouchableOpacity style={styles.qrCloseButton} onPress={() => setQrModalVisible(false)}>
+                            <Text style={styles.qrCloseButtonText}>CERRAR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 };
@@ -374,6 +425,13 @@ const styles = StyleSheet.create({
     },
     confirmButtonDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0 },
     confirmButtonText: { color: '#FFF', fontSize: 16, fontWeight: '900' },
+    qrOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.9)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+    qrCard: { backgroundColor: '#FFF', borderRadius: 24, padding: 24, alignItems: 'center', width: '100%', maxWidth: 340 },
+    qrAmount: { fontSize: 32, fontWeight: '900', color: COLORS.textPrimary },
+    qrHint: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 16 },
+    qrImage: { width: 260, height: 260 },
+    qrCloseButton: { marginTop: 20, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#F1F5F9', borderRadius: 12 },
+    qrCloseButtonText: { fontWeight: '800', color: COLORS.textPrimary },
 });
 
 export default RegisterPaymentScreen;

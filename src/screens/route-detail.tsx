@@ -2,11 +2,12 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Image,
     KeyboardAvoidingView,
     Linking,
     Modal,
@@ -24,9 +25,9 @@ import Toast from 'react-native-toast-message';
 
 // --- FIREBASE ---
 import firestore from '@react-native-firebase/firestore';
-// Usamos funciones nativas de React Native Firebase para evitar errores de contexto
-import functions from '@react-native-firebase/functions';
-import { auth } from '../../db/firebase-service';
+// Instancia única con la región correcta (southamerica-west1); functions() sin región
+// apunta a us-central1 por defecto y las Cloud Functions del proyecto no están ahí.
+import { functions } from '../../db/firebase-service';
 
 // --- CONTEXTO Y UTILS ---
 import { useData } from '../../context/DataContext';
@@ -128,10 +129,11 @@ interface DeliveryModalProps {
     invoice: Invoice;
     routeId: string;
     onSuccess: () => void;
-    externalPosId?: string; 
+    externalPosId?: string;
+    deviceId?: string;
 }
 
-const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, externalPosId }: DeliveryModalProps) => {
+const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, externalPosId, deviceId }: DeliveryModalProps) => {
     const [items, setItems] = useState<ProductItem[]>([]);
     const [pagoEfectivo, setPagoEfectivo] = useState('');
     const [pagoTransferencia, setPagoTransferencia] = useState('');
@@ -141,11 +143,65 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
     // --- ESTADOS MP ---
     const [mpLoading, setMpLoading] = useState(false);
     const [mpStatus, setMpStatus] = useState('');
+    const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+    const [qrModalVisible, setQrModalVisible] = useState(false);
 
     // --- ESTADOS GPS ---
     const [showLocationExplainer, setShowLocationExplainer] = useState(false);
     
-    const { companyId } = useData(); 
+    const { companyId } = useData();
+
+    // Polling activo de confirmación (mismo patrón que register-payment.tsx / noar-pos-resilense):
+    // al aprobarse, escribe directo en la venta para que el listener de abajo cierre el modal.
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    useEffect(() => {
+        return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    }, []);
+
+    // Imagen fija del QR de la Caja asignada (misma imagen siempre; ver generarCobroQR).
+    // Se pide directo a MercadoPago (no del config cacheado) para no depender de que
+    // alguien haya apretado "Buscar Mis Cajas" en la web después de asignar la Caja.
+    useEffect(() => {
+        const cargarImagenQR = async () => {
+            if (!companyId || !externalPosId) return;
+            try {
+                const obtenerImagenQR = functions.httpsCallable('obtenerImagenQR');
+                const result: any = await obtenerImagenQR({ companyId, external_id: externalPosId });
+                if (result.data?.qrImage) setQrImageUrl(result.data.qrImage);
+            } catch (error) {
+                console.error('Error cargando imagen de QR:', error);
+            }
+        };
+        cargarImagenQR();
+    }, [companyId, externalPosId]);
+
+    const iniciarPollingPago = (reference: string, provider: 'point' | 'mercadopago') => {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        if (!companyId) return;
+
+        pollingRef.current = setInterval(async () => {
+            try {
+                const verificarPagoMP = functions.httpsCallable('verificarPagoMP');
+                const result: any = await verificarPagoMP({ companyId, reference, provider });
+                const status = result.data?.status;
+
+                if (status === 'approved') {
+                    if (pollingRef.current) clearInterval(pollingRef.current);
+                    setQrModalVisible(false);
+                    await firestore().collection(`companies/${companyId}/ventas`).doc(invoice.id).update({
+                        estado: 'Pagada',
+                        saldoPendiente: 0
+                    });
+                } else if (status === 'rejected' || status === 'canceled') {
+                    if (pollingRef.current) clearInterval(pollingRef.current);
+                    setMpLoading(false);
+                    Alert.alert("Pago no acreditado", "El cobro fue rechazado o cancelado.");
+                }
+            } catch (error) {
+                console.error('Error de polling MP:', error);
+            }
+        }, 3000);
+    };
 
     useEffect(() => {
         if (visible && invoice) {
@@ -271,33 +327,32 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
 
     // --- LÓGICA MERCADOPAGO POINT (Nativo) ---
     const handlePointPayment = async () => {
+        if (!deviceId) {
+            Alert.alert("Sin Terminal", "No tenés un Point asignado. Pedile al administrador que te lo asigne desde Integraciones.");
+            return;
+        }
+        if (!companyId) {
+            Alert.alert("Error", "ID de empresa no disponible.");
+            return;
+        }
+
         setMpLoading(true);
-        setMpStatus('Buscando Point...');
+        setMpStatus('Enviando orden al Point...');
 
         try {
-            // Usamos functions() nativo
-            const obtenerTerminales = functions().httpsCallable('obtenerTerminales');
-            const resDevices: any = await obtenerTerminales();
-            
-            // En nativo, la data suele venir directa en .data
-            const devices = resDevices.data?.devices || resDevices.data || [];
-
-            if (!Array.isArray(devices) || devices.length === 0) {
-                throw new Error("No hay terminales vinculadas.");
-            }
-
-            const targetDevice = devices[0].id;
-            setMpStatus(`Enviando a ${devices[0].name}...`);
-
-            // Enviar Orden
-            const cobrarConPoint = functions().httpsCallable('cobrarConPoint');
-            await cobrarConPoint({
-                deviceId: targetDevice,
+            // Usamos SIEMPRE el terminal asignado a este vendedor, no el primero que
+            // devuelva la cuenta (podría ser el de otro repartidor).
+            const cobrarConPoint = functions.httpsCallable('cobrarConPoint');
+            const result: any = await cobrarConPoint({
+                companyId,
+                deviceId,
                 amount: saldoRestante,
-                externalReference: invoice.id
+                external_reference: `V-${invoice.id}`
             });
 
             setMpStatus('Esperando tarjeta en el Point...');
+            // Point se verifica por el ID del payment-intent, no por external_reference.
+            iniciarPollingPago(result.data?.intentId, 'point');
 
         } catch (error: any) {
             console.error(error);
@@ -307,27 +362,40 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
     };
 
     // --- LÓGICA QR FIJO (Nativo) ---
+    // El QR de la Caja es siempre el mismo (no se genera uno nuevo por cobro); esto solo
+    // actualiza el monto activo en MercadoPago para que, al escanearlo, cobre lo justo.
     const handleQrPayment = async () => {
         if (!externalPosId) {
             Alert.alert("Sin Caja Asignada", "Tu usuario no tiene una Caja MP configurada.");
             return;
         }
+        if (!companyId) {
+            Alert.alert("Error", "ID de empresa no disponible.");
+            return;
+        }
 
         setMpLoading(true);
-        setMpStatus('Activando QR del Camión...');
+        setMpStatus('Actualizando monto del QR...');
 
         try {
-            const activarQrFijo = functions().httpsCallable('activarQrFijo');
-            
-            await activarQrFijo({
-                externalPosId: externalPosId,
+            const generarCobroQR = functions.httpsCallable('generarCobroQR');
+            const external_reference = `QR-${invoice.id}`;
+
+            await generarCobroQR({
+                companyId,
+                external_id: externalPosId,
                 amount: saldoRestante,
-                externalReference: invoice.id,
-                title: `Pedido ${invoice.clienteNombre}`,
-                items: [{ title: 'Productos Varios', unit_price: saldoRestante, quantity: 1, total_amount: saldoRestante }]
+                external_reference,
+                title: `Pedido ${invoice.clienteNombre}`
             });
 
-            setMpStatus('¡Listo! Escaneá el Sticker ahora.');
+            if (qrImageUrl) {
+                setMpStatus('¡Listo! Mostrale el QR al cliente.');
+                setQrModalVisible(true);
+            } else {
+                setMpStatus('Monto activo en tu Caja, pero no se pudo cargar la imagen del QR. Abrila desde tu App de MercadoPago.');
+            }
+            iniciarPollingPago(external_reference, 'mercadopago');
 
         } catch (error: any) {
             console.error(error);
@@ -603,7 +671,7 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
                         </View>
                     </ScrollView>
 
-                    <LocationPermissionModal 
+                    <LocationPermissionModal
                         visible={showLocationExplainer}
                         onConfirm={() => {
                             setShowLocationExplainer(false);
@@ -613,9 +681,32 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
                     />
                 </View>
             </KeyboardAvoidingView>
+
+            <Modal visible={qrModalVisible} transparent animationType="fade" onRequestClose={() => setQrModalVisible(false)}>
+                <View style={mpQrStyles.overlay}>
+                    <View style={mpQrStyles.card}>
+                        <Text style={mpQrStyles.amount}>{formatCurrency(saldoRestante)}</Text>
+                        <Text style={mpQrStyles.hint}>Mostrale esta pantalla al cliente para que la escanee</Text>
+                        {qrImageUrl && <Image source={{ uri: qrImageUrl }} style={mpQrStyles.image} resizeMode="contain" />}
+                        <TouchableOpacity style={mpQrStyles.closeButton} onPress={() => setQrModalVisible(false)}>
+                            <Text style={mpQrStyles.closeButtonText}>CERRAR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </Modal>
     );
 };
+
+const mpQrStyles = StyleSheet.create({
+    overlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.9)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+    card: { backgroundColor: '#FFF', borderRadius: 24, padding: 24, alignItems: 'center', width: '100%', maxWidth: 340 },
+    amount: { fontSize: 32, fontWeight: '900', color: COLORS.textPrimary },
+    hint: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 16 },
+    image: { width: 260, height: 260 },
+    closeButton: { marginTop: 20, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#F1F5F9', borderRadius: 12 },
+    closeButtonText: { fontWeight: '800', color: COLORS.textPrimary },
+});
 
 // =================================================================================
 // PANTALLA PRINCIPAL (ROUTE DETAIL)
@@ -623,30 +714,13 @@ const DeliveryModal = ({ visible, onClose, invoice, routeId, onSuccess, external
 
 const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
     const routeId = route.params?.routeId;
-    const { routes, clients, sales, syncData, companyId } = useData();
-    
-    // --- OBTENER CAJA DEL USUARIO (QR) ---
-    const [userCajaMP, setUserCajaMP] = useState<string | undefined>(undefined);
+    const { routes, clients, sales, syncData, companyId, identity } = useData();
 
-    useEffect(() => {
-        const fetchUserConfig = async () => {
-            const user = auth.currentUser;
-            if (user) {
-                try {
-                    const userDoc = await firestore().collection('users').doc(user.uid).get();
-                    if (userDoc.exists()) { // TS Fix
-                        const userData = userDoc.data();
-                        if (userData && userData.cajaMP) {
-                            setUserCajaMP(userData.cajaMP);
-                        }
-                    }
-                } catch (e) {
-                    console.log("Error cargando config usuario:", e);
-                }
-            }
-        };
-        fetchUserConfig();
-    }, []);
+    // Caja QR y terminal Point asignados a este vendedor (sincronizados desde la web
+    // en users/{uid}.mpCajaId / mpDeviceId, ver DataContext). Antes esto se buscaba mal
+    // ("cajaMP", un campo que no existe) directo desde Firestore; con identity ya viene resuelto.
+    const userCajaMP = identity?.mpCajaId || undefined;
+    const userDeviceMP = identity?.mpDeviceId || undefined;
 
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [deliveryModalVisible, setDeliveryModalVisible] = useState(false);
@@ -871,6 +945,14 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                                 <Text style={styles.mainActionText}>{isPendiente ? 'GESTIONAR ENTREGA' : 'VER DETALLE'}</Text>
                                 <Feather name="chevron-right" size={16} color="#FFF" />
                             </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.debtsActionBtn}
+                                onPress={() => navigation.navigate('ClientDebts', { clientId: item.clienteId, clientName: item.clienteNombre, routeId: routeData.id })}
+                            >
+                                <Feather name="dollar-sign" size={14} color={COLORS.warning} />
+                                <Text style={styles.debtsActionText}>Saldos Pendientes</Text>
+                            </TouchableOpacity>
                         </View>
                     );
                 }}
@@ -959,7 +1041,8 @@ const RouteDetailScreen = ({ route, navigation }: RouteDetailScreenProps) => {
                     routeId={routeData.id}
                     onClose={() => setDeliveryModalVisible(false)}
                     onSuccess={handleSuccessUpdate}
-                    externalPosId={userCajaMP} 
+                    externalPosId={userCajaMP}
+                    deviceId={userDeviceMP}
                 />
             )}
 
@@ -1058,6 +1141,8 @@ const styles = StyleSheet.create({
     qaBtn: { padding: 10, borderRadius: 8, backgroundColor: '#FFF', shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 3, elevation: 1, width: 50, alignItems: 'center' },
     mainActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.primary, paddingVertical: 12 },
     mainActionText: { color: '#FFF', fontWeight: 'bold', fontSize: 12, marginRight: 5, letterSpacing: 0.5 },
+    debtsActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF', paddingVertical: 10, borderTopWidth: 1, borderTopColor: COLORS.glassBorder },
+    debtsActionText: { color: COLORS.warning, fontWeight: 'bold', fontSize: 12, marginLeft: 6, letterSpacing: 0.5 },
     floatingFooter: { position: 'absolute', bottom: 20, left: 20, right: 20 },
     finalizeBtn: { flexDirection: 'row', backgroundColor: COLORS.success, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', shadowColor: COLORS.success, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: {width: 0, height: 4}, elevation: 6 },
     finalizeText: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 }

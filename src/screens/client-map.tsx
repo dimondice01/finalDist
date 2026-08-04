@@ -126,7 +126,12 @@ const ClientMapScreen = ({ navigation }: ClientMapScreenProps) => {
     const clientStatuses = useMemo(() => {
         const statusMap = new Map<string, ClientStatus>();
         allClients.forEach(client => {
-            const mySales = allSales.filter(s => s.clienteId === client.id);
+            const mySales = allSales.filter(s =>
+                s.clienteId === client.id &&
+                // Cobros legacy guardados como venta (antes de separar la colección cobranzas)
+                // no son compras: no deben marcar al cliente como "activo" en el mapa.
+                s.tipo !== 'cobranza' && (s.tipo as string) !== 'cobro' && !s.ventaOriginalId
+            );
             const status = getClientStatus(client, mySales);
             statusMap.set(client.id, status);
         });

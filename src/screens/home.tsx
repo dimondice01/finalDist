@@ -90,10 +90,13 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
             if (fecha.seconds) return fecha.seconds * 1000;
             return 0;
         };
-        return [...sales]
+        return sales
+            // Cobros legacy que quedaron guardados como venta (antes de separar la colección
+            // cobranzas) no son ventas reales, no deben aparecer como "Venta Reciente".
+            .filter(s => s.tipo !== 'cobranza' && (s.tipo as string) !== 'cobro' && !s.ventaOriginalId)
             .sort((a, b) => getDate(b) - getDate(a))
             .slice(0, 5);
-    }, [sales]); 
+    }, [sales]);
 
     const onRefresh = useCallback(async () => {
         setIsRefreshing(true);

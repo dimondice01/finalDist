@@ -195,13 +195,13 @@ const ProductCard = memo(({ item, cart, promotions, client, handleAddProduct }: 
     return (
         <TouchableOpacity
             style={[
-                productCardStyles.card, 
-                quantityInCart > 0 && productCardStyles.cardSelected, 
-                noStock && productCardStyles.cardDisabled 
+                productCardStyles.card,
+                quantityInCart > 0 && productCardStyles.cardSelected,
+                noStock && quantityInCart <= 0 && productCardStyles.cardDisabled
             ]}
             onPress={handlePress}
             activeOpacity={0.7}
-            disabled={noStock} 
+            disabled={noStock && quantityInCart <= 0}
         >
             <View style={productCardStyles.cardContent}>
                 <View style={productCardStyles.infoColumn}>
@@ -537,7 +537,17 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         const quantity = parseInt(currentQuantity, 10);
         if (isNaN(quantity) || quantity <= 0) { Alert.alert("Cantidad Inválida", "Ingrese un número mayor a 0."); return; }
         if (!selectedProduct) return;
-        
+
+        // El stock del catálogo ya tiene descontada la cantidad que esta línea venía reservando
+        // (ver reintegrarStockLocalmente/descontarStockLocalmente al guardar), así que el tope real
+        // para esta línea es stock actual + lo que ya tenía cargado. Bajar cantidad siempre está permitido.
+        const existingItem = cart.find(item => item.id === selectedProduct.id && !item.isGift);
+        const stockDisponible = (selectedProduct.stock ?? 0) + (existingItem?.quantity ?? 0);
+        if (quantity > stockDisponible) {
+            Alert.alert("Stock insuficiente", `Sólo hay ${stockDisponible} unidad(es) disponible(s) de este producto.`);
+            return;
+        }
+
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         
         // ✅ Calculamos comisión con el precio seleccionado (que ya incluye lógica de lista/promo)
@@ -560,7 +570,7 @@ const CreateSaleScreen = ({ navigation }: CreateSaleScreenProps) => {
         setModalVisible(false);
         setSelectedProduct(null);
         setCurrentQuantity('1');
-    }, [currentQuantity, selectedProduct, getComision]);
+    }, [currentQuantity, selectedProduct, getComision, cart]);
 
     const handleRemoveFromCart = useCallback(() => {
         if (!selectedProduct) return;

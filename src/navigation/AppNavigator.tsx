@@ -42,7 +42,7 @@ export type RootStackParamList = {
     Driver: undefined; 
     ClientList: undefined;
     ClientDashboard: { clientId: string };
-    ClientDebts: { clientId: string, clientName: string }; 
+    ClientDebts: { clientId: string, clientName: string, routeId?: string };
     SaleDetail: { saleId: string; clientName: string }; 
     AddClient: undefined;
     EditClient: { clientId: string}; 

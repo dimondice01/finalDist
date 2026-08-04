@@ -288,7 +288,12 @@ const ClientDashboardScreen = ({ navigation, route }: ClientDashboardScreenProps
         };
 
         return allSalesArray
-            .filter(s => s && s.id && s.clienteId === clientId) 
+            .filter(s =>
+                s && s.id && s.clienteId === clientId &&
+                // Cobros legacy que quedaron guardados como venta (antes de separar la
+                // colección cobranzas): no son compras del cliente, no deben listarse acá.
+                s.tipo !== 'cobranza' && (s.tipo as string) !== 'cobro' && !s.ventaOriginalId
+            )
             .sort((a, b) => getTimestamp(b) - getTimestamp(a));
     }, [sales, clientId]);
 

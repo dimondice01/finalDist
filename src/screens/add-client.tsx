@@ -406,11 +406,10 @@ const AddClientScreen = ({ navigation }: AddClientScreenProps) => {
                 telefono: telefono.trim(),
                 email: email.trim().toLowerCase(),
                 zonaId,
-                rubroId: rubroId || '', 
+                rubroId: rubroId || '',
                 location: location || null,
-                vendedorAsignadoId: currentUser?.uid,
-                
-                requiereFacturaAfip: isArca, 
+
+                requiereFacturaAfip: isArca,
                 tipoDocumento: finalTipoDocumento, 
                 numeroDocumento: finalNumeroDocumento,
                 

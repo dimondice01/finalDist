@@ -15,7 +15,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ReportsScreenProps, RootStackParamList } from '../navigation/AppNavigator';
 
 // --- Contexto y Estilos ---
-import { Sale as BaseSale, Client, useData } from '../../context/DataContext';
+import { Cobranza, Sale as BaseSale, Client, useData } from '../../context/DataContext';
 // ✅ Importamos SIZES y COLORS
 import { COLORS, SIZES } from '../../styles/theme';
 
@@ -37,6 +37,35 @@ const formatJSDate = (dateInput: Sale['fecha']) => {
     if (isNaN(date.getTime()) || date.getFullYear() < 1971) { return 'Fecha inválida'; }
     return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
+
+// Las cobranzas viven en su propia colección (companies/{id}/cobranzas), separadas
+// de ventas, para no duplicar ganancia en los reportes. Para mostrarlas en el mismo
+// historial que las ventas, las adaptamos a la forma que espera SaleReportCard.
+const cobranzaToSaleView = (cobranza: Cobranza): Sale => ({
+    id: cobranza.id,
+    clienteId: cobranza.clienteId,
+    clientName: cobranza.clienteNombre || 'Cliente',
+    clienteNombre: cobranza.clienteNombre,
+    vendedorId: cobranza.vendedorId,
+    vendedorName: cobranza.vendedorNombre || 'Vendedor',
+    vendedorNombre: cobranza.vendedorNombre,
+    items: [],
+    totalVenta: 0,
+    totalCosto: 0,
+    totalComision: 0,
+    observaciones: '',
+    estado: 'Pagada',
+    tipo: 'cobranza',
+    fecha: cobranza.fecha,
+    saldoPendiente: 0,
+    montoCobrado: cobranza.monto,
+    pagoEfectivo: cobranza.metodoPago === 'Efectivo' ? cobranza.monto : 0,
+    pagoTransferencia: cobranza.metodoPago === 'Transferencia' ? cobranza.monto : 0,
+    pagoQR: cobranza.metodoPago === 'QR' ? cobranza.monto : 0,
+    pagoPoint: cobranza.metodoPago === 'Point' ? cobranza.monto : 0,
+    ventaOriginalId: cobranza.ventaOriginalId,
+    rendido: cobranza.rendido,
+});
 
 const getClientDisplayName = (sale: Sale, clients: Client[]) => {
     if (sale.clienteNombre) return sale.clienteNombre;
@@ -170,39 +199,51 @@ const DebtReportCard = memo(({ item, clients }: { item: Sale, clients: Client[] 
 
 
 const ReportsScreen = ({ navigation }: ReportsScreenProps) => {
-    const { sales: allSales = [], isLoading, clients = [] } = useData();
+    const { sales: allSales = [], cobranzas: allCobranzas = [], isLoading, clients = [] } = useData();
     const [activeTab, setActiveTab] = useState<'history' | 'debts'>('history');
 
-    // Ordenación y filtrado inicial (sin cambios)
-    // 1. Historial: Ventas y Cobros (pero no rendiciones internas)
+    // Ordenación y filtrado inicial
+    // 1. Historial: Ventas (sin rendiciones internas) + Cobranzas (colección separada)
     const sortedSales = useMemo(() => {
-        if (!Array.isArray(allSales)) return [];
-        return allSales
-            .filter(sale => 
-                sale && 
-                sale.id && 
+        const getDateTimestamp = (fecha: Sale['fecha']): number => {
+            if (!fecha) return 0;
+            if (fecha instanceof Date) return fecha.getTime();
+            if (fecha instanceof Timestamp) return fecha.toMillis();
+            if ((fecha as any).seconds) return (fecha as any).seconds * 1000;
+            return 0;
+        };
+
+        const sales = Array.isArray(allSales) ? allSales : [];
+        const cobranzas = Array.isArray(allCobranzas) ? allCobranzas : [];
+
+        const movimientos: Sale[] = [
+            ...sales.filter(sale =>
+                sale &&
+                sale.id &&
                 sale.clienteId !== 'INTERNAL_RENDICION' && // Ocultar rendiciones de caja internas
-                sale.tipo !== 'rendicion_cobranza' 
-            )
-            .sort((a, b) => {
-                const getDateTimestamp = (fecha: Sale['fecha']): number => {
-                    if (!fecha) return 0;
-                    if (fecha instanceof Date) return fecha.getTime();
-                    if (fecha instanceof Timestamp) return fecha.toMillis();
-                    if ((fecha as any).seconds) return (fecha as any).seconds * 1000;
-                    return 0;
-                };
-                return getDateTimestamp(b.fecha) - getDateTimestamp(a.fecha);
-            });
-    }, [allSales]);
+                sale.tipo !== 'rendicion_cobranza' &&
+                // Cobros legacy que quedaron guardados como venta (antes de separar la
+                // colección cobranzas): 'ventaOriginalId' es la huella que solo tiene un
+                // cobro, ninguna venta real la tiene. Ver functions/scripts/migrate-cobranzas.js.
+                sale.tipo !== 'cobranza' &&
+                (sale.tipo as string) !== 'cobro' &&
+                !sale.ventaOriginalId
+            ),
+            ...cobranzas.map(cobranzaToSaleView),
+        ];
+
+        return movimientos.sort((a, b) => getDateTimestamp(b.fecha) - getDateTimestamp(a.fecha));
+    }, [allSales, allCobranzas]);
 
     // 2. Deudas: Solo ventas con estado "Adeuda"
     const pendingDebts = useMemo(() => {
         if (!Array.isArray(allSales)) return [];
         return allSales
-            .filter(sale => 
+            .filter(sale =>
                 sale.tipo !== 'cobranza' && // Los cobros no son deudas
-                sale.estado === 'Adeuda' && 
+                (sale.tipo as string) !== 'cobro' &&
+                !sale.ventaOriginalId &&
+                sale.estado === 'Adeuda' &&
                 (sale.saldoPendiente || 0) > 1 // Filtramos saldos ínfimos
             )
             .sort((a, b) => {

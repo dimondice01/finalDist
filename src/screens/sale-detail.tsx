@@ -4,13 +4,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 // --- SDK NATIVO ---
 import {
-    addDoc,
-    collection,
     doc,
     FirebaseFirestoreTypes,
-    onSnapshot,
-    runTransaction,
-    serverTimestamp
+    onSnapshot
 } from '@react-native-firebase/firestore';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -35,6 +31,7 @@ import { SaleDetailScreenProps } from '../navigation/AppNavigator';
 // --- Contexto y DB ---
 import { useData } from '../../context/DataContext';
 import { dbContainer } from '../../db/firebase-service';
+import { registrarCobro } from '../../services/paymentService';
 import { COLORS } from '../../styles/theme';
 
 // --- INTERFACES ---
@@ -135,44 +132,15 @@ const CollectDebtModal = ({ visible, onClose, venta, onPaymentSuccess, isOffline
         }
 
         const performTransaction = async () => {
-            await runTransaction(db, async (transaction) => {
-                const ventaRef = doc(db, `companies/${companyId}/ventas`, venta.id);
-
-                await addDoc(collection(db, `companies/${companyId}/ventas`), {
-                    tipo: 'cobranza',
-                    clientName: `Cobro Saldo - ${venta.clienteNombre || venta.clientName || 'Cliente'}`, 
-                    clienteId: venta.clienteId,
-                    estado: "Pagada", 
-                    fecha: serverTimestamp(), 
-                    numeroFactura: `COBRO-${venta.numeroFactura || venta.id.substring(0,6)}`,
-                    pagoEfectivo: cobro, 
-                    pagoTransferencia: 0, 
-                    saldoPendiente: 0, 
-                    totalVenta: 0, 
-                    montoCobrado: cobro, 
-                    items: [], 
-                    vendedorId: venta.vendedorId, 
-                    vendedorNombre: venta.vendedorNombre || venta.vendedorName,
-                    ventaOriginalId: venta.id,
-                    rendido: false 
-                });
-                
-                const saleDoc = await transaction.get(ventaRef);
-                if (!saleDoc.exists) throw new Error("La factura original no fue encontrada.");
-                const data = saleDoc.data();
-                if (!data) throw new Error("No data");
-                
-                const nuevoSaldo = (data.saldoPendiente || 0) - cobro;
-                const nuevoEstado = nuevoSaldo <= 1 ? "Pagada" : "Adeuda";
-                
-                let updates: any = { saldoPendiente: nuevoSaldo < 0 ? 0 : nuevoSaldo, estado: nuevoEstado };
-                
-                if (nuevoEstado === 'Pagada') {
-                    const comisionFinal = data.totalVenta * ((data.porcentajeComision || 0) / 100);
-                    if (comisionFinal > 0) updates.totalComision = comisionFinal;
-                    updates.fechaPagoCompleto = serverTimestamp();
-                }
-                transaction.update(ventaRef, updates);
+            await registrarCobro({
+                db,
+                companyId,
+                ventaId: venta.id,
+                clienteId: venta.clienteId,
+                clienteNombre: venta.clienteNombre || venta.clientName,
+                vendedorId: venta.vendedorId,
+                vendedorNombre: venta.vendedorNombre || venta.vendedorName,
+                montos: { Efectivo: cobro },
             });
         };
 

@@ -68,8 +68,7 @@ export interface Client {
     email?: string;
     zonaId?: string;
     rubroId?: string;
-    vendedorAsignadoId?: string;
-    
+
     // ✅ NUEVO: Lista de precios asignada al cliente
     listaPreciosAsignada?: string;
 
@@ -168,6 +167,25 @@ export interface Sale {
     ventaOriginalId?: string;     // ID de la venta que generó la deuda (si aplica)
     ubicacion?: { lat: number; lng: number; accuracy: number } | null;
 }
+
+// --- COBRANZA: vive en companies/{companyId}/cobranzas, NUNCA dentro de ventas ---
+// Registra un cobro de saldo pendiente. No suma a "Total Ventas"/"Ganancia" en los
+// reportes; sólo actualiza saldoPendiente/estado de la venta original.
+export interface Cobranza {
+    id: string;
+    ventaOriginalId: string;
+    clienteId: string;
+    clienteNombre?: string;
+    vendedorId: string;
+    vendedorNombre?: string;
+    monto: number;
+    metodoPago: 'Efectivo' | 'Transferencia' | 'QR' | 'Point' | string;
+    estado: 'Pagada' | string;
+    rendido?: boolean;
+    fecha: { seconds: number } | Date;
+    location?: unknown;
+}
+
 export interface Route {
     id: string; // ✅ Agregado
     nombre?: string; // ✅ Agregado
@@ -212,6 +230,7 @@ export interface IDataContext {
     availableZones: Zone[];
     vendors: Vendor[];
     sales: Sale[];
+    cobranzas: Cobranza[];
     routes: Route[];
     rubros: Rubro[];
     priceLists: PriceList[]; 
@@ -245,6 +264,7 @@ const defaultContextValue: IDataContext = {
     availableZones: [],
     vendors: [],
     sales: [],
+    cobranzas: [],
     routes: [],
     rubros: [],
     priceLists: [], 
@@ -279,6 +299,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [availableZones, setAvailableZones] = useState<Zone[]>([]);
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [sales, setSales] = useState<Sale[]>([]);
+    const [cobranzas, setCobranzas] = useState<Cobranza[]>([]);
     const [routes, setRoutes] = useState<Route[]>([]);
     const [rubros, setRubros] = useState<Rubro[]>([]);
     const [priceLists, setPriceLists] = useState<PriceList[]>([]); 
@@ -328,7 +349,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             try {
                 console.log("Intentando cargar datos desde el almacenamiento local...");
                 // ✅ AGREGADO: 'priceLists' y 'companyConfig' a las claves de AsyncStorage
-                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'routes', 'rubros', 'priceLists', 'companyConfig'];
+                const keys = ['products', 'clients', 'categories', 'promotions', 'availableZones', 'vendors', 'sales', 'cobranzas', 'routes', 'rubros', 'priceLists', 'companyConfig'];
                 const storedData = await AsyncStorage.multiGet(keys);
                 const dataMap = new Map(storedData);
 
@@ -379,6 +400,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 setDataState('availableZones', setAvailableZones);
                 setDataState('vendors', setVendors);
                 setDataState('sales', setSales, true);
+                setDataState('cobranzas', setCobranzas, true);
                 setDataState('routes', setRoutes, true);
                 setDataState('rubros', setRubros);
                 const dataToParse = dataMap.get('priceLists');
@@ -618,6 +640,25 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     } as Sale;
             };
 
+            // --- FUNCIÓN DE PROCESAMIENTO DE COBRANZAS ---
+            const processFirebaseCobranza = (docSnap: FirebaseFirestoreTypes.DocumentSnapshot): Cobranza => {
+                const rawData = processFirebaseDoc(docSnap);
+                return {
+                    id: rawData.id,
+                    ventaOriginalId: rawData.ventaOriginalId || '',
+                    clienteId: rawData.clienteId || '',
+                    clienteNombre: rawData.clienteNombre,
+                    vendedorId: rawData.vendedorId || '',
+                    vendedorNombre: rawData.vendedorNombre,
+                    monto: rawData.monto ?? 0,
+                    metodoPago: rawData.metodoPago || 'Efectivo',
+                    estado: rawData.estado || 'Pagada',
+                    rendido: rawData.rendido ?? false,
+                    fecha: rawData.fecha || new Date(0),
+                    location: rawData.location,
+                } as Cobranza;
+            };
+
             // ✅ AGREGADO: priceListsPromise
             const [productsSnap, categoriesSnap, promosSnap, vendorsSnap, rubrosSnap, priceListsSnap] = await Promise.all([
                 productsPromise, categoriesPromise, promosPromise, allVendorsPromise, rubrosPromise, priceListsPromise
@@ -727,18 +768,59 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 } else {
                     finalData.clients = [];
                 }
-            } else { // Vendedor o Admin
-                const clientsPromise = dbInstance.collection(`companies/${resolvedCompanyId}/clientes`)
-                    .where('vendedorAsignadoId', '==', currentVendorData!.id)
-                    .get();
+            } else if (resolvedRole === 'admin') {
+                // Admin ve la cartera completa de la empresa, sin restricción de zona
+                const clientsPromise = dbInstance.collection(`companies/${resolvedCompanyId}/clientes`).get();
                 const salesPromise = dbInstance.collection(`companies/${resolvedCompanyId}/ventas`)
                     .where('vendedorId', '==', currentVendorData!.id)
                     .get();
-                
+
                 const [clientsSnap, salesSnap] = await Promise.all([clientsPromise, salesPromise]);
 
                 finalData.clients = clientsSnap.docs.map(processFirebaseDoc) as Client[];
-                finalData.sales = salesSnap.docs.map(processFirebaseSale); 
+                finalData.sales = salesSnap.docs.map(processFirebaseSale);
+            } else { // Vendedor: cartera = clientes cuya zona esté entre las zonas asignadas al vendedor.
+                // Así, dos vendedores que comparten una zona comparten también los clientes de esa zona
+                // (antes se filtraba por 'vendedorAsignadoId', que sólo dejaba ver al cliente a un único vendedor).
+                const zonasVendedor = currentVendorData?.zonasAsignadas || [];
+
+                const clientChunks = [];
+                for (let i = 0; i < zonasVendedor.length; i += 10) {
+                    clientChunks.push(zonasVendedor.slice(i, i + 10));
+                }
+
+                const clientPromises = clientChunks.map(chunk =>
+                    dbInstance.collection(`companies/${resolvedCompanyId}/clientes`)
+                        .where('zonaId', 'in', chunk)
+                        .get()
+                );
+                const salesPromise = dbInstance.collection(`companies/${resolvedCompanyId}/ventas`)
+                    .where('vendedorId', '==', currentVendorData!.id)
+                    .get();
+
+                const [clientSnaps, salesSnap] = await Promise.all([Promise.all(clientPromises), salesPromise]);
+
+                const seenClientIds = new Set<string>();
+                finalData.clients = clientSnaps
+                    .flatMap((snap: FirebaseFirestoreTypes.QuerySnapshot) => snap.docs)
+                    .filter((d: any) => {
+                        if (seenClientIds.has(d.id)) return false;
+                        seenClientIds.add(d.id);
+                        return true;
+                    })
+                    .map(processFirebaseDoc) as Client[];
+                finalData.sales = salesSnap.docs.map(processFirebaseSale);
+            }
+
+            // 🟢 PASO 3.5: CARGAR COBRANZAS (Universal - viven separadas de ventas)
+            try {
+                const cobranzasSnap = await dbInstance.collection(`companies/${resolvedCompanyId}/cobranzas`)
+                    .where('vendedorId', '==', currentVendorData!.id)
+                    .get();
+                finalData.cobranzas = cobranzasSnap.docs.map(processFirebaseCobranza);
+            } catch (cobranzaError) {
+                console.error("Error cargando cobranzas:", cobranzaError);
+                finalData.cobranzas = [];
             }
 
             // 🟢 PASO 4: CARGAR ZONAS ASIGNADAS (Universal para todos los roles)
@@ -779,7 +861,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 AsyncStorage.setItem('vendors', JSON.stringify(finalData.vendors)),
                 AsyncStorage.setItem('clients', JSON.stringify(finalData.clients)),
                 AsyncStorage.setItem('availableZones', JSON.stringify(finalData.availableZones)),
-                AsyncStorage.setItem('sales', JSON.stringify(finalData.sales)), 
+                AsyncStorage.setItem('sales', JSON.stringify(finalData.sales)),
+                AsyncStorage.setItem('cobranzas', JSON.stringify(finalData.cobranzas)),
                 AsyncStorage.setItem('routes', JSON.stringify(finalData.routes)),
                 AsyncStorage.setItem('rubros', JSON.stringify(finalData.rubros)),
                 // ✅ NUEVO: Guardar listas
@@ -797,6 +880,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             setClients(finalData.clients);
             setAvailableZones(finalData.availableZones);
             setSales(finalData.sales);
+            setCobranzas(finalData.cobranzas);
             setRoutes(finalData.routes);
             setRubros(finalData.rubros);
             setPriceLists(finalData.priceLists); // ✅ Actualizar estado
@@ -1260,6 +1344,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             availableZones,
             vendors,
             sales,
+            cobranzas,
             routes,
             rubros,
             priceLists,
